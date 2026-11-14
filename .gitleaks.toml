@@ -1,0 +1,11 @@
+title = "agentic template gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented placeholders"
+paths = [
+  '''\.env\.example$''',
+  '''\.tfvars\.example$''',
+]

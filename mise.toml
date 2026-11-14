@@ -1,0 +1,10 @@
+# Toolchain for this repo. `make setup` runs `mise install`; CI uses jdx/mise-action.
+# Stack packs append their runtimes below the marker. Run `mise lock` after changes.
+[tools]
+python = "3.13"        # repo scripts (stdlib only) and the python stack
+gitleaks = "8"
+actionlint = "1"
+shellcheck = "0.10"
+opentofu = "1"
+trivy = "0"
+# --- stack tools (added by scripts/init-stack.sh) ---

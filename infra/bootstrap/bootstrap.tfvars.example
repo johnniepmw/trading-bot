@@ -1,0 +1,8 @@
+# Copy to bootstrap.tfvars (gitignored) and fill in. None of these values are secret.
+project_id        = "myapp-123456"
+region            = "europe-west2"
+app_name          = "myapp"
+github_repository = "johnniepmw/myapp"
+alert_email       = "you@example.com"
+# billing_account = "000000-000000-000000"   # optional: enables a budget alert
+# budget_amount   = 50

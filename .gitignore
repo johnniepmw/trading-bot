@@ -1,0 +1,48 @@
+# Secrets and local config (never commit)
+.env
+.env.*
+!.env.example
+/secrets/
+*.pem
+*.key
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Agent scratch space
+.agentic/
+
+# Infra
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Node / TypeScript
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+*.tsbuildinfo
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+htmlcov/
+.coverage*
+mutants/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Enforce Conventional Commits on the subject line: type(scope)!: summary
+set -euo pipefail
+subject="$(head -n 1 "$1")"
+types="feat|fix|refactor|perf|test|docs|build|ci|chore|revert|style"
+if [[ "$subject" =~ ^Merge\  || "$subject" =~ ^Revert\  || "$subject" =~ ^(fixup|squash)! ]]; then
+  exit 0
+fi
+if ! [[ "$subject" =~ ^($types)(\([a-z0-9._/-]+\))?!?:\ .{1,100}$ ]]; then
+  {
+    echo "commit-msg: subject must follow Conventional Commits, e.g."
+    echo "  feat(orders): add CSV export"
+    echo "  fix: handle empty basket"
+    echo "allowed types: ${types//|/, }"
+    echo "got: $subject"
+  } >&2
+  exit 1
+fi

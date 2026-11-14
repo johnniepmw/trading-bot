@@ -1,0 +1,79 @@
+name: agent-review
+
+# Independent Claude review of every PR, with no access to the session that wrote it.
+# Blocks merge on confirmed correctness, security or spec problems (see
+# .github/agent-review.md). Dependabot PRs get no Actions secrets, so they skip this job
+# (a skipped required check counts as passed) and rely on CI.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: agent-review
+    if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Prepare review inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p .agentic/review
+          git diff HEAD^1 HEAD > .agentic/review/diff.patch
+          git diff --stat HEAD^1 HEAD > .agentic/review/stat.txt
+          gh pr view "$PR" --json title,body,author,headRefName > .agentic/review/pr.json
+          python3 scripts/risk_classify.py --base HEAD^1 > .agentic/review/risk.json
+          wc -l .agentic/review/diff.patch
+
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the independent CI reviewer for pull request #${{ github.event.pull_request.number }}.
+            Read .github/agent-review.md and follow it exactly. Inputs are in .agentic/review/
+            (diff.patch, stat.txt, pr.json, risk.json); the repository is checked out at the
+            PR's merge commit. Write .agentic/review/verdict.json and .agentic/review/report.md
+            as the rubric specifies. Do not modify any other file.
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Read,Grep,Glob,Write"
+
+      - name: Enforce the verdict
+        run: |
+          v=.agentic/review/verdict.json
+          if [ ! -s "$v" ]; then echo "::error::Reviewer produced no verdict"; exit 1; fi
+          jq . "$v"
+          if ! jq -e '.verdict == "pass"' "$v" > /dev/null; then
+            echo "::error::Agent review requested changes; see the PR comment."
+            exit 1
+          fi
+
+      - name: Post the review report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          f=.agentic/review/report.md
+          [ -s "$f" ] || echo "Agent review did not produce a report. Check the workflow log." > "$f"
+          bash scripts/pr-comment.sh "$PR" agent-review "$f"

@@ -1,0 +1,84 @@
+name: ops
+
+# Manual operations without a deploy. Runnable from the GitHub mobile app.
+#   rollback  route traffic to the previous (or a named) revision
+#   kill      turn a feature flag off via the remote override
+#   set       force a flag on/off (owner)      restore   remove the override (owner)
+# Agents may run rollback and kill (any env) and anything in staging; the kit's guard hook
+# enforces that, and the deployer identity only works from main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [rollback, kill, set, restore]
+        required: true
+      env:
+        type: choice
+        options: [staging, prod]
+        required: true
+      flag:
+        description: Flag name from flags.json (kill/set/restore)
+        type: string
+        required: false
+      value:
+        description: For set only
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+        required: false
+      revision:
+        description: For rollback only (optional; default = previous ready revision)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      ACTION: ${{ inputs.action }}
+      TARGET_ENV: ${{ inputs.env }}
+      FLAG: ${{ inputs.flag }}
+      VALUE: ${{ inputs.value }}
+      REVISION: ${{ inputs.revision }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.SA_DEPLOYER }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Run
+        run: |
+          echo "ops: ${ACTION} on ${TARGET_ENV} by ${GITHUB_ACTOR}"
+          case "$ACTION" in
+            rollback) bash scripts/cloudrun-rollback.sh "$TARGET_ENV" "$REVISION" ;;
+            kill|restore) bash scripts/flag-override.sh "$TARGET_ENV" "$ACTION" "$FLAG" ;;
+            set) bash scripts/flag-override.sh "$TARGET_ENV" set "$FLAG" "$VALUE" ;;
+          esac
+      - name: Record production operations as an issue
+        if: always() && inputs.env == 'prod'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          gh issue create --label incident \
+            --title "ops: ${ACTION} on prod (${FLAG:-${REVISION:-previous revision}}) — ${OUTCOME}" \
+            --body "Triggered by ${GITHUB_ACTOR}. Run: ${RUN_URL}. Follow up with a fix-forward PR and close this issue when resolved."

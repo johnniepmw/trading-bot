@@ -1,0 +1,94 @@
+name: infra
+
+# OpenTofu for infra/envs/*. PRs: fmt, validate and plan both environments with a
+# read-only identity, and comment a plain-English summary. Merges to main: apply staging,
+# then prod. Nightly: detect drift and open an issue. Bootstrap (infra/bootstrap) is
+# owner-run and never applied here.
+
+on:
+  pull_request:
+    paths: ["infra/envs/**", "infra/modules/**", ".github/workflows/infra.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/envs/**", "infra/modules/**"]
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
+  cancel-in-progress: false
+
+env:
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  plan:
+    if: vars.WIF_PROVIDER != '' && (github.event_name == 'pull_request' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [staging, prod]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.SA_INFRA_PLAN }}
+      - run: tofu fmt -check -recursive infra
+      - name: Plan
+        id: plan
+        run: |
+          set +e
+          bash scripts/tofu.sh "${{ matrix.env }}" plan -lock=false -detailed-exitcode -out=plan.out
+          code=$?
+          set -e
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          [ "$code" -eq 1 ] && exit 1
+          tofu -chdir="infra/envs/${{ matrix.env }}" show -json plan.out | python3 scripts/tofu_plan_summary.py "${{ matrix.env }}" > /tmp/summary.md
+          cat /tmp/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment the plan summary
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: bash scripts/pr-comment.sh "$PR" "infra-plan-${{ matrix.env }}" /tmp/summary.md
+      - name: Open a drift issue
+        if: github.event_name == 'schedule' && steps.plan.outputs.exitcode == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --label drift --title "Infrastructure drift in ${{ matrix.env }}" --body-file /tmp/summary.md
+
+  apply:
+    if: vars.WIF_PROVIDER != '' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      max-parallel: 1
+      matrix:
+        env: [staging, prod]
+    environment: ${{ matrix.env == 'prod' && 'production' || 'staging' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.SA_INFRA_APPLY }}
+      - run: bash scripts/tofu.sh "${{ matrix.env }}" apply -auto-approve

@@ -1,0 +1,27 @@
+# Paths that make a pull request HIGH RISK. High-risk PRs merge only after the owner
+# comments `/approve-risk <head sha>` (risk-gate). Gitignore-like globs: `**` spans
+# directories, `*` stays within one segment, a pattern without `/` matches at any depth.
+# Keep this list short and meaningful: everything here costs the owner attention.
+
+# Delivery gates and the agent's own guardrails
+.github/**
+.githooks/**
+.claude/settings.json
+.claude/skills/agentic/hooks/**
+scripts/risk_classify.py
+scripts/risk_gate.py
+scripts/github-setup.sh
+Makefile
+
+# Infrastructure, identity, access, deployment shape
+infra/**
+Dockerfile
+
+# Data shape and destructive operations
+**/migrations/**
+
+# Security-sensitive code (adjust names to this project's layout)
+**/auth/**
+**/secrets/**
+
+# Project-specific high-risk areas (bootstrap adds these, e.g. money and risk limits)

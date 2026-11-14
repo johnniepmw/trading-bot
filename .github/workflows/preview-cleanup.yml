@@ -1,0 +1,31 @@
+name: preview-cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    if: vars.WIF_PROVIDER != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.SA_PREVIEW }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Remove the PR's preview tag
+        env:
+          SERVICE: ${{ vars.APP_NAME }}-staging
+          TAG: pr-${{ github.event.pull_request.number }}
+        run: |
+          gcloud run services update-traffic "$SERVICE" --project "${{ vars.GCP_PROJECT }}" \
+            --region "${{ vars.GCP_REGION }}" --remove-tags "$TAG" --quiet \
+            || echo "no preview tag to remove"

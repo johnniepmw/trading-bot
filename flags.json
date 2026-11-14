@@ -1,0 +1,12 @@
+{
+  "$comment": "Flag registry. Each flag answers 'is this feature enabled?'. type: release (needs expires, <=60 days after created) | kill-switch (default true, permanent) | ops. Runtime override: env FLAG_<UPPER_SNAKE> locally; ops workflow remotely. See docs/feature-flags.md.",
+  "flags": {
+    "home-greeting": {
+      "type": "kill-switch",
+      "default": true,
+      "owner": "agent",
+      "created": "2026-11-14",
+      "description": "Template example: the greeting on the home page. Replace with real flags during bootstrap."
+    }
+  }
+}

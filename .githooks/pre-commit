@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Fast local gate: secret scan of staged changes, then the stack's format check.
+# Enabled by `make setup` (git config core.hooksPath .githooks). CI runs the same checks.
+set -euo pipefail
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --staged --no-banner --redact --config .gitleaks.toml . \
+    || { echo "pre-commit: gitleaks found a possible secret in staged changes." >&2; exit 1; }
+else
+  echo "pre-commit: gitleaks not installed; run make setup (CI will still scan)." >&2
+fi
+
+if ! make --no-print-directory fmt-check >/dev/null 2>&1; then
+  echo "pre-commit: formatting issues. Run 'make fmt' and re-stage." >&2
+  exit 1
+fi

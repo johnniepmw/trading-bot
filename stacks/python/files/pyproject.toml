@@ -1,0 +1,51 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = "Replace during bootstrap"
+requires-python = ">=3.13"
+dependencies = []
+
+# Dev tools are added at current versions by the stack's init (uv add --dev ...).
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+src = ["src", "tests"]
+extend-exclude = [".claude", "infra", "stacks"]
+
+[tool.ruff.lint]
+# E/F pycodestyle+pyflakes, I isort, B bugbear, UP pyupgrade, S bandit, N naming,
+# SIM simplify, RUF ruff, BLE blind except, A builtins, PL pylint subset
+select = ["E", "F", "I", "B", "UP", "S", "N", "SIM", "RUF", "BLE", "A", "PL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "S603"]
+"scripts/**" = ["S603", "S607", "PLR2004", "PLR0912", "PLR0915", "E501"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+packages = ["app"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "e2e: end-to-end tests (run with make e2e; target E2E_BASE_URL)",
+  "integration: tests against real local dependencies",
+  "flaky: quarantined; runs nightly only (docs/testing.md)",
+]
+
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "core is pure (no adapters, no I/O modules)"
+type = "forbidden"
+source_modules = ["app.core"]
+forbidden_modules = ["app.server", "app.flags"]
+
+[tool.mutmut]
+paths_to_mutate = ["src/app/core/"]
+tests_dir = ["tests/"]

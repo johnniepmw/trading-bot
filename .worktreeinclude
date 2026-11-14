@@ -1,0 +1,3 @@
+# Gitignored files Claude Code copies into new worktrees (keep to small files).
+.env.local
+CLAUDE.local.md
