@@ -31,7 +31,11 @@ class AccountState:
     cash: Money  # GBP available to spend now (excludes unsettled sale proceeds)
     high_water_mark: Money | None  # GBP, from the ledger; None means unknown
     day_start_equity: Money | None  # GBP, at the start of the trading day; None means unknown
-    holdings: Mapping[Instrument, Decimal]  # every instrument that may be bought, zero included
+    # Broker positions mapped to instruments, with an explicit zero for every instrument the
+    # strategy may buy. A broker position that maps to no instrument is the caller's error
+    # and must stop the run before review (a ledger/execution failure drill, AC9): filling
+    # in zeros for unmapped positions would hide a real holding from the position cap.
+    holdings: Mapping[Instrument, Decimal]
     quotes: Mapping[Instrument, Money]  # latest price in the instrument's quote currency
     quantity_steps: Mapping[Instrument, Decimal]  # smallest tradable fraction per instrument
 
@@ -49,22 +53,17 @@ class AccountState:
         if any(a.amount <= 0 for a in positive) or self.cash.amount < 0:
             raise ValueError("impossible account state: non-positive equity or mark, or negative cash")
         for name in ("holdings", "quotes", "quantity_steps"):
-            mapping = dict(getattr(self, name))
-            if len({i.ticker for i in mapping}) != len(mapping):
-                raise ValueError(f"impossible account state: a ticker appears under two currencies in {name}")
             # a private, read-only copy: later changes to the caller's dict can't skip these checks
-            object.__setattr__(self, name, MappingProxyType(mapping))
-        for name, values, lowest_ok in (
-            ("holding", self.holdings, True),
-            ("quantity step", self.quantity_steps, False),
-        ):
-            for value in values.values():
-                if not isinstance(value, Decimal) or not value.is_finite():
-                    raise TypeError(
-                        f"impossible account state: {name} must be a finite Decimal, got {value!r}"
-                    )
-                if value < 0 or (value == 0 and not lowest_ok):
-                    raise ValueError(f"impossible account state: {name} out of range: {value}")
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+        # Holdings decide sells too, so a bad holding stops the whole run. A bad quote or step
+        # only rejects buys of that instrument (see _price_and_step).
+        if len({i.ticker for i in self.holdings}) != len(self.holdings):
+            raise ValueError("impossible account state: a ticker appears under two currencies in holdings")
+        for value in self.holdings.values():
+            if not isinstance(value, Decimal) or not value.is_finite():
+                raise TypeError(f"impossible account state: holding must be a finite Decimal, got {value!r}")
+            if value < 0:
+                raise ValueError(f"impossible account state: negative holding {value}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +79,8 @@ class _Run:
     limits: Limits
     cash_left: Decimal
     drawdown: Decimal | None  # None when the high-water mark is unknown
-    held: dict[Instrument, Decimal] = field(default_factory=dict)
+    held: dict[Instrument, Decimal] = field(default_factory=dict)  # after this run's sells
+    bought: dict[Instrument, Decimal] = field(default_factory=dict)  # by this run's buys
 
     def holding(self, instrument: Instrument) -> Decimal:
         return self.held.get(instrument, self.state.holdings.get(instrument, ZERO))
@@ -124,7 +124,7 @@ def _sell(run: _Run, order: Order) -> Decision:
     if order.quantity >= held:
         quantity, why = held, "to the holding"
     else:
-        step = run.state.quantity_steps.get(order.instrument)
+        step = _valid_step(run.state.quantity_steps.get(order.instrument))
         quantity = order.quantity if step is None else _floor(order.quantity, step)
         why = "to the quantity step"
         if quantity <= 0:
@@ -149,18 +149,39 @@ def _buy_veto(run: _Run) -> str | None:
     return None
 
 
-def _price_and_step(run: _Run, instrument: Instrument) -> tuple[Decimal, Decimal] | str:
-    """The GBP price and quantity step, or why there are none."""
-    quote = run.state.quotes.get(instrument)
-    step = run.state.quantity_steps.get(instrument)
+def _valid_step(step: object) -> Decimal | None:
+    if isinstance(step, Decimal) and step.is_finite() and step > 0:
+        return step
+    return None
+
+
+def _ambiguous(instrument: Instrument, mapping: Mapping[Instrument, object]) -> bool:
+    return sum(1 for i in mapping if i.ticker == instrument.ticker) > 1
+
+
+def _quote_problem(instrument: Instrument, quote: Money | None) -> str | None:
     if quote is None:
         return "no quote"
     if quote.currency is not instrument.currency:
         return "quote currency does not match instrument"
     if quote.amount <= 0:
         return "bad quote"
-    if step is None:
-        return "no quantity step"
+    return None
+
+
+def _price_and_step(run: _Run, instrument: Instrument) -> tuple[Decimal, Decimal] | str:
+    """The GBP price and quantity step, or why there are none."""
+    state = run.state
+    if _ambiguous(instrument, state.quotes) or _ambiguous(instrument, state.quantity_steps):
+        return "ambiguous quote"
+    quote = state.quotes.get(instrument)
+    raw_step = state.quantity_steps.get(instrument)
+    step = _valid_step(raw_step)
+    problem = _quote_problem(instrument, quote) or (
+        "no quantity step" if raw_step is None else "bad quantity step" if step is None else None
+    )
+    if problem or quote is None or step is None:
+        return problem or "no quote"
     try:
         return quote.to_gbp().amount, step
     except CurrencyMismatchError:
@@ -181,7 +202,9 @@ def _buy(run: _Run, order: Order) -> Decision:
     cap = min(run.limits.position_fraction, MAX_POSITION_FRACTION)
     if run.drawdown is not None and run.drawdown >= run.limits.drawdown_halve:
         cap *= HALF
-    held = run.holding(order.instrument)
+    # Cap room counts the holding before this run's sells: a sell may not fill, and a buy
+    # must not rely on it (the same reason sale proceeds don't fund buys).
+    held = run.state.holdings[order.instrument] + run.bought.get(order.instrument, ZERO)
     room_units = (cap * run.state.equity.amount - held * price) / price
     cash_units = run.cash_left / price
     limit = min(room_units, cash_units)
@@ -190,7 +213,7 @@ def _buy(run: _Run, order: Order) -> Decision:
     if quantity <= 0:
         return _reject(order, "below the quantity step" if order.quantity <= limit else binding)
     run.cash_left -= quantity * price
-    run.held[order.instrument] = held + quantity
+    run.bought[order.instrument] = run.bought.get(order.instrument, ZERO) + quantity
     if order.quantity <= limit:
         return _decide(order, quantity, "to the quantity step")
     return _decide(

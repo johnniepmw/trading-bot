@@ -232,7 +232,6 @@ def test_account_amounts_must_be_in_pounds(field: str) -> None:
         {"hwm": "0"},
         {"day_start": "0"},
         {"holdings": {VWRP: Decimal(-1)}},
-        {"steps": {VWRP: Decimal(0)}},
     ],
 )
 def test_impossible_account_states_are_refused(kwargs: dict[str, object]) -> None:
@@ -310,9 +309,13 @@ def test_one_ticker_under_two_currencies_is_refused() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"holdings": {VWRP: Decimal("Infinity")}}, {"steps": {VWRP: Decimal("NaN")}}, {"holdings": {VWRP: 1.0}}],
+    [
+        {"holdings": {VWRP: Decimal("Infinity")}},
+        {"holdings": {VWRP: Decimal("NaN")}},
+        {"holdings": {VWRP: 1.0}},
+    ],
 )
-def test_holdings_and_steps_must_be_finite_decimals(kwargs: dict[str, object]) -> None:
+def test_holdings_must_be_finite_decimals(kwargs: dict[str, object]) -> None:
     with pytest.raises((ValueError, TypeError), match="account state"):
         state(**kwargs)  # type: ignore[arg-type]
 
@@ -341,3 +344,35 @@ def test_ceilings_hold_even_if_limits_were_tampered_with() -> None:
     assert capped.approved is not None and capped.approved.order.quantity == Decimal(3)  # 30% ceiling
     [stopped] = review([buy("1")], state(equity="800", cash="800", hwm="1000"), limits)
     assert stopped.reason == "rejected: drawdown stop"
+
+
+# --- security review round 2 -------------------------------------------------------
+def test_a_sell_in_the_same_run_does_not_make_room_for_a_buy() -> None:
+    # If the sell fails and the buy fills, the holding would be 50% of equity.
+    sold, bought = review([sell("2.5"), buy("2.5")], state(cash="750", holdings={VWRP: Decimal("2.5")}))
+    assert approved_qty(sold) == Decimal("2.5")
+    assert bought.reason == "rejected: position cap"
+
+
+@pytest.mark.parametrize("bad", [Decimal(0), Decimal(-1), Decimal("NaN"), Decimal("Infinity")])
+def test_a_bad_quantity_step_rejects_only_that_buy(bad: Decimal) -> None:
+    decisions = review(
+        [buy("1"), sell("1", SGLN)],
+        state(steps={VWRP: bad, SGLN: STEP}, holdings={VWRP: Decimal(0), SGLN: Decimal(2)}),
+    )
+    assert [d.reason for d in decisions] == ["passed", "rejected: bad quantity step"]
+
+
+def test_a_partial_sell_with_a_bad_step_goes_through_unrounded() -> None:
+    [d] = review([sell("1")], state(holdings={VWRP: Decimal(3)}, steps={VWRP: Decimal("NaN")}))
+    assert approved_qty(d) == Decimal(1)
+
+
+def test_a_ticker_quoted_under_two_currencies_rejects_that_buy_only() -> None:
+    quotes = {
+        VWRP: gbp(100),
+        Instrument("VWRP", Currency.GBX): Money(Decimal(10000), Currency.GBX),
+        SGLN: Money(Decimal(4000), Currency.GBX),
+    }
+    decisions = review([buy("1"), buy("1", SGLN)], state(quotes=quotes))
+    assert [d.reason for d in decisions] == ["rejected: ambiguous quote", "passed"]

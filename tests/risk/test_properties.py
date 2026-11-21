@@ -71,6 +71,7 @@ def test_no_approved_order_breaks_a_limit(proposed: list[Order], state: AccountS
 
     spent = Decimal(0)
     held = {i: state.holdings.get(i, Decimal(0)) for i in INSTRUMENTS}
+    before_sells = dict(held)  # same-run sells don't free cap room (they may not fill)
     mark = state.high_water_mark
     drawdown = None if mark is None else max(Decimal(0), 1 - state.equity.amount / mark.amount)
     start = state.day_start_equity
@@ -97,8 +98,9 @@ def test_no_approved_order_breaks_a_limit(proposed: list[Order], state: AccountS
         price = state.quotes[o.instrument].to_gbp().amount
         spent += o.quantity * price
         held[o.instrument] += o.quantity
+        before_sells[o.instrument] += o.quantity
         cap = limits.position_fraction * (Decimal("0.5") if drawdown >= limits.drawdown_halve else 1)
-        assert held[o.instrument] * price <= cap * state.equity.amount  # position cap
+        assert before_sells[o.instrument] * price <= cap * state.equity.amount  # position cap
     assert spent <= state.cash.amount  # no leverage
 
 
