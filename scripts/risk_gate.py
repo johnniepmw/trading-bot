@@ -35,8 +35,11 @@ def gh_api(path: str, *args: str, paginate: bool = False) -> object:
         cmd += ["--paginate", "--slurp"]  # one JSON array of pages
         out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
         return [item for page in json.loads(out or "[]") for item in page]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
-    return json.loads(out) if out.strip() else {}
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        proc.check_returncode()
+    return json.loads(proc.stdout) if proc.stdout.strip() else {}
 
 
 def set_status(repo: str, sha: str, state: str, description: str) -> None:

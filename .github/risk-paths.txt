@@ -7,11 +7,25 @@
 .github/**
 .githooks/**
 .claude/settings.json
-.claude/skills/agentic/hooks/**
-scripts/risk_classify.py
-scripts/risk_gate.py
-scripts/github-setup.sh
+.claude/hooks/**
+.claude/kit.lock
 Makefile
+stack.mk
+.importlinter
+.gitleaks.toml
+mise.toml
+# Config files that would silently shadow the gate settings above if created
+setup.cfg
+tox.ini
+pytest.ini
+mypy.ini
+.mypy.ini
+ruff.toml
+.ruff.toml
+.gitleaksignore
+# Gate scripts, deploy and kill-switch scripts, and scripts the owner runs with their
+# own credentials (secret-set, gh-vars, phase0_api_check)
+scripts/**
 
 # Infrastructure, identity, access, deployment shape
 infra/**
@@ -25,3 +39,12 @@ Dockerfile
 **/secrets/**
 
 # Project-specific high-risk areas (bootstrap adds these, e.g. money and risk limits)
+# Money, risk limits, order flow and the live switch (ADR-0009)
+src/tradingbot/domain/money.py
+src/tradingbot/risk/**
+src/tradingbot/brokers/**
+src/tradingbot/execution/**
+src/tradingbot/ledger/**
+src/tradingbot/config/**
+src/tradingbot/app/**
+flags.json

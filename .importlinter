@@ -1,0 +1,116 @@
+# Import contracts (ARCHITECTURE.md, "Boundaries"). Run by `make arch` (lint-imports).
+# High risk (.github/risk-paths.txt): loosening a contract needs the owner's approval.
+# Contracts 3b-3d are allow-lists (type = protected), so new subpackages are covered
+# automatically. A new subpackage must be added to contract 1's forbidden list and to
+# 3a's sources (3a stays a deny-list: protected contracts can't name packages that
+# nothing imports yet, such as httpx).
+[importlinter]
+root_package = tradingbot
+include_external_packages = True
+
+[importlinter:contract:domain-pure]
+name = 1. domain imports nothing else from the project
+type = forbidden
+source_modules =
+    tradingbot.domain
+forbidden_modules =
+    tradingbot.data
+    tradingbot.strategy
+    tradingbot.portfolio
+    tradingbot.risk
+    tradingbot.execution
+    tradingbot.brokers
+    tradingbot.ledger
+    tradingbot.config
+    tradingbot.app
+
+[importlinter:contract:pure-core-no-io]
+name = 2a. strategy, portfolio and risk import only domain and config (no brokers, data I/O, HTTP or environment)
+type = forbidden
+source_modules =
+    tradingbot.strategy
+    tradingbot.portfolio
+    tradingbot.risk
+forbidden_modules =
+    tradingbot.data
+    tradingbot.execution
+    tradingbot.brokers
+    tradingbot.ledger
+    tradingbot.app
+    os
+    importlib
+    subprocess
+    asyncio
+    ssl
+    pathlib
+    urllib
+    http
+    httpx
+    requests
+    urllib3
+    aiohttp
+    socket
+
+[importlinter:contract:pure-core-independent]
+name = 2b. strategy, portfolio and risk do not import each other
+type = independence
+modules =
+    tradingbot.strategy
+    tradingbot.portfolio
+    tradingbot.risk
+
+[importlinter:contract:http-only-in-brokers-and-app]
+name = 3a. only brokers (and app's GCP adapters) import HTTP and socket libraries
+type = forbidden
+source_modules =
+    tradingbot.domain
+    tradingbot.data
+    tradingbot.strategy
+    tradingbot.portfolio
+    tradingbot.risk
+    tradingbot.execution
+    tradingbot.ledger
+    tradingbot.config
+forbidden_modules =
+    urllib
+    http
+    httpx
+    requests
+    urllib3
+    aiohttp
+    socket
+    subprocess
+
+[importlinter:contract:order-path]
+name = 3c. only app imports execution (risk can't be bypassed)
+type = protected
+protected_modules =
+    tradingbot.execution
+allowed_importers =
+    tradingbot.app
+
+[importlinter:contract:brokers-behind-execution]
+name = 3d. only execution and app import brokers
+type = protected
+protected_modules =
+    tradingbot.brokers
+allowed_importers =
+    tradingbot.execution
+    tradingbot.app
+
+[importlinter:contract:concrete-brokers-only-in-app]
+name = 3b. only app wires in concrete brokers
+type = protected
+protected_modules =
+    tradingbot.brokers.trading212
+    tradingbot.brokers.fake
+allowed_importers =
+    tradingbot.app
+
+[importlinter:contract:no-research-imports]
+name = 4. research is never imported by src
+type = forbidden
+source_modules =
+    tradingbot
+forbidden_modules =
+    research

@@ -51,17 +51,18 @@ default, and continue with independent work. Unattended runs take the defaults.
 ## Merging
 `main` is protected by a ruleset: PR required, linear history, no force pushes, and
 three required checks:
-- `ci-required` aggregates secret scan, `make check`, local e2e, image build/scan and
-  preview e2e (when cloud is configured)
+- `ci-required` aggregates `make check` (including the secret scan), e2e against the
+  app started in CI, and the image build and vulnerability scan
 - `agent-review` is an independent Claude review in CI with no access to the authoring
   session. It blocks on confirmed correctness, security or spec problems.
 - `risk-gate` passes standard-risk PRs immediately. High-risk PRs wait for the owner's
   `/approve-risk <sha>` comment on the current head commit; any new push needs a fresh
   approval.
 
-The agent enables auto-merge (`gh pr merge --auto --squash`) on every PR. Branches are
-not required to be up to date with main (no merge queue on personal plans), so main's
-own CI and the staged deploy catch the rare semantic conflict.
+The agent arms auto-merge on every PR with the kit's `gh-pr.sh merge` (in cloud
+sessions, where auto-merge isn't available, the same command merges once checks are
+green). Branches are not required to be up to date with main (no merge queue on personal
+plans), so main's own CI and the staged deploy catch the rare semantic conflict.
 
 ## Escalation format
 High-risk PRs carry an "Owner decision needed" section: decision, why it is flagged,
@@ -77,4 +78,4 @@ answer. The owner reads that, not the code. See the `escalate` skill.
 - Correcting the agent twice about the same thing means the harness is missing
   something: add an AGENTS.md line, a `.claude/rules/` file, a test, a lint rule or a
   hook, so it never needs a third correction.
-- Weekly upkeep runs as a scheduled task: `/schedule weekly /agentic:garden`.
+- Weekly upkeep runs as a scheduled task: `/schedule weekly /garden`.

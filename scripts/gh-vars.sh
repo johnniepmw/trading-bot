@@ -10,7 +10,7 @@ out() { tofu -chdir="$root/infra/bootstrap" output -raw "$1"; }
 for pair in \
   GCP_PROJECT=project_id GCP_REGION=region APP_NAME=app_name \
   AR_REPO=artifact_registry_repo TF_STATE_BUCKET=state_bucket WIF_PROVIDER=wif_provider \
-  SA_PREVIEW=sa_preview SA_DEPLOYER=sa_deployer SA_INFRA_PLAN=sa_infra_plan SA_INFRA_APPLY=sa_infra_apply; do
+  SA_DEPLOYER=sa_deployer SA_INFRA_PLAN=sa_infra_plan SA_INFRA_APPLY=sa_infra_apply; do
   name="${pair%%=*}"
   gh variable set "$name" --body "$(out "${pair#*=}")"
   echo "set $name"

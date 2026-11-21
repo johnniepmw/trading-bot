@@ -156,22 +156,11 @@ resource "google_cloud_run_v2_service_iam_member" "public" {
   member   = "allUsers"
 }
 
-# CI identities that may deploy this service (the deployer always; the preview identity
-# only for staging) must be able to act as the runtime identity.
+# The CI deployer must be able to act as the runtime identity to deploy revisions.
 resource "google_service_account_iam_member" "act_as" {
-  for_each           = toset(concat([var.deployer_sa], var.extra_developer_sas))
   service_account_id = google_service_account.runtime.name
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${each.value}"
-}
-
-resource "google_cloud_run_v2_service_iam_member" "developers" {
-  for_each = toset(var.extra_developer_sas)
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.this.name
-  role     = "roles/run.developer"
-  member   = "serviceAccount:${each.value}"
+  member             = "serviceAccount:${var.deployer_sa}"
 }
 
 # ---------- monitoring ------------------------------------------------------------------

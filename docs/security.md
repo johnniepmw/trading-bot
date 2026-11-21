@@ -15,9 +15,9 @@
   Identity Federation (OIDC), restricted to this repository; production-capable
   identities are further restricted to `refs/heads/main`. The only stored CI secret is
   `CLAUDE_CODE_OAUTH_TOKEN` for agent-review.
-- **Leak prevention**: gitleaks in the pre-commit hook and in CI (full history on PRs);
-  log redaction for known secret fields; a test that logs a fake secret and asserts it's
-  redacted.
+- **Leak prevention**: gitleaks in the pre-commit hook and in CI (full history). An app
+  that reads secrets also redacts them from logs, with a test that logs a fake secret
+  and asserts it's redacted.
 - **Rotation**: on any suspected exposure immediately (`docs/runbooks/rotate-secret.md`),
   otherwise every 90 days for third-party API keys.
 - **No service-account keys**, ever. If something seems to need one, escalate.
@@ -28,8 +28,8 @@
   base image. Security updates immediately.
 - New dependencies need a reason in the PR (what it replaces, maintenance status,
   licence). Prefer the standard library and existing dependencies.
-- Third-party GitHub Actions are kept to a minimum; pin them by commit SHA
-  (`pinact run` or Dependabot SHA updates) once the repo is set up.
+- GitHub Actions are kept to a minimum and pinned to full commit SHAs with a version
+  comment; Dependabot updates both.
 - Container images: minimal base, non-root user, deployed by digest, scanned (Trivy)
   in CI and nightly.
 

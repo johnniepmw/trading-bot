@@ -27,7 +27,7 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -44,7 +44,7 @@ jobs:
           wc -l .agentic/review/diff.patch
 
       - name: Review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
@@ -54,8 +54,11 @@ jobs:
             (diff.patch, stat.txt, pr.json, risk.json); the repository is checked out at the
             PR's merge commit. Write .agentic/review/verdict.json and .agentic/review/report.md
             as the rubric specifies. Do not modify any other file.
+          # Hooks off: .claude/settings.json runs the kit's hook scripts, and in this job
+          # those scripts come from the PR's checkout while the OAuth token is present.
           claude_args: |
             --max-turns 60
+            --settings '{"disableAllHooks": true}'
             --allowedTools "Read,Grep,Glob,Write"
 
       - name: Enforce the verdict

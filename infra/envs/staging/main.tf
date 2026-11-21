@@ -41,7 +41,6 @@ module "service" {
   secrets             = [] # e.g. ["broker-api-key"]; set values with make secret-set
   deletion_protection = false
   deployer_sa         = local.b.sa_deployer
-  extra_developer_sas = [local.b.sa_preview]
   alert_email         = local.b.alert_email
 }
 

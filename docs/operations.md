@@ -4,7 +4,6 @@
 | Env | What | Created by | Who changes it |
 |---|---|---|---|
 | local | `make dev`, local e2e | `make setup` | anyone |
-| preview | a no-traffic tagged revision `pr-<n>` on the staging service, one per PR | CI on each PR push | CI |
 | staging | `<app>-staging` Cloud Run service, own runtime identity and secrets | `infra/envs/staging` | CI on merge; agent may apply infra to staging |
 | prod | `<app>-prod` Cloud Run service, own runtime identity and secrets | `infra/envs/prod` | CI on merge only; owner for manual actions |
 
@@ -41,7 +40,9 @@ path. A rebuild drill runs quarterly; anything manual discovered in the drill be
 - Structured JSON logs to stdout with `severity`, `message`, `version`, `request_id`;
   never log secrets or personal data.
 - `GET /healthz` returns `{"status":"ok","version":"<git sha>"}`; smoke tests and uptime
-  checks use it. Deep dependency checks go in `/readyz` if needed.
+  checks use it. Deep dependency checks go in `/readyz` if needed. This repo's bot is a
+  Cloud Run job with no HTTP endpoint: its check is `python -m tradingbot.app smoke`
+  until the Phase 2 job deploy replaces this section (ADR-0011).
 - Uptime check and alert policy per environment (OpenTofu), emailing the owner.
 - `make logs ENV=prod` reads recent logs.
 

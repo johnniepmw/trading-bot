@@ -71,12 +71,6 @@ variable "deployer_sa" {
   type        = string
 }
 
-variable "extra_developer_sas" {
-  description = "Other CI identities allowed to deploy revisions of this service (e.g. the PR preview identity on staging)."
-  type        = list(string)
-  default     = []
-}
-
 variable "alert_email" {
   description = "Owner email for uptime alerts; empty disables alerting."
   type        = string

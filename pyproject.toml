@@ -1,0 +1,54 @@
+[project]
+name = "tradingbot"
+version = "0.1.0"
+description = "Risk-first automated trading bot: a long-or-cash trend system on UK-listed ETFs via the Trading 212 API"
+requires-python = ">=3.13"
+dependencies = []
+
+# Dev tools are added at current versions by the stack's init (uv add --dev ...).
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+src = ["src", "tests"]
+extend-exclude = [".claude", "infra", "stacks"]
+
+[tool.ruff.lint]
+# E/F pycodestyle+pyflakes, I isort, B bugbear, UP pyupgrade, S bandit, N naming,
+# SIM simplify, RUF ruff, BLE blind except, A builtins, PL pylint subset
+select = ["E", "F", "I", "B", "UP", "S", "N", "SIM", "RUF", "BLE", "A", "PL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "S603"]
+"scripts/**" = ["S603", "S607", "PLR2004", "PLR0912", "PLR0915", "E501"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+packages = ["tradingbot"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "e2e: end-to-end tests (run with make e2e; target E2E_BASE_URL)",
+  "integration: tests against real local dependencies",
+  "flaky: quarantined; runs nightly only (docs/testing.md)",
+]
+
+# Import contracts live in .importlinter (a high-risk path).
+
+[tool.mutmut]
+paths_to_mutate = ["src/tradingbot/domain/"]
+tests_dir = ["tests/"]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.170.17",
+    "import-linter>=2.17",
+    "mutmut>=3.8.1",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "ruff>=0.17.6",
+]

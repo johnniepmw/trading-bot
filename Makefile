@@ -29,7 +29,7 @@ STACK_MUTATION   ?= @echo "mutation: skipped (no stack)"
 
 .PHONY: help setup fmt fmt-check lint typecheck test-unit test-integration test-one arch \
         check-fast check e2e e2e-setup dev image mutation docs-check flags-check \
-        secrets-scan repo-lint risk logs smoke kit-sync \
+        secrets-scan repo-lint risk logs smoke kit-sync kit-check \
         github-setup gh-vars secret-set infra-bootstrap infra-plan infra-apply env-up env-down
 
 help: ## List targets
@@ -60,7 +60,7 @@ arch: ## Architecture/dependency rules
 	$(STACK_ARCH)
 
 check-fast: fmt-check lint typecheck test-unit ## Fast checks (<60s); the stop gate runs this
-check: check-fast test-integration arch docs-check flags-check secrets-scan repo-lint ## Everything CI's check job runs
+check: check-fast test-integration arch docs-check flags-check kit-check secrets-scan repo-lint ## Everything CI's check job runs
 
 e2e-setup:
 	$(STACK_E2E_SETUP)
@@ -86,8 +86,10 @@ repo-lint: ## Lint workflows and shell scripts
 	@if command -v shellcheck >/dev/null; then shellcheck -S warning scripts/*.sh .githooks/*; else echo "repo-lint: shellcheck missing"; [ -z "$${CI:-}" ]; fi
 risk: ## Risk class of this branch vs origin/main
 	python3 scripts/risk_classify.py
-kit-sync: ## Update the vendored agentic kit (.claude/skills/agentic)
+kit-sync: ## Install or update the agentic kit in .claude/ (from the kit repo's main)
 	bash scripts/kit-sync.sh
+kit-check: ## Kit files in .claude/ match .claude/kit.lock (they change upstream only)
+	bash scripts/kit-sync.sh --verify
 
 # ---------- operations (read-only for agents) ---------------------------------------------
 logs: ## Recent service logs: make logs ENV=prod

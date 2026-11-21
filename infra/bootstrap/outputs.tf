@@ -27,10 +27,6 @@ output "wif_provider" {
   value = google_iam_workload_identity_pool_provider.github.name
 }
 
-output "sa_preview" {
-  value = google_service_account.ci["ci-preview"].email
-}
-
 output "sa_deployer" {
   value = google_service_account.ci["ci-deployer"].email
 }
