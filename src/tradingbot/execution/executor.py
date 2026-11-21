@@ -1,9 +1,10 @@
 """Send approved orders, ledger first; reconcile the ledger with the broker (ADR-0016).
 
-`execute` accepts only ApprovedOrder and refuses to run while any intent is open, so
-reconcile must have settled everything first. Before each order it asks `may_send` (the
-app wires the `new-orders` kill switch here, read fresh each time), records the intent,
-then sends. Any outcome that isn't certain leaves the intent UNKNOWN and stops the run:
+`execute` accepts only ApprovedOrder. It runs `reconcile` itself and sends nothing unless
+that is clean (no open intent, no working broker order the ledger doesn't know), and it
+refuses a run ID that already recorded orders, so a retry can't send a batch twice.
+Before each order it asks `may_send` (the app wires the `new-orders` kill switch here,
+read fresh each time), records the intent, then sends. Any outcome that isn't certain leaves the intent UNKNOWN and stops the run:
 it is never resent. `reconcile` runs at the start of every run.
 """
 
@@ -61,8 +62,11 @@ def execute(  # noqa: PLR0913 - the order path's explicit dependencies
     for order in orders:
         if not isinstance(order, ApprovedOrder):
             raise TypeError("execute accepts only ApprovedOrder (risk.review creates them)")
-    if ledger.open_intents():
-        return ExecutionReport(0, "open intents: reconcile first")
+    if ledger.has_run(run_id):
+        return ExecutionReport(0, f"run {run_id} already executed")
+    reconciled = reconcile(broker, ledger)
+    if not reconciled.clean:
+        return ExecutionReport(0, "not reconciled: " + "; ".join(reconciled.problems))
     sent = 0
     for order in orders:
         if not may_send():

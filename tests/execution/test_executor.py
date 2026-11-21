@@ -175,15 +175,15 @@ def run_execute(orders: list[ApprovedOrder], broker: FakeBroker, ledger: Ledger)
 def test_execute_refuses_while_any_intent_is_open(broker: FakeBroker, ledger: Ledger) -> None:
     ledger.mark_unknown(ledger.record_intent("run-0", Order(VWRP, Side.BUY, Decimal(1)), NOW))
     report = run_execute([approved(Side.BUY, "1")], broker, ledger)
-    assert report == ExecutionReport(0, "open intents: reconcile first")
+    assert report.sent == 0 and report.stopped is not None and report.stopped.startswith("not reconciled")
     assert broker.recent_orders() == []
 
 
 def test_executing_twice_in_one_run_does_not_send_twice(broker: FakeBroker, ledger: Ledger) -> None:
     orders = [approved(Side.BUY, "1")]
     run_execute(orders, broker, ledger)
-    second = run_execute(orders, broker, ledger)  # the first order is still SENT (open)
-    assert second.stopped == "open intents: reconcile first"
+    second = run_execute(orders, broker, ledger)  # same run: refused even though reconcile is clean
+    assert second == ExecutionReport(0, "run run-1 already executed")
     assert len(broker.recent_orders()) == 1
 
 
@@ -267,14 +267,52 @@ def test_a_failure_recording_the_send_marks_the_outcome_unknown(broker: FakeBrok
     assert [i.state for i in ledger.open_intents()] == [IntentState.UNKNOWN]
 
 
-def test_only_the_executor_calls_broker_place() -> None:
-    # app gets ApprovedOrders from risk.review; calling place() directly would skip the
-    # kill switch and the ledger
-    src = Path(__file__).resolve().parents[2] / "src" / "tradingbot"
-    callers = [
-        str(p.relative_to(src))
-        for p in src.rglob("*.py")
-        for node in ast.walk(ast.parse(p.read_text()))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "place"
-    ]
-    assert callers == ["execution/executor.py"]
+SRC = Path(__file__).resolve().parents[2] / "src" / "tradingbot"
+
+
+def uses(source: str, names: set[str]) -> bool:
+    """Any reference to an attribute in `names`, or getattr(x, "<name>")."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute) and node.attr in names:
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and any(isinstance(a, ast.Constant) and a.value in names for a in node.args)
+        ):
+            return True
+    return False
+
+
+def modules_using(names: set[str]) -> list[str]:
+    return sorted(str(p.relative_to(SRC)) for p in SRC.rglob("*.py") if uses(p.read_text(), names))
+
+
+def test_only_the_executor_touches_broker_place() -> None:
+    # app gets ApprovedOrders from risk.review; reaching place() any other way (a call, a
+    # stored reference, partial, getattr) would skip the kill switch and the ledger
+    assert modules_using({"place"}) == ["execution/executor.py"]
+
+
+@pytest.mark.parametrize(
+    "planted",
+    ["broker.place(o)", "send = broker.place", "map(broker.place, xs)", 'getattr(broker, "place")(o)'],
+)
+def test_the_place_scan_catches_each_way_round_it(planted: str) -> None:
+    assert uses(planted, {"place"})
+
+
+def test_no_daily_code_creates_a_ledger_or_seeds_the_mark() -> None:
+    # owner setup steps only: otherwise "no mark: seed it" invites re-seeding a lost history
+    assert modules_using({"seed_high_water_mark", "create"}) == []
+
+
+def test_an_unknown_broker_order_stops_execute_itself(broker: FakeBroker, ledger: Ledger) -> None:
+    # nothing is open in the ledger, but a working order no intent knows about could be a
+    # duplicate of ours: execute reconciles first and sends nothing
+    broker.market_open = False
+    broker.place(approved(Side.BUY, "1"))
+    report = run_execute([approved(Side.BUY, "1")], broker, ledger)
+    assert report.sent == 0 and report.stopped is not None and "no intent knows" in report.stopped
+    assert len(broker.recent_orders()) == 1

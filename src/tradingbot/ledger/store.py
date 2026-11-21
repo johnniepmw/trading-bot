@@ -192,6 +192,11 @@ class Ledger:
     def settled(self) -> list[Intent]:
         return self._intents(_SETTLED_INTENTS)
 
+    def has_run(self, run_id: str) -> bool:
+        """Has this run already recorded any intent?"""
+        row = self._conn.execute("SELECT 1 FROM intents WHERE run_id = ? LIMIT 1", (run_id,)).fetchone()
+        return row is not None
+
     def linked_order_ids(self) -> set[str]:
         rows = self._conn.execute("SELECT broker_order_id FROM intents WHERE broker_order_id IS NOT NULL")
         return {r[0] for r in rows}
