@@ -10,8 +10,9 @@
   `.claude/scripts/gh-pr.sh`. Plain project files load in every surface. Plugins don't:
   cloud sessions and Projects threads load no plugin declared in a repository, nor a
   plugin folder under `.claude/skills/`.
-- Model and effort: sessions start on Opus at high effort (`.claude/settings.json`); the
-  kit's subagents pin their own. See `docs/workflow.md` → Model and effort.
+- Model and effort: desktop and CLI sessions start on Opus at high effort
+  (`.claude/settings.json`); cloud sessions use the session picker instead. The kit's
+  subagents pin their own. See `docs/workflow.md` → Model and effort.
 - Kit hooks: orientation at session start; guards on Bash and on file reads and writes
   (secrets, git internals, kit files); a stop gate that runs `make check-fast` when
   there are uncommitted changes.

@@ -66,8 +66,10 @@ plans), so main's own CI and the staged deploy catch the rare semantic conflict.
 
 ## Model and effort
 Set automatically; nobody needs to pick per task.
-- Sessions start on Opus at high effort (`.claude/settings.json`). CI review is pinned to
-  the same (`agent-review.yml`).
+- Desktop and CLI sessions start on Opus at high effort (`.claude/settings.json`). Cloud
+  sessions ignore that and use the session picker: choose Opus and High there
+  (`docs/runbooks/cloud-sessions.md`). CI review is pinned to Opus/high
+  (`agent-review.yml`).
 - The kit pins its reviewers: `reviewer` and `architect` on Opus at high,
   `security-reviewer` on Opus at xhigh. Routine work is cheaper: `qa` and `/garden` on
   Sonnet at medium, `Explore` on Haiku. Other skills follow the session.
