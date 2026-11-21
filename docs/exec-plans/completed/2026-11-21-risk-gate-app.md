@@ -1,7 +1,7 @@
 # risk-gate status from a dedicated GitHub App
 
-- **Status**: in progress
-- **Branch / PR**: `ci/risk-gate-app-status` / see PR
+- **Status**: shipped
+- **Branch / PR**: `ci/risk-gate-app-status` / #13
 - **Risk class**: high (`.github/**`, `scripts/**`)
 - **Started**: 2026-11-21
 
@@ -31,7 +31,7 @@ skip the owner's approval. The owner asked to set up the GitHub App now.
 - Order: owner does runbook steps 1–3 **before** this PR merges (otherwise every later
   PR's risk-gate job fails and waits, fail closed). Merge. Check step 4 on the next PR.
   Owner runs step 5 (pin).
-- Rollback: re-run repo settings without `RISK_GATE_APP_ID`, then revert this PR.
+- Rollback: the runbook's Rollback section (`RISK_GATE_UNPIN=1`, drop the check temporarily, revert, restore with `RISK_GATE_APP_ID`).
 
 ## Decisions
 - Environment secret with a `main`-only branch policy, not a repo secret: a repo secret
@@ -73,4 +73,13 @@ skip the owner's approval. The owner asked to set up the GitHub App now.
 - 2026-11-21 step 4: `make check` exit 0 (90 passed after the review fixes, actionlint, shellcheck, docs, no leaks), `make e2e` 3 passed
 
 ## Outcome
-<filled on merge>
+Merged 2026-11-21 as #13 (247c3bd) after the owner's own web-UI approval of the full head
+SHA (`performed_via_github_app` null, unedited). App ID 5864419.
+- AC9 passed: a throwaway branch `probe/risk-gate-env` with two jobs naming the
+  environment (with and without `deployment: false`, no secret referenced) was refused
+  before any step ran: "Branch "probe/risk-gate-env" is not allowed to deploy to
+  risk-gate due to environment protection rules." The session's proxy can't delete
+  branches; the owner deletes it.
+- AC6: the `risk-gate` status on the PR that closes this plan (see that PR) is checked
+  for an app creator.
+- Owner still to do: runbook step 5 (pin the ruleset with `RISK_GATE_APP_ID=5864419`).
