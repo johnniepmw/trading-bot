@@ -3,7 +3,8 @@ name: risk-gate
 # Sets the required `risk-gate` status. Standard-risk PRs pass immediately. High-risk PRs
 # (paths in .github/risk-paths.txt) stay pending until the owner comments
 # `/approve-risk <head sha>`. Runs code from the default branch only and never checks out
-# PR code, so a PR cannot change the rules that judge it.
+# PR code, so a PR cannot change the rules that judge it. The status is posted by the
+# dedicated risk-gate GitHub App, and the ruleset requires it from that app.
 
 on:
   pull_request_target:
@@ -26,20 +27,33 @@ jobs:
       (github.event.issue.pull_request && startsWith(github.event.comment.body, '/approve-risk'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The app key is an environment secret; the environment's branch policy allows only the
+    # default branch, which is GITHUB_REF for both triggers. No deployment records.
+    environment:
+      name: risk-gate
+      deployment: false
     permissions:
       contents: read
       pull-requests: write # comment on the PR (issues: write alone is refused for PRs)
       issues: write
-      statuses: write
+      # no statuses: write; the risk-gate status is posted with the app's token
     steps:
       - name: Check out the default branch (trusted code only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - name: Mint the risk-gate app token (posts the required status)
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.RISK_GATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RISK_GATE_APP_KEY }}
+          permission-statuses: write
       - name: Evaluate
         env:
           GH_TOKEN: ${{ github.token }}
+          STATUS_TOKEN: ${{ steps.app.outputs.token }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           APPROVER: ${{ vars.RISK_APPROVER || github.repository_owner }}
         run: python3 scripts/risk_gate.py

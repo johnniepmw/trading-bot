@@ -29,6 +29,8 @@ scripts/**
 
 # Infrastructure, identity, access, deployment shape
 infra/**
+# Owner steps that keep the risk-gate app key on main only
+docs/runbooks/risk-gate-app.md
 Dockerfile
 
 # Data shape and destructive operations

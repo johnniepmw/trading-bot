@@ -12,7 +12,12 @@ high risk + owner `/approve-risk <full 40-hex sha>` comment equal to the current
   an agent acting as the owner via the Claude app, do not count)
 high risk otherwise                   -> pending (+ one explanatory comment per head SHA)
 
-Env: GH_TOKEN, GITHUB_REPOSITORY, PR, APPROVER (owner login), GITHUB_SERVER_URL, GITHUB_RUN_ID
+The `risk-gate` status is posted with STATUS_TOKEN, a token of the dedicated risk-gate
+GitHub App whose key only the default branch can read (environment `risk-gate`); the
+ruleset can then require that status from that app alone. Everything else uses GH_TOKEN.
+
+Env: GH_TOKEN, STATUS_TOKEN, GITHUB_REPOSITORY, PR, APPROVER (owner login),
+GITHUB_SERVER_URL, GITHUB_RUN_ID
 """
 
 from __future__ import annotations
@@ -35,13 +40,16 @@ APPROVE = re.compile(r"^\s*/approve-risk\s+([0-9a-f]{40})\b", re.IGNORECASE | re
 MARKER = "<!-- risk-gate:{sha} -->"
 
 
-def gh_api(path: str, *args: str, paginate: bool = False) -> object:
+def gh_api(path: str, *args: str, paginate: bool = False, token: str | None = None) -> object:
     cmd = ["gh", "api", path, *args]
+    if token == "":
+        raise ValueError("empty token")  # never fall back to the workflow token
+    env = {**os.environ, "GH_TOKEN": token} if token is not None else None
     if paginate:
         cmd += ["--paginate", "--slurp"]  # one JSON array of pages
-        out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env).stdout
         return [item for page in json.loads(out or "[]") for item in page]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         proc.check_returncode()
@@ -131,11 +139,16 @@ def set_status(repo: str, sha: str, state: str, description: str) -> None:
         f"description={description[:139]}",
         "-f",
         f"target_url={target}",
+        token=os.environ["STATUS_TOKEN"],
     )
     print(f"{CONTEXT}: {state} — {description}")
 
 
 def main() -> int:
+    if not os.environ.get("STATUS_TOKEN"):
+        # Fail closed: the required status must come from the dedicated app, never from the
+        # workflow token (which any branch's workflow could also use).
+        sys.exit("risk-gate: STATUS_TOKEN (the risk-gate app's token) is not set")
     repo = os.environ["GITHUB_REPOSITORY"]
     pr_number = os.environ["PR"]
     approver = os.environ.get("APPROVER", "").lower()

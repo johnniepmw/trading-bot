@@ -18,6 +18,8 @@ scanning and push protection on the free plan. No GitHub Pro needed.
    - Your account's email settings: keep your commit email **private**.
 2. `make github-setup` — repo settings (squash-only, auto-merge, delete merged branches),
    the `main` ruleset with required checks, labels, Dependabot alerts and security fixes.
+   Then set up the risk-gate app and re-run it with `RISK_GATE_APP_ID`
+   ([risk-gate-app.md](risk-gate-app.md)).
 3. Agent-review credential: run `claude setup-token`, then
    `gh secret set CLAUDE_CODE_OAUTH_TOKEN` and paste at the prompt (or add it in the
    repo's Settings → Secrets and variables → Actions). Never paste it in chat.

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any
 
+import pytest
+import risk_gate
 from risk_gate import classify_pr, find_approval
 
 SHA = "abcdef0123456789abcdef0123456789abcdef01"
@@ -138,3 +141,35 @@ def test_missing_changed_files_count_is_high() -> None:
 def test_renamed_file_counts_under_both_names() -> None:
     files = [{"filename": "docs/x.md", "previous_filename": "scripts/x.py", "patch": ""}]
     assert classify_pr(pr("someone"), files, tags({}))["risk"] == "high"
+
+
+# The risk-gate status is posted with the dedicated app's token, never the workflow token
+
+
+def test_set_status_uses_the_status_token(monkeypatch: Any) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def fake_run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        seen.append({"cmd": cmd, "env": kw.get("env")})
+        return subprocess.CompletedProcess(cmd, 0, "{}", "")
+
+    monkeypatch.setenv("GH_TOKEN", "workflow-token")
+    monkeypatch.setenv("STATUS_TOKEN", "app-token")
+    monkeypatch.setattr(risk_gate.subprocess, "run", fake_run)
+    risk_gate.set_status("o/r", SHA, "success", "ok")
+    assert len(seen) == 1
+    assert seen[0]["cmd"][2] == f"repos/o/r/statuses/{SHA}"
+    assert seen[0]["env"]["GH_TOKEN"] == "app-token"  # noqa: S105 (fake value)
+
+
+def test_main_fails_closed_without_a_status_token(monkeypatch: Any) -> None:
+    def no_api(*a: Any, **k: Any) -> Any:
+        raise AssertionError("no API call without a status token")
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR", "1")
+    monkeypatch.delenv("STATUS_TOKEN", raising=False)
+    monkeypatch.setattr(risk_gate, "gh_api", no_api)
+    with pytest.raises(SystemExit) as exc:
+        risk_gate.main()
+    assert exc.value.code != 0
