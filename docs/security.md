@@ -55,9 +55,13 @@
   comment by the approver that was not posted through a GitHub App
   (`performed_via_github_app` is null). In cloud sessions the agent acts as the owner
   through the Claude GitHub App, so its comments carry that field and don't count; the
-  owner approves from the GitHub web UI or app. This closes the comment route only: the
-  required `risk-gate` status is matched by name, so anything that can post a commit
-  status could still set it (tech-debt).
+  owner approves from the GitHub web UI or app.
+- The `risk-gate` status itself is posted by a dedicated GitHub App (commit statuses
+  only), whose private key is a secret of the `risk-gate` environment, readable only from
+  `main`. The `main` ruleset requires `risk-gate` from that app (`integration_id`), so a
+  status posted by a workflow on another branch, or any other token, doesn't count
+  ([runbooks/risk-gate-app.md](runbooks/risk-gate-app.md)). `agent-review` is still
+  matched by name (tech-debt).
 - A Dependabot workflow bump is also checked against the action's own repo: each pinned
   SHA must be the commit its `# vX.Y.Z` tag names there, so a commit pushed to a fork
   ("imposter commit") can't pass as a version bump.

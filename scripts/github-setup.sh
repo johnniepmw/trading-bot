@@ -16,8 +16,20 @@ gh api -X PATCH "repos/$repo" \
 gh api -X PUT "repos/$repo/vulnerability-alerts" >/dev/null || echo "warn: vulnerability alerts"
 gh api -X PUT "repos/$repo/automated-security-fixes" >/dev/null || echo "warn: automated security fixes"
 
+# The required `risk-gate` status is pinned to the dedicated risk-gate GitHub App (its
+# numeric App ID, not the client ID), so a status posted by any other token (e.g. a
+# workflow on another branch) doesn't count. Without RISK_GATE_APP_ID it is matched by
+# name only: set it once the app is installed and risk-gate is posting through it.
+if [ -n "${RISK_GATE_APP_ID:-}" ]; then
+  case "$RISK_GATE_APP_ID" in *[!0-9]*) echo "RISK_GATE_APP_ID must be the numeric App ID" >&2; exit 1 ;; esac
+  risk_gate_check="{ \"context\": \"risk-gate\", \"integration_id\": $RISK_GATE_APP_ID }"
+else
+  echo "warn: RISK_GATE_APP_ID not set; the risk-gate status is matched by name only"
+  risk_gate_check='{ "context": "risk-gate" }'
+fi
+
 # Ruleset for the default branch.
-ruleset="$(cat <<'JSON'
+ruleset="$(cat <<JSON
 {
   "name": "main-protection",
   "target": "branch",
@@ -40,7 +52,7 @@ ruleset="$(cat <<'JSON'
         "required_status_checks": [
           { "context": "ci-required" },
           { "context": "agent-review" },
-          { "context": "risk-gate" } ] } }
+          $risk_gate_check ] } }
   ]
 }
 JSON
