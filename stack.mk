@@ -7,7 +7,7 @@ STACK_TYPECHECK  := uv run mypy
 STACK_TEST_UNIT  := uv run pytest -q -m "not e2e and not integration and not flaky" --ignore=tests/e2e
 STACK_TEST_INT   := uv run pytest -q -m "integration and not flaky" || [ $$? -eq 5 ]
 STACK_TEST_ONE   := uv run pytest -q $(T)
-STACK_ARCH       := PYTHONPATH=src uv run lint-imports --config .importlinter
+STACK_ARCH       := PYTHONPATH=src uv run lint-imports .importlinter
 STACK_E2E_SETUP  := @echo "e2e-setup: nothing to install for the python stack"
 STACK_E2E        := uv run pytest -q tests/e2e $(if $(E2E_INCLUDE_QUARANTINED),,-m "not flaky")
 STACK_DEV        := PYTHONPATH=src uv run python -m tradingbot.app smoke

@@ -13,10 +13,10 @@ working, and a checklist of what only the owner can do. No strategy code.
 ## Acceptance criteria
 | # | Criterion (observable, pass/fail) | Evidence |
 |---|---|---|
-| AC1 | Python stack applied; `make check` passes locally | `make check`: ruff, mypy strict (16 files), 38 unit tests, 7 import contracts kept, docs-check 0 errors, flags-check 0 errors, gitleaks "no leaks found", actionlint and shellcheck clean (2026-11-21) |
+| AC1 | Python stack applied; `make check` passes locally | `make check`: ruff, mypy strict (16 files), 38 unit tests (+1 strict xfail tripwire), 8 import contracts kept, docs-check 0 errors, flags-check 0 errors, gitleaks "no leaks found", actionlint and shellcheck clean (2026-11-21) |
 | AC2 | `make e2e` passes: the job entry point runs as Cloud Run will run it | `tests/e2e/test_smoke.py`: 3 passed |
 | AC3 | Package layout from the brief exists under `src/tradingbot/` | `find src/tradingbot -name __init__.py` (domain, data, strategy, portfolio, risk, execution, brokers/{trading212,fake}, ledger, config, app) |
-| AC4 | The four import contracts are enforced, each fails when violated, and loosening them is high risk | `make arch` 7 contracts kept; planted-violation table below; `.importlinter` and `stack.mk` in risk paths (`risk_classify.py --paths stack.mk .importlinter` → high) |
+| AC4 | The four import contracts are enforced, each fails when violated, and loosening them is high risk | `make arch` 8 contracts kept; planted-violation table below; `.importlinter` and `stack.mk` in risk paths (`risk_classify.py --paths stack.mk .importlinter` → high) |
 | AC5 | `Money` refuses to mix GBP and GBX and rejects floats | `tests/domain/test_money.py` (23 tests incl. Hypothesis properties; currency must be a `Currency` member) |
 | AC6 | Kill switch `new-orders` registered and visible to the job | `flags.json`; `tests/app/test_main.py`, `tests/e2e/test_smoke.py::test_kill_switch_override_is_visible_to_the_job` |
 | AC7 | ADRs 0006–0011, 0013, 0014 accepted; 0012 proposed (deferred) | `docs/adr/README.md`; docs-check passes |
@@ -88,6 +88,11 @@ working, and a checklist of what only the owner can do. No strategy code.
   otherwise shadow it), and config files that could shadow gate settings (`setup.cfg`,
   `tox.ini`, `pytest.ini`, `mypy.ini`, `ruff.toml`, `.gitleaksignore` and dotted
   variants) are risk paths; they don't exist, so they cost no approvals until created.
+- Round 2 (security): 3b–3d became allow-lists (`type = protected`), so new subpackages
+  can't reach `execution` or `brokers` by default; 3a stays a deny-list because protected
+  contracts can't name packages nothing imports yet (`httpx`). A strict-xfail test is a
+  tripwire for the kill-switch fail-open. The risk-gate self-approval fix stays an owner
+  decision (it changes how the owner's own approvals are checked), flagged in the brief.
 - Contract 3c added (only `app` imports `execution`; only `execution` and `app` import
   `brokers`); contract 2a also forbids `importlib`, `subprocess`, `asyncio`, `ssl` and
   `pathlib`; 3a forbids `socket` and `subprocess`.
@@ -137,7 +142,12 @@ working, and a checklist of what only the owner can do. No strategy code.
 | `strategy` | `import importlib` | 2a |
 | `strategy` | `import subprocess` | 2a and 3a |
 | `ledger` | `import socket` | 3a |
-Clean tree: 7 kept, 0 broken.
+| new `reporting` package | `import tradingbot.execution` | 3c (allow-list) |
+| new `reporting` package | `import tradingbot.brokers` | 3d (allow-list) |
+| `execution` | `import tradingbot.brokers.fake` | 3b |
+| `data`, with a placeholder `setup.cfg` present | `import tradingbot.execution` | 3c (the shadow file is ignored) |
+Clean tree: 8 kept, 0 broken. Known gap: a *new* subpackage importing `urllib` passes until
+it is added to 3a's sources (documented in `.importlinter` and ARCHITECTURE.md).
 
 ### Hook tests (payload piped into the exact command from `.claude/settings.json`)
 | Hook | Payload | Expected | Exit | Result |
@@ -198,6 +208,14 @@ Stop-gate cases ran in a temporary git worktree.
   wider 2a/3a; Dockerfile digest pin and root-owned files; phase0 usage reads keys
   without shell history, says Python 3.11+, and the ignore pattern covers
   `phase0_report*.json`. Deferred with reasons: see Decisions and tech-debt.
+- Round 2 (reviewer): 1 blocking (`setup.cfg` could shadow `.importlinter`) fixed by
+  naming the file in `make arch` and listing shadowing config names as risk paths;
+  ARCHITECTURE contract list and AC12 evidence corrected.
+- Round 2 (security-reviewer): same blocker (fixed); verified that `disableAllHooks`
+  stops project hooks in claude-code-action (CLI 2.1.330, action @v1 source read);
+  contracts 3b–3d moved to allow-lists; kill-switch tripwire test added; remaining
+  deferrals judged acceptable for Phase 0. Residual: `claude-code-action@v1` is a floating
+  tag (pre-existing; tech-debt).
 
 ## Outcome
 <filled when shipped>

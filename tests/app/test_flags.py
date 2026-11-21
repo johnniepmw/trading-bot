@@ -73,3 +73,14 @@ def test_refreshes_at_most_once_per_interval() -> None:
     clock[0] = 31.0
     flags.is_enabled("home-greeting")
     assert source.calls == 2
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="tech-debt 2026-11-21: kill switches fail open on a cold start; fix before orders read them",
+)
+def test_kill_switch_is_off_when_the_first_fetch_fails() -> None:
+    # A Cloud Run job starts cold every run, so there are no last good overrides to keep.
+    registry = {"new-orders": FlagSpec(type="kill-switch", default=True)}
+    flags = Flags(registry, env={}, source=FakeSource(RuntimeError("storage down")))
+    assert flags.is_enabled("new-orders") is False
