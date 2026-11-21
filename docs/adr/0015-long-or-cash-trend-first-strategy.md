@@ -20,13 +20,14 @@ so the process matters as much as the rule.
 3. **Mean reversion or ML signals**: more fitting risk, shorter evidence; ML is Phase 5.
 
 ## Decision
-Option 1. At each month end, an asset is held only while its close is above its
-10-month (about 210 trading-day) simple moving average, otherwise that sleeve is cash.
-Held assets get equal weight, capped per position, and total exposure is scaled down
-(never up, no leverage) when realised portfolio volatility exceeds a 10% annual target.
-Orders are generated at the next session. Parameters are fixed in the strategy spec
-**before** any real-data result is seen and are not tuned. The spec's validation
-process and gate decide whether paper trading starts; the owner decides on real money.
+Option 1. The portfolio is N fixed sleeves of 1/N each (capped at 25%). At each month
+end a sleeve is invested only while its asset's close is above its 210-trading-day
+(about 10-month) simple moving average, otherwise that sleeve is cash. Total exposure is
+scaled down (never up, no leverage) when estimated volatility exceeds a 10% annual
+target. Orders go out for the next session. The exact rule and every parameter are in the
+strategy spec and are a-priori choices, fixed **before** any real-data result is seen and
+not tuned. The spec's validation process and gate decide whether paper trading starts;
+the owner decides on real money.
 
 ## Consequences
 - Good: few parameters, easy to test, matches the pure-core design, cheap to trade.
