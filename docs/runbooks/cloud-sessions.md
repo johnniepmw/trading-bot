@@ -32,19 +32,20 @@ don't load plugins from a repository, so it is deliberately not a plugin here.)
 If any of these fail, AGENTS.md and `docs/workflow.md` still drive the same loop and CI
 still gates every merge; tell Claude what you saw.
 
-## Model and effort: does the web picker or the repo win?
-`.claude/settings.json` sets `"model": "opus"` and `"effortLevel": "high"`. Claude Code
-treats an explicit choice (`/model`, `/effort`, `--model`, `--effort`) as stronger than
-settings, so the model picker on claude.ai/code may win. Check once per environment:
-1. Start a fresh session, without changing the picker. Run `/status`.
-2. Note the model and effort it shows, then pick a different model in the picker, start
-   another session and run `/status` again.
-
-Result: **not yet checked** (record the date, what `/status` showed, and which won).
-If the picker wins, pick Opus there. Subagent and skill model and effort pins apply
-either way, unless the environment sets `CLAUDE_CODE_EFFORT_LEVEL` (`/status` or
-`echo $CLAUDE_CODE_EFFORT_LEVEL` shows it); if it does, remove it from the environment
-settings.
+## Model and effort: the session picker wins
+**Checked 21 Nov 2026** (sessions started from the Android app). Cloud sessions ignore
+`"model"` and `"effortLevel"` in `.claude/settings.json`: the session's own picker sets
+both. With the picker on Sonnet the session ran Sonnet; effort was medium in both runs,
+although the repo says high. `CLAUDE_CODE_EFFORT_LEVEL` was unset.
+- **When you start a cloud session, pick Opus and High** (xhigh for high-risk work). The
+  repo values still apply on the desktop app and the CLI.
+- The kit's subagent and skill pins (reviewers on Opus, qa and `/garden` on Sonnet,
+  `Explore` on Haiku) apply whatever the picker says.
+- `/status` isn't available in cloud sessions. To check, ask Claude for its exact model
+  ID and to run
+  `echo "effort=$CLAUDE_EFFORT override=${CLAUDE_CODE_EFFORT_LEVEL:-unset}"`. If
+  `override` isn't `unset`, remove that variable from the environment settings: it
+  overrides the subagent pins.
 
 ## Differences from the desktop app
 - **GitHub CLI**: the cloud GitHub proxy blocks GraphQL, so `gh pr` and `gh issue` fail.
