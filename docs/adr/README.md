@@ -19,3 +19,4 @@ Accepted ADRs are never rewritten; a new ADR supersedes them.
 | [0012](0012-static-egress-ip.md) | Static egress IP via Direct VPC egress and Cloud NAT | proposed (deferred to Phase 4) |
 | [0013](0013-ledger-sqlite-in-gcs.md) | Ledger storage: SQLite in a versioned GCS bucket with a generation-match lock | accepted |
 | [0014](0014-public-repository.md) | Public repository | accepted |
+| [0015](0015-long-or-cash-trend-first-strategy.md) | A long-or-cash ETF trend system as the first strategy | accepted |
