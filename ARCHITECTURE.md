@@ -63,8 +63,10 @@ Each should have a test; the ones marked (Phase 0) already do.
   every run starts by reconciling the ledger with the broker.
 - **Config**: typed and validated at start-up; invalid config means the bot refuses to
   start.
-- **Kill switch**: the `new-orders` flag off means no new orders (Phase 0 reports its
-  state in `smoke`).
+- **Kill switch**: the `new-orders` flag off means no new orders, and it fails closed: an
+  unreadable, missing or malformed remote source, a missing `FLAGS_BUCKET` outside
+  local/test, or an env `on` in a deployed environment all mean off or no start
+  (`tests/app/test_flags.py`, `tests/app/test_main.py`).
 - **Live trading is owner-only**: the live switch and capital allocation come from the
   `operator` secret; missing or invalid means paper trading (ADR-0009).
 - **Risk ceilings are constants in code**: no leverage; a hard stop at a 20% drawdown

@@ -25,3 +25,9 @@ def test_kill_switch_override_is_visible_to_the_job(run_job: RunJob) -> None:
 def test_unknown_command_fails_closed(run_job: RunJob) -> None:
     result = run_job("place-orders")
     assert result.returncode != 0
+
+
+def test_deployed_job_without_a_flags_bucket_refuses_to_start(run_job: RunJob) -> None:
+    result = run_job("smoke", env={"APP_ENV": "prod", "FLAGS_BUCKET": ""})
+    assert result.returncode == 1
+    assert result.stdout == ""

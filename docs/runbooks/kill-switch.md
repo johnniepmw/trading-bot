@@ -12,5 +12,8 @@ than a rollback; works without a deploy.
    removes the override so the registry default applies, or `action=set` with
    `value=true|false` to force a value.
 
+The kill switch fails closed: if the bot can't read the override file (or it is missing
+or malformed) it places no orders and logs `kill switch closed`. Never delete the file.
+
 The override file is `gs://<project>-flags-prod/flags.json`; the workflow keeps a
 timestamped history of each change in the run log.
