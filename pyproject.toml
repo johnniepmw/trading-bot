@@ -40,7 +40,7 @@ markers = [
 # Import contracts live in .importlinter (a high-risk path).
 
 [tool.mutmut]
-paths_to_mutate = ["src/tradingbot/domain/"]
+paths_to_mutate = ["src/tradingbot/domain/", "src/tradingbot/risk/"]
 tests_dir = ["tests/"]
 
 [dependency-groups]
@@ -50,5 +50,6 @@ dev = [
     "mutmut>=3.8.1",
     "mypy>=2.4.1",
     "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.17.6",
 ]
