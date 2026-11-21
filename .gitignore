@@ -52,4 +52,7 @@ phase0_report*.json
 
 # Real market data stays out of the public repo (licensing, ADR-0014); research reads it from a private bucket
 research/data/
-research/**/*.csv
+*.csv
+*.parquet
+research/**/*.json
+.import_linter_cache/

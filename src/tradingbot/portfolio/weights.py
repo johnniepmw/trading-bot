@@ -51,6 +51,8 @@ def vol_scaled(
 
     The estimate uses the last VOL_DAYS daily returns of the weighted portfolio.
     """
+    if not 0 < target < 1:  # also false for NaN
+        raise ValueError(f"volatility target must be a fraction between 0 and 1, got {target}")
     held = {i: w for i, w in weights.items() if w > 0}
     if not held:
         return dict(weights)

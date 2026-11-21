@@ -45,7 +45,10 @@ contracts in `.importlinter`):
    only `execution` and `app` import `brokers`, so every order goes through the path that
    applies risk (3c, 3d). Only `app` imports `brokers.trading212` or `brokers.fake` (3b).
 4. `research` is never imported by `src`. `backtest` is in contracts 1, 2a (the pure core
-   can't import it) and 3a (no HTTP); 3b–3d keep it away from `execution` and brokers.
+   can't import it) and 3a (no HTTP); 3b–3d keep it away from `execution` and brokers;
+   6 stops it reading the environment or files or reaching `app`.
+6. `research` is analysed too (`root_packages`); 7 keeps it off the order path (no
+   `execution`, brokers, `app` or `ApprovedOrder`), and the `ApprovedOrder` scan covers it.
 5. Only `risk`, `execution` and `brokers` import `domain.approval` (`ApprovedOrder`), and
    only `risk` constructs one (`tests/domain/test_approval.py`), so an order that skipped
    risk cannot reach the order port (ADR-0016).

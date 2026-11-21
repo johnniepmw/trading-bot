@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from research.validation import (
+    _moments,
     annual_sharpe,
     buy_and_hold,
     deflated_sharpe,
@@ -102,3 +103,59 @@ def test_csv_bars_are_loaded_and_validated(tmp_path: Path) -> None:
     bad.write_text("date,open,close\n2020-01-02,100,101\n2020-01-03,10100,10200\n")
     with pytest.raises(DataError):
         load_bars_csv(bad, EQ)
+
+
+# --- review round 1: pin the gate statistics to hand-computed values ------------------
+def test_moments_of_a_known_series() -> None:
+    # +1/-1 alternating: mean 0, population sd 1, skew 0, raw (non-excess) kurtosis 1
+    assert _moments([1.0, -1.0] * 50) == pytest.approx((0.0, 0.0, 1.0))
+
+
+def test_probabilistic_sharpe_by_hand_with_skew_and_fat_tails() -> None:
+    # SR 0.1, SR* 0, n 101, skew -0.5, kurtosis 5:
+    # spread = sqrt(1 - (-0.5)(0.1) + (5-1)/4 * 0.1^2) = sqrt(1.06) = 1.029563
+    # z = 0.1 * sqrt(100) / 1.029563 = 0.971286 ; Phi(z) = 0.834297
+    assert probabilistic_sharpe(0.1, 0.0, n=101, skew=-0.5, kurtosis=5.0) == pytest.approx(0.834297, abs=1e-6)
+
+
+def test_deflated_sharpe_by_hand() -> None:
+    # returns +3%/-1% x50: mean 0.01, sample sd 0.020101 -> SR 0.497494; skew 0, kurtosis 1
+    # trials [0.02, 0.04, 0.06]: sd 0.02
+    # E[max] = 0.02 * (0.422784 * 0.430727 + 0.577216 * 1.161957) = 0.017056
+    # z = (0.497494 - 0.017056) * sqrt(99) = 4.780294 ; Phi(z) = 0.99999912
+    assert deflated_sharpe([0.03, -0.01] * 50, trial_sharpes=[0.02, 0.04, 0.06]) == pytest.approx(
+        0.99999912, abs=1e-8
+    )
+
+
+def test_drawdown_quantile_is_the_q_quantile_of_bootstrapped_depths() -> None:
+    rng = random.Random(3)  # noqa: S311 - synthetic returns
+    returns = [rng.gauss(0.0003, 0.01) for _ in range(400)]
+    paths = stationary_bootstrap(returns, mean_block=20, samples=200, seed=9)
+    depths = sorted(
+        max_drawdown(list(itertools.accumulate(p, lambda v, r: v * (1 + r), initial=1.0))) for p in paths
+    )
+    assert drawdown_quantile(returns, q=0.95, samples=200, seed=9) == depths[189]  # ceil(0.95*200) - 1
+    assert drawdown_quantile(returns, q=0.95, samples=200, seed=9) >= drawdown_quantile(
+        returns, q=0.5, samples=200, seed=9
+    )
+
+
+@pytest.mark.parametrize("q", [0.0, -0.1, 1.5])
+def test_drawdown_quantile_needs_q_in_zero_to_one(q: float) -> None:
+    with pytest.raises(ValueError, match="q"):
+        drawdown_quantile([0.01] * 10, q=q, samples=10)
+
+
+def test_windows_starting_on_29_february_roll_to_1_march() -> None:
+    days = [date(2016, 2, 29), date(2018, 6, 1), date(2021, 3, 1), date(2023, 1, 2)]
+    windows = rolling_windows(days, [100.0, 101.0, 102.0, 103.0], years=5)
+    assert [(w.start, w.end) for w in windows] == [(date(2016, 2, 29), date(2021, 3, 1))]
+
+
+def test_csv_opens_must_be_adjusted_like_the_closes(tmp_path: Path) -> None:
+    # an unadjusted open next to an adjusted close (a common data-export mistake) is refused
+    mixed = tmp_path / "mixed.csv"
+    mixed.write_text("date,open,close\n2020-01-02,150,101\n")
+    with pytest.raises(DataError, match="adjusted"):
+        load_bars_csv(mixed, EQ)

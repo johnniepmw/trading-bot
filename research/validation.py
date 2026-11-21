@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from tradingbot.data.prices import validate_history
+from tradingbot.data.prices import DataError, validate_history
 from tradingbot.domain.market import Bar, Instrument, price_money
 
 TRADING_DAYS = 252
@@ -99,7 +99,9 @@ def stationary_bootstrap(
 def drawdown_quantile(
     returns: Sequence[float], *, q: float, samples: int = 5000, seed: int = 0, mean_block: int = 20
 ) -> float:
-    """The q-quantile of maximum drawdown across bootstrapped paths."""
+    """The q-quantile of maximum drawdown across bootstrapped paths (0 < q <= 1)."""
+    if not 0 < q <= 1:
+        raise ValueError(f"q must be in (0, 1], got {q}")
     depths = sorted(
         max_drawdown(list(itertools.accumulate(path, lambda v, r: v * (1 + r), initial=1.0)))
         for path in stationary_bootstrap(returns, mean_block=mean_block, samples=samples, seed=seed)
@@ -115,13 +117,20 @@ class Window:
     max_drawdown: float
 
 
+def _years_later(day: date, years: int) -> date:
+    try:
+        return day.replace(year=day.year + years)
+    except ValueError:  # 29 February in a non-leap target year
+        return date(day.year + years, 3, 1)
+
+
 def rolling_windows(days: Sequence[date], equity: Sequence[float], *, years: int = 5) -> list[Window]:
     """Consecutive, non-overlapping windows of `years` years (parameters are fixed, so this is
     sub-period analysis, not walk-forward refitting)."""
     windows, start = list[Window](), 0
     while True:
         first = days[start]
-        target = first.replace(year=first.year + years)
+        target = _years_later(first, years)
         end = next((j for j in range(start, len(days)) if days[j] >= target), None)
         if end is None:
             return windows
@@ -149,6 +158,11 @@ def log_trial(path: Path, name: str, params: Mapping[str, object], *, sharpe: fl
         log.write(f"| {name} | {dict(params)} | {sharpe:.6f} | {days} |\n")
 
 
+# Opens and closes must be adjusted the same way. A raw open next to an adjusted close is a
+# common export mistake that would fake large losses on every backtest fill.
+MAX_OPEN_CLOSE_GAP = 0.20
+
+
 def load_bars_csv(path: Path, instrument: Instrument) -> list[Bar]:
     """Read `date,open,close` rows (adjusted prices, quote currency) and validate them."""
     with path.open(newline="") as file:
@@ -161,4 +175,7 @@ def load_bars_csv(path: Path, instrument: Instrument) -> list[Bar]:
             )
             for row in csv.DictReader(file)
         ]
+    for bar in bars:
+        if abs(bar.open / bar.close - 1) > MAX_OPEN_CLOSE_GAP:
+            raise DataError(f"{instrument.ticker} {bar.day}: open and close not adjusted alike")
     return list(validate_history(instrument, bars))

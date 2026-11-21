@@ -18,6 +18,8 @@ def in_trend(closes: Sequence[float], days: int = SMA_DAYS) -> bool:
 
     `days` is SMA_DAYS in production; other values exist only for logged stability trials.
     """
+    if days < 2:  # noqa: PLR2004 - an average needs two days
+        raise ValueError(f"the average needs at least 2 days, got {days}")
     if len(closes) < days:
         return False
     window = closes[-days:]

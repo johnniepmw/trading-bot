@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -8,10 +9,10 @@ from pathlib import Path
 import pytest
 
 from tests.backtest.synthetic import UNIVERSE, market
-from tests.bars import bars
+from tests.bars import bars, weekdays
 from tradingbot.backtest.engine import BacktestConfig, run
 from tradingbot.data.prices import DataError
-from tradingbot.domain.market import Instrument, Side
+from tradingbot.domain.market import Bar, Instrument, Side
 from tradingbot.domain.money import Currency
 from tradingbot.strategy.trend import month_end_days
 
@@ -128,3 +129,65 @@ def test_regression_on_the_frozen_synthetic_market(result) -> None:
         "first_fill": str(result.fills[0].day),
     }
     assert actual == expected, f"regression changed: {actual}"
+
+
+# --- review round 1 ----------------------------------------------------------------
+def _first_buy_fraction(res) -> float:
+    equity = dict(res.equity)
+    buys = [f for f in res.fills if f.side is Side.BUY]
+    first = buys[0].signal_day
+    return max(float(f.quantity * f.price_gbp / equity[first]) for f in buys if f.signal_day == first)
+
+
+def test_the_volatility_cap_binds_when_the_target_is_low(history, result) -> None:
+    capped = run(history, BacktestConfig(initial_cash=Decimal(1000), steps=STEPS, vol_target=0.02))
+    assert _first_buy_fraction(result) > 0.2  # uncapped: a full 25% sleeve
+    assert _first_buy_fraction(capped) < 0.15  # a ~4%-vol sleeve scaled to a 2% target
+    assert capped.equity[-1][1] != result.equity[-1][1]
+
+
+def test_buys_never_spend_sale_proceeds_from_the_same_day(result) -> None:
+    # each day's buys (with costs) fit in the cash at the previous close, before that day's sells
+    days = [d for d, _ in result.equity]
+    for k, day in enumerate(days[1:], start=1):
+        spent = sum(
+            (f.quantity * f.price_gbp + f.cost for f in result.fills if f.day == day and f.side is Side.BUY),
+            Decimal(0),
+        )
+        assert spent <= result.cash[k - 1]
+
+
+def test_a_later_price_never_changes_a_signal_days_decisions(history, result) -> None:
+    # perturb every bar after a signal day: that day's decisions must not change (no one-day lookahead)
+    signal_day = sorted({d for d, _ in result.decisions})[2]
+    shocked = {
+        i: [b if b.day <= signal_day else Bar(i, b.day, open=b.open * 1.5, close=b.close * 1.5) for b in bs]
+        for i, bs in history.items()
+    }
+    again = run(shocked, CONFIG)
+    assert [d for d in again.decisions if d[0] == signal_day] == [
+        d for d in result.decisions if d[0] == signal_day
+    ]
+
+
+def test_an_order_for_a_fund_without_a_session_waits_for_its_next_one() -> None:
+    eq, other = UNIVERSE[0], UNIVERSE[2]
+    days = weekdays(date(2018, 1, 1), 260)
+    up = [100 + t * 0.2 for t in range(260)]
+    signal_day = min(d for d in month_end_days(days) if d >= days[209])  # the first buy
+    gap = days[days.index(signal_day) + 1]  # eq has no session the day after the signal
+    history = {
+        eq: [Bar(eq, d, open=c, close=c) for d, c in zip(days, up, strict=True) if d != gap],
+        other: [Bar(other, d, open=50.0, close=50.0) for d in days],
+    }
+    fills = [f for f in run(history, CONFIG).fills if f.instrument == eq and f.signal_day == signal_day]
+    assert [f.day for f in fills] == [days[days.index(gap) + 1]]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"sma_days": 1}, {"sma_days": -5}, {"vol_target": 0.0}, {"vol_target": 15.0}, {"vol_target": math.nan}],
+)
+def test_backtest_parameters_are_checked(bad: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match=r"sma_days|vol_target"):
+        BacktestConfig(initial_cash=Decimal(1000), steps=STEPS, **bad)  # type: ignore[arg-type]

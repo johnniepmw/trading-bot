@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -69,3 +70,9 @@ def test_a_later_bar_never_changes_an_earlier_signal(closes: list[float], later:
 def test_signals_do_not_depend_on_bar_order() -> None:
     history = bars(VWRP, [100.0] * 209 + [101.0])
     assert signals({VWRP: list(reversed(history))}, history[-1].day) == {VWRP: True}
+
+
+@pytest.mark.parametrize("bad", [0, 1, -5])
+def test_the_average_window_must_be_at_least_two_days(bad: int) -> None:
+    with pytest.raises(ValueError, match="days"):
+        in_trend([100.0] * 300, bad)

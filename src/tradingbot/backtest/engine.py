@@ -7,7 +7,9 @@ simulator (it can't use `execution` or brokers). Each trading day:
 2. at the close, mark equity and the high-water mark;
 3. on a completed month's last trading day, compute signals, sleeve weights, the
    volatility cap and orders, and pass them through `risk.review` with this day's state.
-Sale proceeds never fund buys decided in the same run, as in live trading.
+Sale proceeds never fund buys decided in the same run, as in live trading: buys are
+limited to the cash held before that day's sells. An order for a fund with no session
+that day waits for the fund's next session (until the next signal replaces it).
 """
 
 from __future__ import annotations
@@ -37,6 +39,12 @@ class BacktestConfig:
     limits: Limits = field(default_factory=Limits)
     sma_days: int = SMA_DAYS  # production value; others only for logged stability trials
     vol_target: float = VOL_TARGET
+
+    def __post_init__(self) -> None:
+        if self.sma_days < 2:  # noqa: PLR2004 - an average needs two days
+            raise ValueError(f"sma_days must be at least 2, got {self.sma_days}")
+        if not 0 < self.vol_target < 1:  # also false for NaN
+            raise ValueError(f"vol_target must be a fraction between 0 and 1, got {self.vol_target}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +99,7 @@ def _run(history: Mapping[Instrument, Sequence[Bar]], config: BacktestConfig) ->
     pending: list[tuple[date, Order]] = []
     result = Result([], [], [], [])
     for day in days:
-        _fill(book, pending=pending, by_day=by_day, day=day, config=config, result=result)
-        pending = []
+        pending = _fill(book, pending=pending, by_day=by_day, day=day, config=config, result=result)
         for i, bars in by_day.items():
             if day in bars:
                 book.last_close[i] = _gbp(bars[day].close, i)
@@ -158,16 +165,21 @@ def _fill(  # noqa: PLR0913 - the day's fills need the book, the orders and the 
     day: date,
     config: BacktestConfig,
     result: Result,
-) -> None:
+) -> list[tuple[date, Order]]:
+    """Fill what can fill at today's open; return the orders whose fund had no session
+    today (they wait for its next session, until the next signal replaces them)."""
+    waiting: list[tuple[date, Order]] = []
+    spendable = book.cash  # before today's sells: sale proceeds never fund buys
     for signal_day, order in pending:  # risk already ordered sells before buys
         bar = by_day[order.instrument].get(day)
         if bar is None:
-            continue  # no session for this fund today: the order lapses
+            waiting.append((signal_day, order))
+            continue
         price = _gbp(bar.open, order.instrument)
         quantity = order.quantity
         if order.side is Side.BUY:
             # the open may gap above the signal close: never spend more than the cash
-            affordable = book.cash / (price * (1 + config.cost_per_side))
+            affordable = spendable / (price * (1 + config.cost_per_side))
             step = config.steps[order.instrument]
             quantity = min(quantity, (affordable / step).to_integral_value() * step)
             if quantity <= 0:
@@ -176,6 +188,8 @@ def _fill(  # noqa: PLR0913 - the day's fills need the book, the orders and the 
         cost = value * config.cost_per_side
         sign = 1 if order.side is Side.BUY else -1
         book.cash -= sign * value + cost
+        if order.side is Side.BUY:
+            spendable -= value + cost
         book.holdings[order.instrument] += sign * quantity
         result.fills.append(
             Fill(
@@ -189,3 +203,4 @@ def _fill(  # noqa: PLR0913 - the day's fills need the book, the orders and the 
                 book.holdings[order.instrument],
             )
         )
+    return waiting

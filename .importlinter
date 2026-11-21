@@ -5,7 +5,9 @@
 # 3a's sources (3a stays a deny-list: protected contracts can't name packages that
 # nothing imports yet, such as httpx).
 [importlinter]
-root_package = tradingbot
+root_packages =
+    tradingbot
+    research
 include_external_packages = True
 
 [importlinter:contract:domain-pure]
@@ -127,3 +129,26 @@ source_modules =
     tradingbot
 forbidden_modules =
     research
+
+[importlinter:contract:backtest-pure]
+name = 6. backtest reads no environment or files and can't reach the app (ADR-0016)
+type = forbidden
+source_modules =
+    tradingbot.backtest
+forbidden_modules =
+    tradingbot.app
+    os
+    importlib
+    pathlib
+    subprocess
+
+[importlinter:contract:research-off-the-order-path]
+name = 7. research can't reach execution, brokers, the app or ApprovedOrder
+type = forbidden
+source_modules =
+    research
+forbidden_modules =
+    tradingbot.execution
+    tradingbot.brokers
+    tradingbot.app
+    tradingbot.domain.approval

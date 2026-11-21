@@ -14,7 +14,8 @@ from tradingbot.domain.approval import ApprovedOrder
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "tradingbot"
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src" / "tradingbot"
 NAME = "ApprovedOrder"
 ORDER = Order(Instrument("VWRP", Currency.GBP), Side.BUY, Decimal(1))
 BIGGER = Order(Instrument("VWRP", Currency.GBP), Side.BUY, Decimal(100))
@@ -87,6 +88,11 @@ def test_only_risk_constructs_approved_orders() -> None:
             continue
         offenders += [f"{rel}:{line}" for line in misuses(path.read_text())]
     assert Path("domain/approval.py") in scanned  # the scan looked in the right place
+    offenders += [
+        f"research/{p.name}:{line}"
+        for p in (ROOT / "research").rglob("*.py")
+        for line in misuses(p.read_text())
+    ]
     assert offenders == []
 
 
