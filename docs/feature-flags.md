@@ -25,6 +25,10 @@ A job starts cold on every run, so it has no last good value. For flags of type
 - After one good read, later failures keep that value for 5 minutes at most, then off.
 - `FLAG_<NAME>=off` always works. `=on` works only when `APP_ENV` is `local` or `test`;
   elsewhere it is ignored (and logged), so env can never beat a remote off.
+- An env value that is neither a true nor a false spelling (`disable`, `kill`, `"off"`) closes
+  the kill switch (and logs), so a mistyped emergency value never leaves trading on. An
+  overrides object naming an unregistered flag (`new_orders`) is a failed read.
+- `APP_ENV=local|test` is ignored on Cloud Run (`CLOUD_RUN_JOB` or `K_SERVICE` set).
 - The job refuses to start (exit 1) without `FLAGS_BUCKET` unless `APP_ENV` is `local` or
   `test`. Unset `APP_ENV` counts as deployed.
 - Never name a deployed environment `local` or `test`: `APP_ENV` (set by the deploy) would make it trusted.

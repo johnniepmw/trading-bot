@@ -23,7 +23,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +46,16 @@ class FlagSource(Protocol):
 
 def load_registry(path: str | Path = "flags.json") -> dict[str, FlagSpec]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))["flags"]
-    return {name: FlagSpec(type=spec["type"], default=bool(spec["default"])) for name, spec in raw.items()}
+    for name, spec in raw.items():
+        if spec.get("type") not in get_args(FlagType) or not isinstance(spec.get("default"), bool):
+            raise ValueError(f'flags.json: "{name}" needs a known type and a true/false default')
+    return {name: FlagSpec(type=spec["type"], default=spec["default"]) for name, spec in raw.items()}
+
+
+def env_is_unrecognised(name: str, env: Mapping[str, str]) -> bool:
+    """A non-empty FLAG_<NAME> that is neither a true nor a false spelling."""
+    raw = env.get("FLAG_" + name.upper().replace("-", "_"), "").strip()
+    return bool(raw) and env_override(name, env) is None
 
 
 def env_override(name: str, env: Mapping[str, str]) -> bool | None:
@@ -99,6 +108,12 @@ class Flags:
         from_env = env_override(name, self._env)
         if spec.type != "kill-switch":
             return from_env if from_env is not None else self._overrides.get(name, spec.default)
+        return self._kill_switch_enabled(name, spec, from_env)
+
+    def _kill_switch_enabled(self, name: str, spec: FlagSpec, from_env: bool | None) -> bool:
+        if env_is_unrecognised(name, self._env):
+            log.error("kill switch closed: %s: unrecognised env value", name)
+            return False
         if from_env is False:
             return False
         if from_env is True and not self._trusted_env:
@@ -124,7 +139,11 @@ class Flags:
         if self._source is None or not self._lock.acquire(blocking=False):
             return
         try:
-            self._overrides = self._source.fetch_overrides()
+            fetched = self._source.fetch_overrides()
+            unknown = sorted(set(fetched) - set(self._registry))
+            if unknown:
+                raise ValueError(f"overrides name unregistered flags: {', '.join(unknown)}")
+            self._overrides = fetched
             self._last_good_at = self._now()
         except Exception as exc:  # noqa: BLE001 - any failure keeps last good values
             log.error("flag refresh failed: %s", exc)

@@ -59,6 +59,13 @@ def test_job_starts_without_a_flags_bucket_in_local_and_test(app_env: str) -> No
     assert json.loads(out.getvalue())["new_orders"] is True
 
 
+@pytest.mark.parametrize("marker", ["CLOUD_RUN_JOB", "K_SERVICE"])
+def test_app_env_local_is_not_trusted_on_cloud_run(marker: str) -> None:
+    out = io.StringIO()
+    code = main(["smoke"], env={"APP_ENV": "local", marker: "x"}, version="v", out=out)
+    assert code == 1
+
+
 def test_deployed_job_with_a_bucket_builds_a_gcs_backed_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:
     out = io.StringIO()
     # No network in unit tests: the bucket read fails, so the kill switch reports off.

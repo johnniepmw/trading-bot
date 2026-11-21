@@ -46,6 +46,7 @@ variable can beat a remote "off". This must be fixed before any order path reads
   switch on and whether a missing bucket is allowed. Unset counts as deployed, so the safe
   behaviour is the default. Flags takes `trusted_env: bool = False` explicitly.
 - Env `off` still works everywhere: it can only make things safer.
+- Security review round 1: unrecognised env values for a kill switch close it; overrides naming an unregistered flag fail the read; `load_registry` rejects unknown types and non-bool defaults (the open path is for release/ops only); `local`/`test` are untrusted when `CLOUD_RUN_JOB`/`K_SERVICE` is set; `APP_ENV=local` moved to `STACK_DEV` (`make dev`) and commented out in `.env.example`. Not done: a JSON log formatter (Phase 2 alert matches the message text) and a lock-contention false alert (single-threaded job).
 - "Alert" is an ERROR log line for now; the job has no alerting channel until Phase 2.
 
 ## Open questions
@@ -62,6 +63,7 @@ variable can beat a remote "off". This must be fixed before any order path reads
 - 2026-11-21 steps 1–4: tests first (failed on missing `KILL_SWITCH_MAX_STALE_SECONDS`), then `flags.py`, `__main__.py`, e2e conftest sets `APP_ENV=test`, docs, tech-debt entry removed — evidence: AC table
 
 ## Review
+- Round 1: reviewer — 1 blocking (AC6 tests), 7 non-blocking, all applied except the timeout parametrization note that is included too; security-reviewer — 1 medium and 3 low, all applied (see Decisions). 140 unit + 4 e2e pass.
 
 ## Outcome
 

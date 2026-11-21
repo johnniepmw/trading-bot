@@ -27,8 +27,9 @@ class ConfigError(Exception):
 
 
 def build_flags(env: Mapping[str, str]) -> Flags:
-    """Flags for this process. Only APP_ENV=local|test is trusted; unset means deployed."""
-    trusted = env.get("APP_ENV", "") in TRUSTED_ENVS
+    """Flags for this process. Only APP_ENV=local|test off Cloud Run is trusted; unset means deployed."""
+    on_cloud_run = bool(env.get("CLOUD_RUN_JOB") or env.get("K_SERVICE"))
+    trusted = env.get("APP_ENV", "") in TRUSTED_ENVS and not on_cloud_run
     bucket = env.get("FLAGS_BUCKET")
     if not bucket and not trusted:
         raise ConfigError("FLAGS_BUCKET is required unless APP_ENV is local or test")

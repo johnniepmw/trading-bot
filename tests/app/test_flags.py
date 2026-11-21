@@ -4,6 +4,7 @@ import json
 import logging
 import urllib.error
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,7 +14,9 @@ from tradingbot.app.flags import (
     Flags,
     FlagSpec,
     GcsSource,
+    env_is_unrecognised,
     env_override,
+    load_registry,
     parse_overrides,
 )
 
@@ -252,3 +255,42 @@ def test_gcs_source_treats_a_missing_object_as_a_failure(monkeypatch: pytest.Mon
         GcsSource("b").fetch_overrides()
     flags = Flags(REGISTRY, env={}, source=GcsSource("b"))
     assert flags.is_enabled(KILL) is False
+
+
+# Review round 2 (security)
+@pytest.mark.parametrize("value", ["disable", "kill", "n", '"off"', "off!"])
+@pytest.mark.parametrize("trusted", [True, False])
+def test_unrecognised_env_value_closes_a_kill_switch(
+    value: str, trusted: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    flags = Flags(REGISTRY, env={"FLAG_NEW_ORDERS": value}, source=FakeSource({}), trusted_env=trusted)
+    with caplog.at_level(logging.ERROR, logger="tradingbot.app.flags"):
+        assert flags.is_enabled(KILL) is False
+    assert f"kill switch closed: {KILL}: unrecognised env value" in [r.getMessage() for r in caplog.records]
+
+
+def test_empty_env_value_is_not_unrecognised() -> None:
+    assert env_is_unrecognised(KILL, {"FLAG_NEW_ORDERS": "  "}) is False
+    assert env_is_unrecognised(KILL, {}) is False
+    assert Flags(REGISTRY, env={"FLAG_NEW_ORDERS": ""}, source=FakeSource({})).is_enabled(KILL) is True
+
+
+def test_overrides_naming_an_unregistered_flag_are_a_failed_read() -> None:
+    # e.g. a hand edit that wrote new_orders instead of new-orders
+    flags = Flags(REGISTRY, env={}, source=FakeSource({"new_orders": False}))
+    assert flags.is_enabled(KILL) is False
+
+
+def test_load_registry_rejects_unknown_types_and_non_bool_defaults(tmp_path: Path) -> None:
+    good = tmp_path / "good.json"
+    good.write_text('{"flags": {"a": {"type": "kill-switch", "default": true}}}')
+    assert load_registry(good) == {"a": FlagSpec(type="kill-switch", default=True)}
+    for bad in (
+        '{"type": "kill_switch", "default": true}',
+        '{"type": "kill-switch", "default": "false"}',
+        "{}",
+    ):
+        path = tmp_path / "bad.json"
+        path.write_text('{"flags": {"a": ' + bad + "}}")
+        with pytest.raises(ValueError, match=r"flags\.json"):
+            load_registry(path)
