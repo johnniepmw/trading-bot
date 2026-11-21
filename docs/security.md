@@ -15,7 +15,11 @@
   Identity Federation (OIDC), restricted to this repository; production-capable
   identities are further restricted to `refs/heads/main`. The only stored CI secret is
   `CLAUDE_CODE_OAUTH_TOKEN` for agent-review.
-- **Leak prevention**: gitleaks in the pre-commit hook and in CI (full history). An app
+- **Leak prevention**: gitleaks in the pre-commit hook and in `make check`, which scans
+  the commits under review (`scripts/secrets-scan.sh`): a PR's own commits (`base..head`)
+  in CI, main's history on pushes to main, and the current branch (`HEAD`) locally, so a
+  leak on some other branch doesn't fail every PR. A range that doesn't resolve, or a
+  missing gitleaks in CI, fails the scan. An app
   that reads secrets also redacts them from logs, with a test that logs a fake secret
   and asserts it's redacted.
 - **Rotation**: on any suspected exposure immediately (`docs/runbooks/rotate-secret.md`),
@@ -33,7 +37,10 @@
 - New dependencies need a reason in the PR (what it replaces, maintenance status,
   licence). Prefer the standard library and existing dependencies.
 - GitHub Actions are kept to a minimum and pinned to full commit SHAs with a version
-  comment; Dependabot updates both.
+  comment; Dependabot updates both. A Dependabot PR that touches `.github/workflows/` is
+  standard risk only if every changed line is a `uses: owner/repo@<40-hex sha> # vX.Y.Z`
+  line and the same actions are removed as added; anything else, or a file GitHub sends
+  no patch for, is high risk (`scripts/risk_classify.py`).
 - Container images: minimal base, non-root user, deployed by digest, scanned (Trivy)
   in CI and nightly.
 
@@ -43,6 +50,10 @@
   values through `env:` and quote them.
 - `pull_request_target` and `issue_comment` workflows (risk-gate) only run code from the
   default branch and never check out PR code.
+- risk-gate counts an `/approve-risk <sha>` only from an unedited comment by the approver
+  that was not posted through a GitHub App (`performed_via_github_app` is null). In cloud
+  sessions the agent acts as the owner through the Claude GitHub App, so its comments
+  carry that field and can't approve; the owner approves from the GitHub web UI or app.
 - agent-review runs Claude with the review token but no hooks, and with `.claude/` and
   `CLAUDE.md` taken from the base branch (the review action does this), so a PR can't run
   code through Claude's config or change the reviewer's settings while the token is

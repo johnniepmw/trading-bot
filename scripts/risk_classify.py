@@ -24,6 +24,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PATTERNS = ROOT / ".github" / "risk-paths.txt"
 DEPENDABOT = {"dependabot[bot]", "app/dependabot"}
+# A changed line Dependabot may make in a workflow: a SHA-pinned `uses:` with its version
+# comment. Group 1 is the action (owner/repo[/path]), which must not change.
+PINNED_USES = re.compile(
+    r"^[+-]\s*(?:-\s+)?uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)@[0-9a-f]{40}\s+#\s*v\d+(?:\.\d+)*\s*$"
+)
+
+
+def is_pin_bump(patch: str | None) -> bool:
+    """True if every added or removed line of a unified diff hunk is a pinned `uses:` line,
+    and the same actions (in order) are removed as added. A missing or empty patch is False."""
+    if not patch:
+        return False
+    removed, added = [], []
+    for line in patch.splitlines():
+        if not line.startswith(("+", "-")):
+            continue
+        m = PINNED_USES.match(line)
+        if not m:
+            return False
+        (added if line.startswith("+") else removed).append(m.group(1))
+    return bool(added) and removed == added
 
 
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
@@ -61,19 +82,34 @@ def load_patterns(path: Path) -> list[tuple[str, re.Pattern[str]]]:
     return patterns
 
 
-def classify(files: list[str], patterns: list[tuple[str, re.Pattern[str]]], author: str = "") -> dict:
+def classify(
+    files: list[str],
+    patterns: list[tuple[str, re.Pattern[str]]],
+    author: str = "",
+    patches: dict[str, str | None] | None = None,
+) -> dict:
+    """`patches` maps a path to its unified-diff patch (from the GitHub PR files API). The
+    Dependabot exemption needs one for every matched workflow file; without it, high risk."""
     matches = []
     for f in files:
         for raw, rx in patterns:
             if rx.match(f):
                 matches.append({"path": f, "pattern": raw})
                 break
-    if matches and author in DEPENDABOT and all(m["path"].startswith(".github/workflows/") for m in matches):
+    patches = patches or {}
+    if (
+        matches
+        and author in DEPENDABOT
+        and all(
+            m["path"].startswith(".github/workflows/") and is_pin_bump(patches.get(m["path"]))
+            for m in matches
+        )
+    ):
         return {
             "risk": "standard",
             "matches": matches,
             "files": len(files),
-            "reason": "Dependabot version bump of GitHub Actions only",
+            "reason": "Dependabot SHA-pin bump of GitHub Actions only",
         }
     return {
         "risk": "high" if matches else "standard",

@@ -7,6 +7,8 @@ executes PR code; reads PR metadata through the GitHub API.
 
 standard risk                         -> success
 high risk + owner `/approve-risk <sha>` comment matching the current head -> success
+  (only an unedited comment the owner typed: comments posted through a GitHub App, such as
+  an agent acting as the owner via the Claude app, do not count)
 high risk otherwise                   -> pending (+ one explanatory comment per head SHA)
 
 Env: GH_TOKEN, GITHUB_REPOSITORY, PR, APPROVER (owner login), GITHUB_SERVER_URL, GITHUB_RUN_ID
@@ -42,6 +44,24 @@ def gh_api(path: str, *args: str, paginate: bool = False) -> object:
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
 
 
+def find_approval(comments: list[dict], approver: str, sha: str) -> bool:
+    """True if `approver` approved `sha` in a comment typed by a person: not posted through
+    a GitHub App (an agent acting as the owner via the Claude app sets
+    `performed_via_github_app`) and never edited (an app edit of an older owner comment
+    would keep that field null)."""
+    for c in comments:
+        if not approver or c["user"]["login"].lower() != approver:
+            continue
+        if "performed_via_github_app" not in c or c["performed_via_github_app"] is not None:
+            continue
+        if c.get("updated_at") != c.get("created_at"):
+            continue
+        for approved in APPROVE.findall(c.get("body") or ""):
+            if sha.startswith(approved.lower()):
+                return True
+    return False
+
+
 def set_status(repo: str, sha: str, state: str, description: str) -> None:
     target = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     gh_api(
@@ -73,24 +93,22 @@ def main() -> int:
         return 0
 
     files = []
+    patches: dict[str, str | None] = {}
     for f in gh_api(f"repos/{repo}/pulls/{pr_number}/files", paginate=True):
         files.append(f["filename"])
+        patches[f["filename"]] = f.get("patch")  # absent when too large or binary -> high risk
         if f.get("previous_filename"):
-            files.append(f["previous_filename"])
+            files.append(f["previous_filename"])  # no patch under the old name -> high risk
 
-    result = classify(files, load_patterns(DEFAULT_PATTERNS), author)
+    result = classify(files, load_patterns(DEFAULT_PATTERNS), author, patches)
     if result["risk"] == "standard":
         set_status(repo, sha, "success", f"Standard risk: {result['reason']}")
         return 0
 
     comments = gh_api(f"repos/{repo}/issues/{pr_number}/comments", paginate=True)
-    for c in comments:
-        if c["user"]["login"].lower() != approver:
-            continue
-        for approved in APPROVE.findall(c.get("body") or ""):
-            if sha.startswith(approved.lower()):
-                set_status(repo, sha, "success", f"High risk, approved by {approver} for {sha[:7]}")
-                return 0
+    if find_approval(comments, approver, sha):
+        set_status(repo, sha, "success", f"High risk, approved by {approver} for {sha[:7]}")
+        return 0
 
     set_status(repo, sha, "pending", f"High risk: owner must comment /approve-risk {sha[:7]}")
     marker = MARKER.format(sha=sha)
