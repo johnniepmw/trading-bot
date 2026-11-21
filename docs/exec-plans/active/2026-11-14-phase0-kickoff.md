@@ -126,6 +126,7 @@ working, and a checklist of what only the owner can do. No strategy code.
 - 2026-11-21 step 4: docs and ADRs — evidence: docs-check 0 errors
 - 2026-11-21 step 6: two review rounds each (reviewer, security-reviewer); all blocking findings fixed — evidence: Review section
 - 2026-11-21 step 7: PR https://github.com/johnniepmw/trading-bot/pull/1 opened with the owner brief
+- 2026-11-21 CI: `risk-gate-evaluate` set the `risk-gate` status to pending correctly but failed posting its explanatory comment (`gh api` exit 1, error text not logged). Likely cause: the job had `pull-requests: read`; the workflows that comment successfully have `write`. Fixed both: permission raised and the script now prints GitHub's error. The workflow runs from `main`, so the fix applies after merge; the red check on this PR isn't required for merge.
 - 2026-11-21 step 5: `make check`, `make e2e`, `make image` green (gitleaks, actionlint, shellcheck installed locally from Go/PyPI for this run)
 
 ### Import contracts: planted violations (`PYTHONPATH=src uv run lint-imports`)

@@ -29,13 +29,22 @@ APPROVE = re.compile(r"^\s*/approve-risk\s+([0-9a-f]{7,40})\b", re.IGNORECASE | 
 MARKER = "<!-- risk-gate:{sha} -->"
 
 
+def _run(cmd: list[str]) -> str:
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        # Show GitHub's error (gh writes it to stderr); the token is never in it.
+        print(f"gh api failed ({proc.returncode}): {proc.stderr.strip()}", file=sys.stderr)
+        raise subprocess.CalledProcessError(proc.returncode, cmd[:3], proc.stdout, proc.stderr)
+    return proc.stdout
+
+
 def gh_api(path: str, *args: str, paginate: bool = False) -> object:
     cmd = ["gh", "api", path, *args]
     if paginate:
         cmd += ["--paginate", "--slurp"]  # one JSON array of pages
-        out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+        out = _run(cmd)
         return [item for page in json.loads(out or "[]") for item in page]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    out = _run(cmd)
     return json.loads(out) if out.strip() else {}
 
 
