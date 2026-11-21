@@ -22,8 +22,8 @@ all agent work. Owner-only steps need a terminal with your own credentials; see 
 Ask: "List the skills, subagents and hooks you have loaded." Expect `agentic:deliver`
 and friends, the four reviewer agents, and the guard and stop-gate hooks. If the kit
 didn't load, AGENTS.md and `docs/workflow.md` still drive the same loop and CI still
-gates every merge; ask Claude to add the kit's hooks to `.claude/settings.json` (a
-high-risk PR) so they run regardless.
+gates every merge. In this repo the kit's hooks are also wired into
+`.claude/settings.json`, so the guards and stop gate run even without the plugin.
 
 ## Differences from the desktop app
 - **GitHub CLI**: the cloud GitHub proxy blocks GraphQL, so `gh pr` and `gh issue` fail.

@@ -5,14 +5,22 @@ No local terminal (e.g. a Chromebook)? Run the commands below in Google Cloud Sh
 [cloud-sessions.md](cloud-sessions.md).
 
 ## 1. GitHub
-1. Create the repo from the template ("Use this template" on `johnniepmw/agentic-dev-template`),
-   private.
-2. Needs GitHub Pro on your account (rulesets and auto-merge on private repos).
-3. `make github-setup` — repo settings (squash-only, auto-merge, delete merged branches),
+This repository is **public** (ADR-0014), which gives rulesets, auto-merge, secret
+scanning and push protection on the free plan. No GitHub Pro needed.
+1. `make github-setup`: repo settings (squash-only, auto-merge, delete merged branches),
    the `main` ruleset with required checks, labels, Dependabot alerts and security fixes.
-4. Agent-review credential: run `claude setup-token`, then
+2. Public-repo settings (repo **Settings** in the web UI, ADR-0014):
+   - **Moderation options → Interaction limits**: "Limit to repository collaborators",
+     so only collaborators can open issues and pull requests or comment. The limit
+     lasts at most six months; renew it when GitHub says it is expiring.
+   - **Actions → General → Fork pull request workflows from outside collaborators**:
+     "Require approval for all external contributors".
+   - **Code security**: Secret scanning and Push protection on.
+   - **Your account → Settings → Emails**: "Keep my email addresses private" and "Block
+     command line pushes that expose my email" on.
+3. Agent-review credential: run `claude setup-token`, then
    `gh secret set CLAUDE_CODE_OAUTH_TOKEN` and paste at the prompt. Never paste it in chat.
-5. Dependabot PRs don't receive Actions secrets; agent-review skips them by design and
+4. Dependabot PRs don't receive Actions secrets; agent-review skips them by design and
    relies on CI.
 
 ## 2. Google Cloud

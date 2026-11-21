@@ -25,3 +25,11 @@ Dockerfile
 **/secrets/**
 
 # Project-specific high-risk areas (bootstrap adds these, e.g. money and risk limits)
+# Money, risk limits, order flow and the live switch (ADR-0009)
+src/tradingbot/risk/**
+src/tradingbot/brokers/**
+src/tradingbot/execution/**
+src/tradingbot/ledger/**
+src/tradingbot/config/**
+src/tradingbot/app/**
+flags.json
