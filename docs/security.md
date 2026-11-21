@@ -50,10 +50,17 @@
   values through `env:` and quote them.
 - `pull_request_target` and `issue_comment` workflows (risk-gate) only run code from the
   default branch and never check out PR code.
-- risk-gate counts an `/approve-risk <sha>` only from an unedited comment by the approver
-  that was not posted through a GitHub App (`performed_via_github_app` is null). In cloud
-  sessions the agent acts as the owner through the Claude GitHub App, so its comments
-  carry that field and can't approve; the owner approves from the GitHub web UI or app.
+- risk-gate counts an `/approve-risk <sha>` only when the SHA is the full 40-character
+  head SHA (a 7-character prefix can be brute-forced onto a new commit), in an unedited
+  comment by the approver that was not posted through a GitHub App
+  (`performed_via_github_app` is null). In cloud sessions the agent acts as the owner
+  through the Claude GitHub App, so its comments carry that field and don't count; the
+  owner approves from the GitHub web UI or app. This closes the comment route only: the
+  required `risk-gate` status is matched by name, so anything that can post a commit
+  status could still set it (tech-debt).
+- A Dependabot workflow bump is also checked against the action's own repo: each pinned
+  SHA must be the commit its `# vX.Y.Z` tag names there, so a commit pushed to a fork
+  ("imposter commit") can't pass as a version bump.
 - agent-review runs Claude with the review token but no hooks, and with `.claude/` and
   `CLAUDE.md` taken from the base branch (the review action does this), so a PR can't run
   code through Claude's config or change the reviewer's settings while the token is

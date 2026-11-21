@@ -25,10 +25,21 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PATTERNS = ROOT / ".github" / "risk-paths.txt"
 DEPENDABOT = {"dependabot[bot]", "app/dependabot"}
 # A changed line Dependabot may make in a workflow: a SHA-pinned `uses:` with its version
-# comment. Group 1 is the action (owner/repo[/path]), which must not change.
+# comment. Groups: the action (owner/repo[/path]), which must not change; the SHA; the tag.
+# risk_gate.py also checks that the tag resolves to the SHA in owner/repo (no fork commits).
 PINNED_USES = re.compile(
-    r"^[+-]\s*(?:-\s+)?uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)@[0-9a-f]{40}\s+#\s*v\d+(?:\.\d+)*\s*$"
+    r"^[+-]\s*(?:-\s+)?uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)@([0-9a-f]{40})\s+#\s*(v\d+(?:\.\d+)*)\s*$"
 )
+
+
+def added_pins(patch: str | None) -> list[tuple[str, str, str]]:
+    """(action, sha, tag) for each added pinned `uses:` line of a patch."""
+    pins = []
+    for line in (patch or "").splitlines():
+        m = PINNED_USES.match(line)
+        if m and line.startswith("+"):
+            pins.append((m.group(1), m.group(2), m.group(3)))
+    return pins
 
 
 def is_pin_bump(patch: str | None) -> bool:

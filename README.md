@@ -28,6 +28,7 @@ deploy arrives in Phase 2, ADR-0011). Details:
 ## Owner quick reference
 - New project setup: [docs/runbooks/first-time-setup.md](docs/runbooks/first-time-setup.md)
 - Approve a high-risk PR: read its "Owner decision needed" section, then comment
-  `/approve-risk <sha>` as instructed by the risk-gate comment.
+  `/approve-risk <full sha>` as shown in the risk-gate comment (copy it; a 7-character
+  prefix no longer counts).
 - Something's wrong in production: Actions → **ops** → `rollback` or `kill`
   ([runbooks](docs/runbooks/)).

@@ -56,8 +56,8 @@ three required checks:
 - `agent-review` is an independent Claude review in CI with no access to the authoring
   session. It blocks on confirmed correctness, security or spec problems.
 - `risk-gate` passes standard-risk PRs immediately. High-risk PRs wait for the owner's
-  `/approve-risk <sha>` comment on the current head commit; any new push needs a fresh
-  approval.
+  `/approve-risk <full 40-character sha>` comment on the current head commit, typed in
+  the GitHub web UI or app; any new push needs a fresh approval.
 
 The agent arms auto-merge on every PR with the kit's `gh-pr.sh merge` (in cloud
 sessions, where auto-merge isn't available, the same command merges once checks are

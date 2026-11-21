@@ -23,6 +23,9 @@ Close three gaps in the delivery gates, agreed with the owner, in one high-risk 
 | AC6 | A Dependabot PR touching `.github/workflows/` is standard only if every changed line is a `uses: owner/repo@<40-hex> # vX.Y.Z` line and the same actions are removed as added; anything else, or a missing patch, is high | `tests/scripts/test_risk_classify.py` |
 | AC7 | Non-Dependabot authors classify exactly as before | `test_risk_classify.py::test_non_dependabot_*` |
 | AC8 | risk-gate ignores approval comments posted through a GitHub App, and edited comments | `tests/scripts/test_risk_gate.py` |
+| AC10 | An approval must name the full 40-hex head SHA, exactly (security review #1) | `test_short_sha_is_ignored`, `test_approval_of_a_sha_sharing_the_prefix_does_not_carry_over` |
+| AC11 | A Dependabot pin bump is standard only if each new SHA is what its `vX.Y.Z` tag names in the action's own repo (security review #2) | `test_risk_gate.py::test_dependabot_bump_to_*`, `test_dependabot_bump_with_an_unresolvable_tag_is_high` |
+| AC12 | A PR whose file list is incomplete (API caps at 3000) is high risk (security review #4) | `test_truncated_file_list_is_high`, `test_missing_changed_files_count_is_high` |
 | AC9 | `docs/security.md` describes the new behaviour; the self-approval tech-debt line is gone | file diff; `make docs-check` |
 
 ## Non-goals
@@ -60,7 +63,20 @@ Close three gaps in the delivery gates, agreed with the owner, in one high-risk 
   edit of an owner's earlier web-UI comment would keep `performed_via_github_app: null`.
   The owner's three real approvals are unedited, so this costs nothing in practice; a
   typo fix just means posting a fresh comment.
-- Approval lookup factored into `find_approval()` so it is unit-testable without the API.
+- Approval lookup factored into `find_approval()`, and the PR-level classification into
+  `classify_pr()`, so both are unit-testable without the API.
+- After security review: approvals need the full SHA (the bot comment now prints it in a
+  code block to copy). This PR is still judged by main's current risk-gate, so the
+  7-character form approves *this* PR; the full SHA is needed from the next one.
+- Tag check uses `GET repos/{owner}/{repo}/git/ref/tags/{tag}` (dereferencing annotated
+  tags), not `GET commits/{sha}`, which also serves fork-network commits. Any API error
+  means high risk. Couldn't call the API for other repos from this session (proxy scope),
+  so the mapping was checked with `git ls-remote`: the three pins in `ci.yml` equal their
+  lightweight tags (checkout v7.0.1 → 3d3c42e5…, mise-action v5.2.9 → 236a21c3…,
+  upload-artifact v7.0.2 → cf430e03…), so real Dependabot bumps stay standard.
+- Not fixed here (pre-existing, needs an owner decision): the `risk-gate` status is
+  matched by name, so a workflow on any branch with `statuses: write` could forge it.
+  `docs/security.md` says so; tech-debt line added; raised in the PR's owner brief.
 
 ## Evidence for item 3 (read-only `gh api repos/…/issues/{1,5}/comments`)
 | Comment | Posted via | `user.login` | `performed_via_github_app` | `created_at == updated_at` |
@@ -94,6 +110,11 @@ access token (not the app) would post with `null`; cloud sessions don't have one
   … no leaks found", exit 0; new script on `leak` → "leaks found: 1", exit 1;
   `SECRETS_SCAN_RANGE=main..leak` → "leaks found: 1", exit 1; `CI=true` with an
   unresolvable range → "cannot resolve", exit 1
+
+- 2026-11-21 security-reviewer: changes-required, 4 findings. Fixed #1 (7-char prefix
+  approval → full SHA), #2 (imposter commits → tag check), #4 (3000-file cap → high).
+  #3 (status forgeable by name, pre-existing) → docs softened, tech-debt, owner brief.
+  Notes → tech-debt (`tests/scripts/**` risk path, gitleaks `-m`, kit escalate wording)
 
 ## Outcome
 <filled on merge>
