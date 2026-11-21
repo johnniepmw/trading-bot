@@ -1,7 +1,7 @@
 # Harden three delivery-gate weaknesses before Phase 1
 
-- **Status**: in progress
-- **Branch / PR**: `fix/harden-delivery-gates` / see PR
+- **Status**: shipped
+- **Branch / PR**: `fix/harden-delivery-gates` / #10
 - **Risk class**: high (`Makefile`, `scripts/**`, `.github/**`)
 - **Started**: 2026-11-21
 
@@ -121,4 +121,8 @@ access token (not the app) would post with `null`; cloud sessions don't have one
 - 2026-11-21 `make check` exit 0, `make e2e` 3 passed, `make check-fast` 79 passed
 
 ## Outcome
-<filled on merge>
+Merged 2026-11-21 as #10 (9662996) after the owner's own web-UI approval
+(`performed_via_github_app` null, unedited) of the full head SHA. Main's CI passed
+("secrets-scan: scanning HEAD", 8 commits, no leaks); deploy skipped (no app change).
+Follow-ups are in `tech-debt.md`, chiefly the forgeable `risk-gate` status (owner decision:
+a dedicated GitHub App).
