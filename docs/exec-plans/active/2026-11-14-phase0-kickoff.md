@@ -1,4 +1,166 @@
-# Phase 0 kickoff brief: owner to the first Claude Code session
+# Phase 0 bootstrap: python stack, project docs, ADRs and gates
+
+- **Status**: active (bootstrap PR open; needs the owner's `/approve-risk`)
+- **Branch / PR**: `claude/relaxed-thompson-22prga` (based on `claude/phase0-seed`) / see PR
+- **Risk class**: high (`make risk`: `.claude/settings.json`, `.github/**`, `Dockerfile`, `flags.json`, `src/tradingbot/{app,brokers,config,execution,ledger,risk}/**`)
+- **Started**: 2026-11-14 (brief) / 2026-11-21 (bootstrap)
+
+## Goal
+Turn the agentic template into this project: the python stack, the `tradingbot` package
+layout with enforced boundaries, the owner's decisions recorded as ADRs, the gates
+working, and a checklist of what only the owner can do. No strategy code.
+
+## Acceptance criteria
+| # | Criterion (observable, pass/fail) | Evidence |
+|---|---|---|
+| AC1 | Python stack applied; `make check` passes locally | `make check`: ruff, mypy strict (16 files), 35 unit tests, 6 import contracts kept, docs-check 0 errors, flags-check 0 errors, gitleaks "no leaks found", actionlint and shellcheck clean (2026-11-21) |
+| AC2 | `make e2e` passes: the job entry point runs as Cloud Run will run it | `tests/e2e/test_smoke.py`: 3 passed |
+| AC3 | Package layout from the brief exists under `src/tradingbot/` | `find src/tradingbot -name __init__.py` (domain, data, strategy, portfolio, risk, execution, brokers/{trading212,fake}, ledger, config, app) |
+| AC4 | The four import contracts are enforced and each fails when violated | `make arch` 6 contracts kept; planted-violation table below |
+| AC5 | `Money` refuses to mix GBP and GBX and rejects floats | `tests/domain/test_money.py` (20 tests incl. Hypothesis properties) |
+| AC6 | Kill switch `new-orders` registered and visible to the job | `flags.json`; `tests/app/test_main.py`, `tests/e2e/test_smoke.py::test_kill_switch_override_is_visible_to_the_job` |
+| AC7 | ADRs 0006–0011, 0013, 0014 accepted; 0012 proposed (deferred) | `docs/adr/README.md`; docs-check passes |
+| AC8 | AGENTS.md, README, ARCHITECTURE.md filled in; AGENTS.md under 150 lines with the four extra rules | `wc -l AGENTS.md` = 124 |
+| AC9 | High-risk paths from the brief in `.github/risk-paths.txt` | file diff |
+| AC10 | Kit hooks run from `.claude/settings.json` without the plugin; each tested | hook table below; the guard blocked a real `core.hooksPath` override in this session |
+| AC11 | First-time setup runbook describes the public repo, not GitHub Pro | `docs/runbooks/first-time-setup.md` §1 |
+| AC12 | Container builds and its command reports healthy | `make image` (base image via mirror.gcr.io; Docker Hub rate-limited) → `docker run --rm trading-bot:local` printed `{"status": "ok", "version": "96155eb", "new_orders": true}`; with `-e FLAG_NEW_ORDERS=off` → `"new_orders": false` |
+| AC13 | A planted fake secret and a broken import rule each fail CI | Local: pre-commit hook and `gitleaks dir` both rejected a fake `T212_API_KEY` (exit 1); `lint-imports` fails on each planted violation. CI canary PRs: pending (see Open questions) |
+
+## Non-goals
+- Strategy code (Phase 1), the Cloud Run job module and job deploy workflow (Phase 2),
+  any API keys or GCP changes.
+- Recorded broker contract tests, the nightly demo contract check and backtest
+  regression arrive in Phases 1–3.
+- Changing the vendored kit (`.claude/skills/agentic/`).
+
+## Rollout and rollback
+- Flag / kill switch: `new-orders` (kill-switch, default true). Nothing trades yet.
+- Data changes: none.
+- Rollback: revert the PR. The deploy workflow is inactive until `make gh-vars`.
+
+## Decisions
+- `/agentic:bootstrap` didn't load (cloud sessions don't load repo plugins); followed
+  `bootstrap/SKILL.md` by hand, as the brief and the owner said.
+- `scripts/init-stack.sh python` stopped at `mise install` (GitHub releases and the
+  python download host are unreachable from this session). Finished its remaining steps
+  by hand with the system `uv` (init.sh, Dependabot entry, `.stack`, remove `stacks/`).
+  CI uses `jdx/mise-action`, which can download. Logged in tech-debt.
+- Template example app removed (`server.py`, `greeting`); `flags.py` moved to
+  `tradingbot.app.flags`. The job's health check is `python -m tradingbot.app smoke`
+  (status, version, kill-switch state) because a job has no `/healthz` (ADR-0011).
+- `make e2e` runs the entry point as a subprocess; with `E2E_BASE_URL` set (the
+  service-shaped preview job) it skips, since a job has no URL until Phase 2.
+- Contract 3 allows `app` as well as `brokers` to import HTTP libraries: the template's
+  flag override reader (`GcsSource`) fetches from Cloud Storage with `urllib`. Moving it
+  into `brokers` would be wrong (it isn't a broker). The pure packages (contract 2a) and
+  everything else outside `app` and `brokers` (3a) still can't.
+- Contract 2 forbids `os` (environment variables) and `socket` too, and an
+  `independence` contract stops strategy, portfolio and risk importing each other
+  ("only domain and config").
+- `Money` currencies: GBP, GBX, USD. `to_gbp()` converts pence; USD needs an explicit FX
+  rate later.
+- Hooks: copied the four entries from `hooks/hooks.json` into `.claude/settings.json`
+  with `$CLAUDE_PROJECT_DIR/.claude/skills/agentic/hooks/...` paths (owner request). If a
+  session also loads the plugin, hooks run twice (tech-debt).
+- `scripts/github-setup.sh` left unchanged; public-repo settings are a manual checklist
+  in the runbook (tech-debt to script them).
+- The kit's bootstrap owner checklist still mentions GitHub Pro; it's vendored, so the
+  fix goes upstream (tech-debt).
+- `phase0_report.json` added to `.gitignore`: it holds demo account data (ADR-0014).
+- The seed's `tests/scripts/` stay where they are; they pass and are ruff-clean.
+
+## Open questions
+- CI canary PRs for AC13 need branches other than this session's one
+  (`claude/relaxed-thompson-22prga`), and a planted secret must not land in the
+  bootstrap PR's history. — default if unanswered: after the bootstrap merges, open two
+  throwaway draft PRs (fake secret; broken import rule), record the failing checks, close
+  them unmerged.
+
+## Plan
+1. Apply the python stack pack — check: `uv sync`, files in place
+2. Package skeleton, `Money`, smoke entry point, import contracts — check: `make check-fast`, `make arch`, planted violations
+3. Wire kit hooks into `.claude/settings.json` — check: payload tests below
+4. Docs: AGENTS.md, README, ARCHITECTURE.md, ADRs, risk paths, runbooks, tech-debt — check: `make docs-check`
+5. Full verification — check: `make check`, `make e2e`, `make image`
+6. Fresh-eyes review — check: reviewer findings resolved
+7. PR, escalate brief for `/approve-risk`, owner checklist
+
+## Progress log
+- 2026-11-21 step 1: stack pack applied (manual finish after mise download failure) — evidence: commit `chore: apply the python stack pack`
+- 2026-11-21 step 2: `src/tradingbot` layout, `Money`, `smoke`, contracts — evidence: 35 unit + 3 e2e tests pass; contracts table below
+- 2026-11-21 step 3: hooks in `.claude/settings.json` — evidence: hook tables below; guard blocked a live `git -c core.hooksPath=/dev/null` in this session
+- 2026-11-21 step 4: docs and ADRs — evidence: docs-check 0 errors
+- 2026-11-21 step 5: `make check`, `make e2e`, `make image` green (gitleaks, actionlint, shellcheck installed locally from Go/PyPI for this run)
+
+### Import contracts: planted violations (`PYTHONPATH=src uv run lint-imports`)
+| Planted in | Statement | Contract broken |
+|---|---|---|
+| `risk` | `import urllib.request` | 2a and 3a |
+| `strategy` | `import os` | 2a |
+| `portfolio` | `import tradingbot.risk` | 2b |
+| `domain` | `import tradingbot.config` | 1 |
+| `execution` | `import tradingbot.brokers.fake` | 3b |
+| `ledger` | `import http.client` | 3a |
+| `data` | `import research.notebook` | 4 |
+Clean tree: 6 kept, 0 broken.
+
+### Hook tests (payload piped into the exact command from `.claude/settings.json`)
+| Hook | Payload | Expected | Exit | Result |
+|---|---|---|---|---|
+| guard-bash | `git push origin main` | block | 2 | pass |
+| guard-bash | `git push -u origin claude/relaxed-thompson-22prga` | allow | 0 | pass |
+| guard-bash | `git push --force origin feat/x` | block | 2 | pass |
+| guard-bash | `git commit --no-verify -m x` | block | 2 | pass |
+| guard-bash | `gh api repos/o/r/statuses/abc -f state=success` | block | 2 | pass |
+| guard-bash | `gh pr comment 1 --body "/approve-risk abc"` | block | 2 | pass |
+| guard-bash | `make secret-set NAME=operator ENV=prod` | block | 2 | pass |
+| guard-bash | `gcloud secrets versions access latest --secret=operator` | block | 2 | pass |
+| guard-bash | `cd infra/envs/prod && tofu apply` | block | 2 | pass |
+| guard-bash | `make check-fast` | allow | 0 | pass |
+| guard-bash | `gh workflow run ops.yml -f action=kill -f env=prod -f flag=new-orders` | allow | 0 | pass |
+| guard-write | Write `.env` | block | 2 | pass |
+| guard-write | Write `.env.example` | allow | 0 | pass |
+| guard-write | Write `.claude/skills/agentic/README.md` | block | 2 | pass |
+| guard-write | Write `src/tradingbot/domain/money.py` | allow | 0 | pass |
+| guard-write | Write `.git/config` | block | 2 | pass |
+| guard-write | Write `infra/envs/prod/terraform.tfstate` | block | 2 | pass |
+| orient | SessionStart `startup` | orientation printed, exit 0 | 0 | pass |
+| stop-gate | clean tree | allow | 0 | pass |
+| stop-gate | uncommitted change, `check-fast` passes | allow | 0 | pass |
+| stop-gate | uncommitted change, lint fails (unused imports) | block with F401 output | 2 | pass |
+| stop-gate | same, with `.agentic/allow-stop` | allow once, file removed | 0 | pass |
+| stop-gate | same again | block (escape hatch is single use) | 2 | pass |
+Stop-gate cases ran in a temporary git worktree.
+
+## Owner checklist (owner-only; run in Google Cloud Shell)
+1. Merge this PR: read the escalate brief, then comment `/approve-risk <sha>`.
+2. `make github-setup` (repo settings, `main` ruleset, labels, Dependabot).
+3. Public-repo settings from ADR-0014 (`docs/runbooks/first-time-setup.md` §1.2):
+   interaction limits to collaborators; fork PR workflows need approval for all external
+   contributors; secret scanning and push protection on; commit email private.
+4. Agent-review token: `npm install -g @anthropic-ai/claude-code && claude setup-token`,
+   then `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (paste at the prompt, never in chat).
+5. GCP project (europe-west2) with billing: `gcloud auth login && gcloud auth
+   application-default login`, fill `infra/bootstrap/bootstrap.tfvars`,
+   `make infra-bootstrap`, `make gh-vars`. Not needed until Phase 2.
+6. Run `scripts/phase0_api_check.py` with a demo key; keep `phase0_report.json` out of
+   the repo and share only the summary.
+
+## Review
+- Round 1: pending
+
+## Outcome
+<filled when shipped>
+
+## Learnings
+- Cloud sessions: repo plugins don't load, so hooks must come from project settings;
+  mise can't download from GitHub; gitleaks/actionlint/shellcheck install via
+  `go install` and PyPI wrappers; Docker Hub may rate-limit, `mirror.gcr.io` works.
+
+---
+
+## Owner brief (2026-11-14, as given)
 
 The owner starts the first Claude Code on the web session on `johnniepmw/trading-bot`
 (after the one-time environment setup in `docs/runbooks/cloud-sessions.md`) with:
