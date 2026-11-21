@@ -4,6 +4,7 @@ than the real API: market orders only, no client order IDs, broker-assigned orde
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -16,6 +17,7 @@ from tradingbot.domain.money import Currency, Money
 
 VWRP = Instrument("VWRP", Currency.GBP)
 SGLN = Instrument("SGLN", Currency.GBX)
+NOW = datetime(2026, 11, 23, 9, 0, tzinfo=UTC)
 
 
 def gbp(x: str | int) -> Money:
@@ -110,3 +112,37 @@ def test_quotes_come_from_the_broker() -> None:
     assert broker().quote(SGLN) == Money(Decimal(4000), Currency.GBX)
     with pytest.raises(BrokerError, match="no quote"):
         broker().quote(Instrument("XXX", Currency.GBP))
+
+
+# --- review round 1: the fake can be as awkward as the real broker -----------------
+def test_market_orders_queue_while_the_market_is_closed() -> None:
+    b = broker()
+    b.market_open = False
+    state = b.order(b.place(approved(Side.BUY, "2")))
+    assert (state.status, state.filled_quantity) == (OrderStatus.PENDING, Decimal(0))
+    assert b.positions() == []
+    b.open_market()
+    assert b.order(state.order_id).status is OrderStatus.FILLED
+    assert b.positions() == [Position(VWRP, Decimal(2))]
+
+
+def test_an_order_can_fill_partly_and_finish_later() -> None:
+    b = broker()
+    b.partial_fill_next = Decimal("0.5")
+    order_id = b.place(approved(Side.BUY, "2"))
+    assert (b.order(order_id).status, b.order(order_id).filled_quantity) == (
+        OrderStatus.PARTIALLY_FILLED,
+        Decimal(1),
+    )
+    b.open_market()
+    assert (b.order(order_id).status, b.order(order_id).filled_quantity) == (OrderStatus.FILLED, Decimal(2))
+
+
+def test_order_ids_never_repeat_across_instances() -> None:
+    assert broker().place(approved(Side.BUY, "1")) != broker().place(approved(Side.BUY, "1"))
+
+
+def test_broker_orders_carry_their_creation_time() -> None:
+    b = broker()
+    b.now = lambda: NOW
+    assert b.order(b.place(approved(Side.BUY, "1"))).created_at == NOW

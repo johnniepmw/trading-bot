@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS intents (
     side TEXT NOT NULL,
     quantity TEXT NOT NULL,
     state TEXT NOT NULL,
-    broker_order_id TEXT UNIQUE
+    broker_order_id TEXT UNIQUE,
+    filled_quantity TEXT
 );
 CREATE TABLE IF NOT EXISTS marks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +55,10 @@ class IntentState(StrEnum):
 
 
 OPEN = (IntentState.INTENDED, IntentState.SENT, IntentState.UNKNOWN)
-_COLUMNS = "SELECT intent_id, run_id, ticker, currency, side, quantity, state, broker_order_id FROM intents"
+_COLUMNS = (
+    "SELECT intent_id, run_id, created_at, ticker, currency, side, quantity, state, broker_order_id,"
+    " filled_quantity FROM intents"
+)
 _OPEN_INTENTS = _COLUMNS + " WHERE state IN (?, ?, ?) ORDER BY intent_id"
 _SETTLED_INTENTS = _COLUMNS + " WHERE state NOT IN (?, ?, ?) ORDER BY intent_id"
 
@@ -63,13 +67,16 @@ _SETTLED_INTENTS = _COLUMNS + " WHERE state NOT IN (?, ?, ?) ORDER BY intent_id"
 class Intent:
     intent_id: int
     run_id: str
+    created_at: datetime
     order: Order
     state: IntentState
     broker_order_id: str | None
+    filled_quantity: Decimal | None  # known once settled from the broker
 
 
 def _utc(at: datetime) -> str:
-    if at.tzinfo is None or at.utcoffset() != UTC.utcoffset(at):
+    # UTC itself, not just a zero offset: a London clock would pass all winter
+    if at.tzinfo is not UTC:
         raise LedgerError(f"times must be UTC, got {at!r}")
     return at.isoformat()
 
@@ -80,6 +87,20 @@ class Ledger:
 
     @classmethod
     def open(cls, path: Path) -> Ledger:
+        """Open an existing ledger. A missing file is an error, never a fresh start: an empty
+        ledger has no mark history and would let a reset lift the drawdown stop."""
+        if not path.is_file():
+            raise LedgerError(f"ledger file missing: {path}")
+        # mode=rw: SQLite must not create the file if it vanishes between the check and here
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, isolation_level=None)
+        conn.executescript(_SCHEMA)
+        return cls(conn)
+
+    @classmethod
+    def create(cls, path: Path) -> Ledger:
+        """Create a new, empty ledger (first-time setup only). Refuses to overwrite."""
+        if path.exists():
+            raise LedgerError(f"ledger already exists: {path}")
         conn = sqlite3.connect(path, isolation_level=None)  # autocommit: each write is durable at once
         conn.executescript(_SCHEMA)
         return cls(conn)
@@ -107,16 +128,27 @@ class Ledger:
             raise LedgerError("no intent id")
         return cursor.lastrowid
 
-    def _set(self, intent_id: int, state: IntentState, broker_order_id: str | None = None) -> None:
+    def _set(
+        self,
+        intent_id: int,
+        state: IntentState,
+        broker_order_id: str | None = None,
+        filled_quantity: Decimal | None = None,
+    ) -> None:
         row = self._conn.execute("SELECT state FROM intents WHERE intent_id = ?", (intent_id,)).fetchone()
         if row is None:
             raise LedgerError(f"no intent {intent_id}")
         if IntentState(row[0]) not in OPEN:
             raise LedgerError(f"intent {intent_id} is already settled as {row[0]}")
         self._conn.execute(
-            "UPDATE intents SET state = ?, broker_order_id = COALESCE(?, broker_order_id)"
-            " WHERE intent_id = ?",
-            (state.value, broker_order_id, intent_id),
+            "UPDATE intents SET state = ?, broker_order_id = COALESCE(?, broker_order_id),"
+            " filled_quantity = COALESCE(?, filled_quantity) WHERE intent_id = ?",
+            (
+                state.value,
+                broker_order_id,
+                None if filled_quantity is None else str(filled_quantity),
+                intent_id,
+            ),
         )
 
     def mark_sent(self, intent_id: int, broker_order_id: str) -> None:
@@ -125,20 +157,28 @@ class Ledger:
     def mark_unknown(self, intent_id: int) -> None:
         self._set(intent_id, IntentState.UNKNOWN)
 
-    def settle(self, intent_id: int, state: IntentState, broker_order_id: str | None = None) -> None:
+    def settle(
+        self,
+        intent_id: int,
+        state: IntentState,
+        broker_order_id: str | None = None,
+        filled_quantity: Decimal | None = None,
+    ) -> None:
         if state in OPEN:
             raise LedgerError(f"{state} is not a settled state")
-        self._set(intent_id, state, broker_order_id)
+        self._set(intent_id, state, broker_order_id, filled_quantity)
 
     def _intents(self, sql: str) -> list[Intent]:
         rows = self._conn.execute(sql, tuple(s.value for s in OPEN)).fetchall()
         return [
             Intent(
-                r[0],
-                r[1],
-                Order(Instrument(r[2], Currency(r[3])), Side(r[4]), Decimal(r[5])),
-                IntentState(r[6]),
-                r[7],
+                intent_id=r[0],
+                run_id=r[1],
+                created_at=datetime.fromisoformat(r[2]),
+                order=Order(Instrument(r[3], Currency(r[4])), Side(r[5]), Decimal(r[6])),
+                state=IntentState(r[7]),
+                broker_order_id=r[8],
+                filled_quantity=None if r[9] is None else Decimal(r[9]),
             )
             for r in rows
         ]
@@ -146,21 +186,33 @@ class Ledger:
     def open_intents(self) -> list[Intent]:
         return self._intents(_OPEN_INTENTS)
 
-    def settled_states(self) -> list[IntentState]:
-        return [i.state for i in self._intents(_SETTLED_INTENTS)]
+    def settled(self) -> list[Intent]:
+        return self._intents(_SETTLED_INTENTS)
 
     def linked_order_ids(self) -> set[str]:
         rows = self._conn.execute("SELECT broker_order_id FROM intents WHERE broker_order_id IS NOT NULL")
         return {r[0] for r in rows}
 
     # --- high-water mark --------------------------------------------------------------
+    def seed_high_water_mark(self, equity: Money, at: datetime) -> None:
+        """Set the first mark. An explicit, one-off owner step at first-time setup."""
+        if self.high_water_mark() is not None:
+            raise LedgerError("the high-water mark is already seeded")
+        self._insert_mark(equity, at)
+
     def update_high_water_mark(self, equity: Money, at: datetime) -> None:
-        """Record equity as the mark if it is a new peak. The mark only rises."""
+        """Record equity as the mark if it is a new peak. The mark only rises, and an update
+        never creates the first one (that would re-seed a lost history from today's equity)."""
+        current = self.high_water_mark()
+        if current is None:
+            raise LedgerError("no high-water mark: seed it first (owner step)")
+        if equity.amount > current.amount:
+            self._insert_mark(equity, at)
+
+    def _insert_mark(self, equity: Money, at: datetime) -> None:
         if equity.currency is not Currency.GBP:
             raise LedgerError("the high-water mark is in GBP")
-        current = self.high_water_mark()
-        if current is None or equity.amount > current.amount:
-            self._conn.execute("INSERT INTO marks (amount, at) VALUES (?, ?)", (str(equity.amount), _utc(at)))
+        self._conn.execute("INSERT INTO marks (amount, at) VALUES (?, ?)", (str(equity.amount), _utc(at)))
 
     def high_water_mark(self) -> Money | None:
         """The current mark, or None if never recorded. A mark lower than any earlier one

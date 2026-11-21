@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -23,7 +24,7 @@ def gbp(x: str) -> Money:
 
 @pytest.fixture
 def ledger(tmp_path: Path) -> Iterator[Ledger]:
-    opened = Ledger.open(tmp_path / "ledger.sqlite")
+    opened = Ledger.create(tmp_path / "ledger.sqlite")
     yield opened
     opened.close()
 
@@ -43,8 +44,9 @@ def test_intents_move_through_sent_and_settled_states(ledger: Ledger) -> None:
     intent = ledger.record_intent("run-1", BUY, NOW)
     ledger.mark_sent(intent, "b-1")
     assert ledger.open_intents()[0].state is IntentState.SENT
-    ledger.settle(intent, IntentState.FILLED)
+    ledger.settle(intent, IntentState.FILLED, filled_quantity=Decimal("1.5"))
     assert ledger.open_intents() == []
+    assert ledger.settled()[0].filled_quantity == Decimal("1.5")
 
 
 def test_an_unknown_outcome_stays_open(ledger: Ledger) -> None:
@@ -62,7 +64,7 @@ def test_settled_intents_cannot_be_reopened(ledger: Ledger) -> None:
 
 def test_the_ledger_survives_a_restart(tmp_path: Path) -> None:
     path = tmp_path / "ledger.sqlite"
-    first = Ledger.open(path)
+    first = Ledger.create(path)
     intent = first.record_intent("run-1", Order(SGLN, Side.SELL, Decimal(2)), NOW)
     first.close()
     reopened = Ledger.open(path)
@@ -72,8 +74,8 @@ def test_the_ledger_survives_a_restart(tmp_path: Path) -> None:
 
 
 def test_the_high_water_mark_only_rises(ledger: Ledger) -> None:
-    assert ledger.high_water_mark() is None  # unknown until first recorded
-    ledger.update_high_water_mark(gbp("1000"), NOW)
+    assert ledger.high_water_mark() is None  # unknown until seeded
+    ledger.seed_high_water_mark(gbp("1000"), NOW)
     ledger.update_high_water_mark(gbp("900"), NOW)
     assert ledger.high_water_mark() == gbp("1000")
     ledger.update_high_water_mark(gbp("1100.50"), NOW)
@@ -82,14 +84,14 @@ def test_the_high_water_mark_only_rises(ledger: Ledger) -> None:
 
 def test_a_high_water_mark_must_be_in_pounds(ledger: Ledger) -> None:
     with pytest.raises(LedgerError, match="GBP"):
-        ledger.update_high_water_mark(Money(Decimal(100000), Currency.GBX), NOW)
+        ledger.seed_high_water_mark(Money(Decimal(100000), Currency.GBX), NOW)
 
 
 def test_a_mark_lower_than_ever_recorded_is_detected(tmp_path: Path) -> None:
     # a reset or tampered mark must not lift the drawdown stop (AC9 drill)
     path = tmp_path / "ledger.sqlite"
-    ledger = Ledger.open(path)
-    ledger.update_high_water_mark(gbp("1000"), NOW)
+    ledger = Ledger.create(path)
+    ledger.seed_high_water_mark(gbp("1000"), NOW)
     # a re-seed from current equity after losing state appends a lower mark
     ledger._conn.execute("INSERT INTO marks (amount, at) VALUES ('700', '2026-11-24T09:00:00+00:00')")
     with pytest.raises(LedgerError, match="lower than"):
@@ -100,3 +102,35 @@ def test_a_mark_lower_than_ever_recorded_is_detected(tmp_path: Path) -> None:
 def test_times_must_be_utc(ledger: Ledger) -> None:
     with pytest.raises(LedgerError, match="UTC"):
         ledger.record_intent("run-1", BUY, datetime(2026, 11, 23, 9, 0))
+
+
+# --- security review round 1 -------------------------------------------------------
+def test_opening_a_missing_ledger_is_an_error_not_a_fresh_start(tmp_path: Path) -> None:
+    # a lost file must never become an empty ledger with no mark history
+    with pytest.raises(LedgerError, match="missing"):
+        Ledger.open(tmp_path / "gone.sqlite")
+    assert not (tmp_path / "gone.sqlite").exists()
+
+
+def test_creating_a_ledger_is_explicit_and_refuses_to_overwrite(tmp_path: Path) -> None:
+    path = tmp_path / "new.sqlite"
+    Ledger.create(path).close()
+    with pytest.raises(LedgerError, match="exists"):
+        Ledger.create(path)
+
+
+def test_an_update_never_creates_the_first_mark(ledger: Ledger) -> None:
+    # only an explicit seed (an owner step) sets the first mark; otherwise a lost history
+    # would be re-seeded from today's lower equity and lift the drawdown stop
+    with pytest.raises(LedgerError, match="seed"):
+        ledger.update_high_water_mark(gbp("750"), NOW)
+    ledger.seed_high_water_mark(gbp("1000"), NOW)
+    with pytest.raises(LedgerError, match="already"):
+        ledger.seed_high_water_mark(gbp("750"), NOW)
+    assert ledger.high_water_mark() == gbp("1000")
+
+
+def test_london_time_is_refused_even_in_winter(ledger: Ledger) -> None:
+    london = datetime(2026, 12, 1, 9, 0, tzinfo=ZoneInfo("Europe/London"))  # offset 0 in winter
+    with pytest.raises(LedgerError, match="UTC"):
+        ledger.record_intent("run-1", BUY, london)
