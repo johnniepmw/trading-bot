@@ -1,6 +1,7 @@
 """Instruments, daily bars, orders and positions (ADR-0010, ADR-0016).
 
 Prices in bars are floats: they feed statistics (returns, averages, volatility).
+`price_money` is the only place a float price becomes Money.
 Quantities are Decimals: they become orders and must not drift. Long-or-cash only, so
 positions are never negative.
 """
@@ -13,7 +14,7 @@ from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 
-from tradingbot.domain.money import Currency
+from tradingbot.domain.money import Currency, Money
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +39,22 @@ class Bar:
     close: float
 
     def __post_init__(self) -> None:
-        for name, price in (("open", self.open), ("close", self.close)):
-            if not math.isfinite(price) or price <= 0:
-                raise ValueError(f"bar {name} price must be positive and finite, got {price}")
+        _check_price("bar open", self.open)
+        _check_price("bar close", self.close)
+
+
+def _check_price(name: str, value: float) -> None:
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} price must be positive and finite, got {value}")
+
+
+def price_money(instrument: Instrument, value: float) -> Money:
+    """The one conversion from a float price to Money, in the instrument's quote currency.
+
+    Uses the float's shortest repr, so 0.1 becomes Decimal("0.1"). A GBX price stays GBX.
+    """
+    _check_price("instrument", value)
+    return Money(Decimal(repr(value)), instrument.currency)
 
 
 class Side(StrEnum):

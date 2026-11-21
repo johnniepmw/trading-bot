@@ -6,8 +6,8 @@ from decimal import Decimal
 
 import pytest
 
-from tradingbot.domain.market import Bar, Instrument, Order, Position, Side
-from tradingbot.domain.money import Currency
+from tradingbot.domain.market import Bar, Instrument, Order, Position, Side, price_money
+from tradingbot.domain.money import Currency, Money
 
 VWRP = Instrument("VWRP", Currency.GBP)
 SGLN = Instrument("SGLN", Currency.GBX)
@@ -63,3 +63,17 @@ def test_position_quantity_is_a_non_negative_decimal() -> None:
         Position(VWRP, Decimal("-0.1"))  # long-or-cash: no shorts
     with pytest.raises(TypeError, match="Decimal"):
         Position(VWRP, 1)  # type: ignore[arg-type]
+
+
+def test_price_is_the_one_place_a_float_price_becomes_money() -> None:
+    assert price_money(VWRP, 101.5) == Money(Decimal("101.5"), Currency.GBP)
+    # GBX stays GBX: pounds and pence are never mixed implicitly
+    assert price_money(SGLN, 3712.0) == Money(Decimal("3712.0"), Currency.GBX)
+    # shortest repr, not the binary expansion of the float
+    assert price_money(VWRP, 0.1).amount == Decimal("0.1")
+
+
+@pytest.mark.parametrize("bad", [0.0, -2.0, math.nan, math.inf])
+def test_price_money_rejects_non_positive_or_non_finite(bad: float) -> None:
+    with pytest.raises(ValueError, match="price"):
+        price_money(VWRP, bad)
