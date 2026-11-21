@@ -12,7 +12,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/src
 WORKDIR /app
 
-RUN useradd --create-home --uid 10001 app
+# Security updates for OS packages the base image is behind on; drop pip, which the bot
+# never uses at runtime and whose vendored libraries (msgpack, ...) carry CVEs.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/python3.13/site-packages/pip* \
+           /usr/local/lib/python3.13/ensurepip/_bundled \
+           /usr/local/bin/pip* \
+ && useradd --create-home --uid 10001 app
 # Root-owned: the runtime user can read the code and flag registry but not change them.
 COPY flags.json ./
 COPY src ./src
