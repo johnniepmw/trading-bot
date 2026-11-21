@@ -10,14 +10,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import ROUND_FLOOR, Decimal, localcontext
+from decimal import ROUND_FLOOR, Context, Decimal, DivisionByZero, InvalidOperation, Overflow, localcontext
+from types import MappingProxyType
 
 from tradingbot.domain.approval import ApprovedOrder
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency, CurrencyMismatchError, Money
-from tradingbot.risk.limits import Limits
+from tradingbot.risk.limits import HARD_STOP_DRAWDOWN, MAX_DAILY_LOSS, MAX_POSITION_FRACTION, Limits
 
 ZERO = Decimal(0)
+# Fixed arithmetic: round down, and always raise on invalid, divide-by-zero and overflow,
+# whatever the caller's own Decimal context says.
+_CONTEXT = Context(prec=28, rounding=ROUND_FLOOR, traps=[InvalidOperation, DivisionByZero, Overflow])
 HALF = Decimal("0.5")
 
 
@@ -26,8 +30,8 @@ class AccountState:
     equity: Money  # GBP, total account value now
     cash: Money  # GBP available to spend now (excludes unsettled sale proceeds)
     high_water_mark: Money | None  # GBP, from the ledger; None means unknown
-    day_start_equity: Money  # GBP, at the start of the trading day
-    holdings: Mapping[Instrument, Decimal]
+    day_start_equity: Money | None  # GBP, at the start of the trading day; None means unknown
+    holdings: Mapping[Instrument, Decimal]  # every instrument that may be bought, zero included
     quotes: Mapping[Instrument, Money]  # latest price in the instrument's quote currency
     quantity_steps: Mapping[Instrument, Decimal]  # smallest tradable fraction per instrument
 
@@ -41,15 +45,26 @@ class AccountState:
         for name, amount in amounts.items():
             if amount is not None and amount.currency is not Currency.GBP:
                 raise CurrencyMismatchError(f"{name} must be in GBP, got {amount.currency}")
-        positive = [
-            self.equity,
-            self.day_start_equity,
-            *([self.high_water_mark] if self.high_water_mark else []),
-        ]
+        positive = [a for a in (self.equity, self.day_start_equity, self.high_water_mark) if a is not None]
         if any(a.amount <= 0 for a in positive) or self.cash.amount < 0:
             raise ValueError("impossible account state: non-positive equity or mark, or negative cash")
-        if any(q < 0 for q in self.holdings.values()) or any(s <= 0 for s in self.quantity_steps.values()):
-            raise ValueError("impossible account state: negative holding or non-positive quantity step")
+        for name in ("holdings", "quotes", "quantity_steps"):
+            mapping = dict(getattr(self, name))
+            if len({i.ticker for i in mapping}) != len(mapping):
+                raise ValueError(f"impossible account state: a ticker appears under two currencies in {name}")
+            # a private, read-only copy: later changes to the caller's dict can't skip these checks
+            object.__setattr__(self, name, MappingProxyType(mapping))
+        for name, values, lowest_ok in (
+            ("holding", self.holdings, True),
+            ("quantity step", self.quantity_steps, False),
+        ):
+            for value in values.values():
+                if not isinstance(value, Decimal) or not value.is_finite():
+                    raise TypeError(
+                        f"impossible account state: {name} must be a finite Decimal, got {value!r}"
+                    )
+                if value < 0 or (value == 0 and not lowest_ok):
+                    raise ValueError(f"impossible account state: {name} out of range: {value}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +92,7 @@ def review(orders: Sequence[Order], state: AccountState, limits: Limits | None =
     Arithmetic runs in a fixed context that rounds down, so a caller's Decimal settings
     can never round a quantity up past a limit.
     """
-    with localcontext(prec=28, rounding=ROUND_FLOOR):
+    with localcontext(_CONTEXT):
         return _review(orders, state, limits)
 
 
@@ -123,10 +138,13 @@ def _buy_veto(run: _Run) -> str | None:
     state, limits = run.state, run.limits
     if run.drawdown is None:
         return "no high-water mark"
-    if run.drawdown >= limits.drawdown_stop:
+    if state.day_start_equity is None:
+        return "no day-start equity"
+    # ceilings are re-applied here, so a tampered Limits object still can't loosen them
+    if run.drawdown >= min(limits.drawdown_stop, HARD_STOP_DRAWDOWN):
         return "drawdown stop"
     day_loss = 1 - state.equity.amount / state.day_start_equity.amount
-    if day_loss >= limits.daily_loss:
+    if day_loss >= min(limits.daily_loss, MAX_DAILY_LOSS):
         return "daily loss limit"
     return None
 
@@ -153,12 +171,14 @@ def _buy(run: _Run, order: Order) -> Decision:
     veto = _buy_veto(run)
     if veto:
         return _reject(order, veto)
+    if order.instrument not in run.state.holdings:
+        return _reject(order, "no holding record")
     priced = _price_and_step(run, order.instrument)
     if isinstance(priced, str):
         return _reject(order, priced)
     price, step = priced
 
-    cap = run.limits.position_fraction
+    cap = min(run.limits.position_fraction, MAX_POSITION_FRACTION)
     if run.drawdown is not None and run.drawdown >= run.limits.drawdown_halve:
         cap *= HALF
     held = run.holding(order.instrument)

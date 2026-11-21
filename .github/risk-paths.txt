@@ -23,6 +23,11 @@ mypy.ini
 ruff.toml
 .ruff.toml
 .gitleaksignore
+# Coverage and pytest config that could switch off the risk layer's 100% branch gate,
+# and the tests that pin the risk layer and that gate (tests/risk/test_gate_config.py)
+.coveragerc
+conftest.py
+tests/risk/**
 # Gate scripts, deploy and kill-switch scripts, and scripts the owner runs with their
 # own credentials (secret-set, gh-vars, phase0_api_check)
 scripts/**

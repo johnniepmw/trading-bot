@@ -45,7 +45,7 @@ def states(draw: st.DrawFn) -> AccountState:
         equity=gbp(equity),
         cash=gbp(draw(money("0", "5000"))),
         high_water_mark=draw(st.none() | money("1", "8000").map(gbp)),
-        day_start_equity=gbp(draw(money("1", "5000"))),
+        day_start_equity=draw(st.none() | money("1", "5000").map(gbp)),
         holdings={i: draw(st.decimals(min_value=0, max_value=100, places=3)) for i in INSTRUMENTS},
         quotes={
             i: Money(draw(money("0.01", "5000")), i.currency) for i in INSTRUMENTS if draw(st.booleans())
@@ -73,7 +73,8 @@ def test_no_approved_order_breaks_a_limit(proposed: list[Order], state: AccountS
     held = {i: state.holdings.get(i, Decimal(0)) for i in INSTRUMENTS}
     mark = state.high_water_mark
     drawdown = None if mark is None else max(Decimal(0), 1 - state.equity.amount / mark.amount)
-    day_loss = 1 - state.equity.amount / state.day_start_equity.amount
+    start = state.day_start_equity
+    day_loss = None if start is None else 1 - state.equity.amount / start.amount
     seen_buy = False
     for d in decisions:
         if d.order.side is Side.BUY:
@@ -91,7 +92,7 @@ def test_no_approved_order_breaks_a_limit(proposed: list[Order], state: AccountS
             continue
         # buys: every gate held
         assert drawdown is not None and drawdown < limits.drawdown_stop
-        assert day_loss < limits.daily_loss
+        assert day_loss is not None and day_loss < limits.daily_loss
         assert o.quantity % STEPS[o.instrument] == 0
         price = state.quotes[o.instrument].to_gbp().amount
         spent += o.quantity * price

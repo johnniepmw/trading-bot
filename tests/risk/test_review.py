@@ -8,6 +8,7 @@ import pytest
 
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency, CurrencyMismatchError, Money
+from tradingbot.risk.limits import Limits
 from tradingbot.risk.review import AccountState, Decision, review
 
 VWRP = Instrument("VWRP", Currency.GBP)
@@ -25,7 +26,7 @@ def state(  # noqa: PLR0913 - a test builder with defaults
     equity: str = "1000",
     cash: str = "1000",
     hwm: str | None = "1000",
-    day_start: str | None = None,
+    day_start: str | None = None,  # None: same as equity
     holdings: Mapping[Instrument, Decimal] | None = None,
     quotes: Mapping[Instrument, Money] | None = None,
     steps: Mapping[Instrument, Decimal] | None = None,
@@ -35,7 +36,7 @@ def state(  # noqa: PLR0913 - a test builder with defaults
         cash=gbp(cash),
         high_water_mark=gbp(hwm) if hwm is not None else None,
         day_start_equity=gbp(day_start if day_start is not None else equity),
-        holdings=holdings or {},
+        holdings=holdings if holdings is not None else {VWRP: Decimal(0), SGLN: Decimal(0), SPY: Decimal(0)},
         quotes=quotes if quotes is not None else {VWRP: gbp(100), SGLN: Money(Decimal(4000), Currency.GBX)},
         quantity_steps=steps if steps is not None else {VWRP: STEP, SGLN: STEP, SPY: STEP},
     )
@@ -130,7 +131,7 @@ def test_cash_is_shared_across_buys_in_order() -> None:
 
 
 def test_sale_proceeds_do_not_fund_buys_in_the_same_run() -> None:
-    _, d = review([sell("1", SGLN), buy("1")], state(cash="0", holdings={SGLN: Decimal(5)}))
+    _, d = review([sell("1", SGLN), buy("1")], state(cash="0", holdings={SGLN: Decimal(5), VWRP: Decimal(0)}))
     assert d.reason == "rejected: no cash"
 
 
@@ -246,7 +247,7 @@ def test_a_non_positive_quote_rejects_that_buy_and_keeps_the_sells(bad: Decimal)
         [buy("1"), sell("1", SGLN)],
         state(
             quotes={VWRP: Money(bad, Currency.GBP), SGLN: Money(Decimal(4000), Currency.GBX)},
-            holdings={SGLN: Decimal(2)},
+            holdings={SGLN: Decimal(2), VWRP: Decimal(0)},
         ),
     )
     assert [d.reason for d in decisions] == ["passed", "rejected: bad quote"]
@@ -279,3 +280,64 @@ def test_divisions_round_down_whatever_the_callers_decimal_context() -> None:
         [d] = review([buy("20")], state(quotes={VWRP: gbp(30)}))
     assert d.approved is not None
     assert d.approved.order.quantity * 30 <= 250
+
+
+# --- security review round 1 -------------------------------------------------------
+def test_a_buy_without_a_holding_record_is_rejected() -> None:
+    # A key mismatch (e.g. GBX vs GBP, or a broker ticker) must not read as "holds nothing".
+    [d] = review([buy("1")], state(holdings={Instrument("VWRP", Currency.GBX): Decimal(2)}))
+    assert d.reason == "rejected: no holding record"
+
+
+def test_buys_are_vetoed_without_a_day_start_equity() -> None:
+    s = AccountState(
+        equity=gbp(1000),
+        cash=gbp(1000),
+        high_water_mark=gbp(1000),
+        day_start_equity=None,
+        holdings={VWRP: Decimal(0)},
+        quotes={VWRP: gbp(100)},
+        quantity_steps={VWRP: STEP},
+    )
+    [d] = review([buy("1")], s)
+    assert d.reason == "rejected: no day-start equity"
+
+
+def test_one_ticker_under_two_currencies_is_refused() -> None:
+    with pytest.raises(ValueError, match="account state"):
+        state(holdings={VWRP: Decimal(1), Instrument("VWRP", Currency.GBX): Decimal(1)})
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"holdings": {VWRP: Decimal("Infinity")}}, {"steps": {VWRP: Decimal("NaN")}}, {"holdings": {VWRP: 1.0}}],
+)
+def test_holdings_and_steps_must_be_finite_decimals(kwargs: dict[str, object]) -> None:
+    with pytest.raises((ValueError, TypeError), match="account state"):
+        state(**kwargs)  # type: ignore[arg-type]
+
+
+def test_the_state_cannot_be_changed_after_it_is_checked() -> None:
+    holdings = {VWRP: Decimal(0)}
+    s = state(holdings=holdings)
+    holdings[VWRP] = Decimal(-100)  # the caller's dict changes...
+    assert s.holdings[VWRP] == Decimal(0)  # ...the checked copy doesn't
+    with pytest.raises(TypeError):
+        s.holdings[VWRP] = Decimal(-100)  # type: ignore[index]
+
+
+def test_errors_stay_trapped_even_if_the_caller_turned_traps_off() -> None:
+    ctx = decimal.Context(traps=[])
+    with decimal.localcontext(ctx):
+        [d] = review([buy("2")], state())
+    assert d.approved is not None and d.approved.order.quantity == Decimal(2)
+
+
+def test_ceilings_hold_even_if_limits_were_tampered_with() -> None:
+    limits = Limits()
+    object.__setattr__(limits, "position_fraction", Decimal(1))
+    object.__setattr__(limits, "drawdown_stop", Decimal("0.9"))
+    [capped] = review([buy("10")], state(), limits)
+    assert capped.approved is not None and capped.approved.order.quantity == Decimal(3)  # 30% ceiling
+    [stopped] = review([buy("1")], state(equity="800", cash="800", hwm="1000"), limits)
+    assert stopped.reason == "rejected: drawdown stop"
