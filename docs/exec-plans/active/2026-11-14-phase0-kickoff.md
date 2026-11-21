@@ -13,19 +13,19 @@ working, and a checklist of what only the owner can do. No strategy code.
 ## Acceptance criteria
 | # | Criterion (observable, pass/fail) | Evidence |
 |---|---|---|
-| AC1 | Python stack applied; `make check` passes locally | `make check`: ruff, mypy strict (16 files), 35 unit tests, 6 import contracts kept, docs-check 0 errors, flags-check 0 errors, gitleaks "no leaks found", actionlint and shellcheck clean (2026-11-21) |
+| AC1 | Python stack applied; `make check` passes locally | `make check`: ruff, mypy strict (16 files), 38 unit tests, 7 import contracts kept, docs-check 0 errors, flags-check 0 errors, gitleaks "no leaks found", actionlint and shellcheck clean (2026-11-21) |
 | AC2 | `make e2e` passes: the job entry point runs as Cloud Run will run it | `tests/e2e/test_smoke.py`: 3 passed |
 | AC3 | Package layout from the brief exists under `src/tradingbot/` | `find src/tradingbot -name __init__.py` (domain, data, strategy, portfolio, risk, execution, brokers/{trading212,fake}, ledger, config, app) |
-| AC4 | The four import contracts are enforced and each fails when violated | `make arch` 6 contracts kept; planted-violation table below |
-| AC5 | `Money` refuses to mix GBP and GBX and rejects floats | `tests/domain/test_money.py` (20 tests incl. Hypothesis properties) |
+| AC4 | The four import contracts are enforced, each fails when violated, and loosening them is high risk | `make arch` 7 contracts kept; planted-violation table below; `.importlinter` and `stack.mk` in risk paths (`risk_classify.py --paths stack.mk .importlinter` → high) |
+| AC5 | `Money` refuses to mix GBP and GBX and rejects floats | `tests/domain/test_money.py` (23 tests incl. Hypothesis properties; currency must be a `Currency` member) |
 | AC6 | Kill switch `new-orders` registered and visible to the job | `flags.json`; `tests/app/test_main.py`, `tests/e2e/test_smoke.py::test_kill_switch_override_is_visible_to_the_job` |
 | AC7 | ADRs 0006–0011, 0013, 0014 accepted; 0012 proposed (deferred) | `docs/adr/README.md`; docs-check passes |
 | AC8 | AGENTS.md, README, ARCHITECTURE.md filled in; AGENTS.md under 150 lines with the four extra rules | `wc -l AGENTS.md` = 124 |
 | AC9 | High-risk paths from the brief in `.github/risk-paths.txt` | file diff |
 | AC10 | Kit hooks run from `.claude/settings.json` without the plugin; each tested | hook table below; the guard blocked a real `core.hooksPath` override in this session |
 | AC11 | First-time setup runbook describes the public repo, not GitHub Pro | `docs/runbooks/first-time-setup.md` §1 |
-| AC12 | Container builds and its command reports healthy | `make image` (base image via mirror.gcr.io; Docker Hub rate-limited) → `docker run --rm trading-bot:local` printed `{"status": "ok", "version": "96155eb", "new_orders": true}`; with `-e FLAG_NEW_ORDERS=off` → `"new_orders": false` |
-| AC13 | A planted fake secret and a broken import rule each fail CI | Local: pre-commit hook and `gitleaks dir` both rejected a fake `T212_API_KEY` (exit 1); `lint-imports` fails on each planted violation. CI canary PRs: pending (see Open questions) |
+| AC12 | Container builds (digest-pinned base, root-owned code) and its command reports healthy | `make image` (base image via mirror.gcr.io; Docker Hub rate-limited); runtime uid 10001 gets "Permission denied" touching `/app/flags.json` (root 644); `docker run --rm trading-bot:local` printed `{"status": "ok", "version": "96155eb", "new_orders": true}`; with `-e FLAG_NEW_ORDERS=off` → `"new_orders": false` |
+| AC13 | A planted fake secret and a broken import rule are each rejected by the same checks CI runs | Local: pre-commit hook and `gitleaks dir` both rejected a fake `T212_API_KEY` (exit 1); `lint-imports` exits 1 on each planted violation. The CI demonstration is a post-merge follow-up (Plan step 8) |
 
 ## Non-goals
 - Strategy code (Phase 1), the Cloud Run job module and job deploy workflow (Phase 2),
@@ -69,6 +69,29 @@ working, and a checklist of what only the owner can do. No strategy code.
   fix goes upstream (tech-debt).
 - `phase0_report.json` added to `.gitignore`: it holds demo account data (ADR-0014).
 - The seed's `tests/scripts/` stay where they are; they pass and are ruff-clean.
+- Review round 1: import contracts moved from `pyproject.toml` to `.importlinter`, and
+  that file plus `stack.mk` added to risk paths, so disabling a gate is high risk.
+  `pyproject.toml` stays standard (else every Dependabot bump needs the owner); moving
+  ruff and mypy settings out is tech-debt.
+- `src/tradingbot/domain/money.py` added to risk paths (AGENTS.md calls money high risk;
+  the brief's list omitted `domain`).
+- The `new-orders` kill switch fails open in a job if Cloud Storage is unreachable.
+  Harmless in Phase 0 (nothing trades); recorded in tech-debt to fix before any order
+  path reads it, and flagged in the PR's owner brief.
+- Security round 1: `.gitleaks.toml`, `mise.toml` and `scripts/**` added to risk paths
+  (gate scripts, the deploy and kill-switch scripts, and scripts the owner runs with their
+  own credentials). `agent-review` now runs Claude with hooks disabled, because wiring
+  hooks into `.claude/settings.json` would otherwise run PR-controlled hook scripts in a
+  job that holds the review token. Unverified until the first CI run: whether the action
+  honours `--settings '{"disableAllHooks": true}'`.
+- Contract 3c added (only `app` imports `execution`; only `execution` and `app` import
+  `brokers`); contract 2a also forbids `importlib`, `subprocess`, `asyncio`, `ssl` and
+  `pathlib`; 3a forbids `socket` and `subprocess`.
+- Dockerfile: base image pinned by digest; code and `flags.json` root-owned. `uv` pinned
+  to 0.11 in `mise.toml`.
+- Deferred to tech-debt with reasons: kill-switch fail-open, market-data/order port split,
+  redirect credential forwarding, the phase0 ref-price trap, Dependabot cooldown, and the
+  pre-existing risk-gate self-approval gap (owner decision).
 
 ## Open questions
 - CI canary PRs for AC13 need branches other than this session's one
@@ -85,6 +108,7 @@ working, and a checklist of what only the owner can do. No strategy code.
 5. Full verification — check: `make check`, `make e2e`, `make image`
 6. Fresh-eyes review — check: reviewer findings resolved
 7. PR, escalate brief for `/approve-risk`, owner checklist
+8. After merge: two throwaway draft PRs (fake secret; broken import rule) to show CI's `secrets-scan` and `check` jobs fail, then close them unmerged — check: failing check runs linked here (brief's "Done when")
 
 ## Progress log
 - 2026-11-21 step 1: stack pack applied (manual finish after mise download failure) — evidence: commit `chore: apply the python stack pack`
@@ -103,7 +127,13 @@ working, and a checklist of what only the owner can do. No strategy code.
 | `execution` | `import tradingbot.brokers.fake` | 3b |
 | `ledger` | `import http.client` | 3a |
 | `data` | `import research.notebook` | 4 |
-Clean tree: 6 kept, 0 broken.
+| `data` | `import tradingbot.execution` | 3c |
+| `data` | `from tradingbot import brokers` | 3c |
+| `config` | `import tradingbot.brokers` | 3c |
+| `strategy` | `import importlib` | 2a |
+| `strategy` | `import subprocess` | 2a and 3a |
+| `ledger` | `import socket` | 3a |
+Clean tree: 7 kept, 0 broken.
 
 ### Hook tests (payload piped into the exact command from `.claude/settings.json`)
 | Hook | Payload | Expected | Exit | Result |
@@ -143,12 +173,27 @@ Stop-gate cases ran in a temporary git worktree.
    then `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (paste at the prompt, never in chat).
 5. GCP project (europe-west2) with billing: `gcloud auth login && gcloud auth
    application-default login`, fill `infra/bootstrap/bootstrap.tfvars`,
-   `make infra-bootstrap`, `make gh-vars`. Not needed until Phase 2.
-6. Run `scripts/phase0_api_check.py` with a demo key; keep `phase0_report.json` out of
-   the repo and share only the summary.
+   `make infra-bootstrap`. **Don't run `make gh-vars` until the Phase 2 job module
+   lands**: with the variables set, CI's preview job and the deploy workflow try to
+   deploy the bot as a service and fail on every PR.
+6. Run `scripts/phase0_api_check.py` from the merged `main` (not a PR branch) with a
+   demo key entered via `read -rs`; keep `phase0_report.json` out of the repo and share
+   it only privately.
+7. Decide the risk-gate self-approval gap (tech-debt: the agent acts under your GitHub
+   identity in cloud sessions, so a `/approve-risk` comment it posted would count).
 
 ## Review
-- Round 1: pending
+- Round 1 (reviewer): changes required, 2 blocking / 7 non-blocking. Fixed: gate files
+  (`stack.mk`, contracts) now high risk; AC13 restated with a post-merge step;
+  `Money` validates its currency; `money.py` high risk; `gh-vars` warning; interim notes
+  in operations.md and testing.md; phase0 script docstring says account data stays
+  private; ARCHITECTURE notes on contract upkeep, `os`-free config types and GCP
+  libraries; kill-switch fail-open logged as tech-debt.
+- Round 1 (security-reviewer): changes required, 2 blocking / 7 other + notes. Fixed:
+  gate config and `scripts/**` high risk; hooks disabled in agent-review; contract 3c and
+  wider 2a/3a; Dockerfile digest pin and root-owned files; phase0 usage reads keys
+  without shell history, says Python 3.11+, and the ignore pattern covers
+  `phase0_report*.json`. Deferred with reasons: see Decisions and tech-debt.
 
 ## Outcome
 <filled when shipped>

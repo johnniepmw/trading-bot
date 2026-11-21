@@ -13,15 +13,16 @@ What it does (all against the practice/demo environment):
 
 It never touches the live environment and never prints or saves your key or secret.
 
-Usage (on your own machine, Python 3.9+, no packages needed):
-    export T212_API_KEY="..."      # DEMO key, from the practice account
-    export T212_API_SECRET="..."
+Usage (on your own machine, Python 3.11+, no packages needed):
+    read -rs T212_API_KEY && export T212_API_KEY        # paste the DEMO key (not echoed,
+    read -rs T212_API_SECRET && export T212_API_SECRET  # not saved in shell history)
     python3 phase0_api_check.py                 # pick a candidate ETF automatically
     python3 phase0_api_check.py --ticker XYZ    # or name the Trading 212 ticker
     python3 phase0_api_check.py --ref-price 85  # optional: price to set far-away orders from
 
 Output: a summary on screen and phase0_report.json next to the script.
-Share the summary or the JSON; neither contains credentials.
+Neither contains credentials, but both hold demo account data (cash, order IDs, broker
+errors): share them privately, never in an issue, PR or Actions log (ADR-0014).
 Best run during London market hours (Mon-Fri 08:00-16:30) so the market order can fill.
 """
 

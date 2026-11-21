@@ -23,6 +23,8 @@ read. The suite is the specification; treat it that way.
    job → new or extended e2e test in the same PR.
 4. **E2E tests target a URL.** `E2E_BASE_URL` selects local, PR preview or staging, so the
    same tests run everywhere. They create their own data and clean up after themselves.
+   This repo's bot is a job with no URL: its e2e tests run the entry point as a
+   subprocess and skip when `E2E_BASE_URL` is set, until Phase 2 (ADR-0011).
 5. **Mock at our boundaries, not inside.** Fake the broker, not our own order service.
    Never mock the code under test.
 6. **Deterministic by construction.** Inject the clock and randomness; no sleeps (wait for

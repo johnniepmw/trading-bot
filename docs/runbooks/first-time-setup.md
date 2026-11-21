@@ -32,7 +32,9 @@ scanning and push protection on the free plan. No GitHub Pro needed.
 4. `make infra-bootstrap` — enables APIs, creates the state bucket, Artifact Registry,
    Workload Identity Federation and the four CI identities, and migrates its own state
    into the bucket.
-5. `make gh-vars` — writes the outputs into GitHub Actions variables.
+5. `make gh-vars` — writes the outputs into GitHub Actions variables. **This repo: don't
+   run it until the Phase 2 job module lands.** Once the variables exist, CI's preview
+   job and the deploy workflow try to deploy the bot as a service and fail (ADR-0011).
 6. `make env-up ENV=staging && make env-up ENV=prod` (once; afterwards the infra workflow
    applies changes on merge). Then any merge to `main` deploys the app.
 7. For each secret the app needs: `make secret-set NAME=<name> ENV=staging` and `ENV=prod`.

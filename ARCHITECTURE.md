@@ -34,7 +34,7 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 ## Boundaries and dependency direction
 `domain` ← `strategy` / `portfolio` / `risk` (pure) ← `execution` ← `app` (composition
 root) → `brokers`, `data`, `ledger`. Enforced by import-linter (`make arch`,
-contracts in `pyproject.toml`):
+contracts in `.importlinter`):
 1. `domain` imports nothing else from the project.
 2. `strategy`, `portfolio` and `risk` import only `domain` and config types, never each
    other, and never brokers, data I/O, HTTP libraries or `os` (environment variables).
@@ -42,6 +42,13 @@ contracts in `pyproject.toml`):
    adapters (flag overrides from Cloud Storage). Only `app` imports `brokers.trading212`
    or `brokers.fake`.
 4. `research` is never imported by `src`.
+
+Contracts live in `.importlinter` (high risk). They list source packages one by one, so
+a new subpackage must be added to contracts 1, 3a and 3b. Contract 2 checks indirect
+imports too: keep config *types* in an `os`-free module (for example `config/types.py`)
+and the loading that reads the environment elsewhere (`config/load.py`). GCP client
+libraries (`google`) aren't on the HTTP list yet; decide where the GCS ledger adapter
+may use them when it lands (ADR-0013, Phase 1–2).
 
 ## Invariants
 Each should have a test; the ones marked (Phase 0) already do.

@@ -79,3 +79,9 @@ def test_addition_commutes_and_subtraction_inverts(a: Decimal, b: Decimal) -> No
 @given(amounts)
 def test_pence_to_pounds_is_exact_division_by_100(a: Decimal) -> None:
     assert Money(a * 100, Currency.GBX).to_gbp() == Money(a, Currency.GBP)
+
+
+@pytest.mark.parametrize("bad", ["GBP", "GBp", None])
+def test_currency_must_be_a_currency_member(bad: object) -> None:
+    with pytest.raises(TypeError, match="Currency"):
+        Money(Decimal(1), bad)  # type: ignore[arg-type]

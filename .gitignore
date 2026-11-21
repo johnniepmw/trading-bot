@@ -48,4 +48,4 @@ mutants/
 !.vscode/settings.json
 
 # Phase 0 API check output (contains demo account data; never commit, see ADR-0014)
-phase0_report.json
+phase0_report*.json

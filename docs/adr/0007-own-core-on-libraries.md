@@ -3,7 +3,7 @@
 - **Status**: accepted
 - **Date**: 2026-11-21
 - **Deciders**: owner
-- **Enforcement**: ARCHITECTURE.md package layout; import-linter contracts in `pyproject.toml`
+- **Enforcement**: ARCHITECTURE.md package layout; import-linter contracts in `.importlinter`
 
 ## Context
 The strategy is a long-or-cash trend system on 6–8 ETFs, trading weekly to monthly.

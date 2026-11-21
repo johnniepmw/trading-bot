@@ -37,58 +37,7 @@ markers = [
   "flaky: quarantined; runs nightly only (docs/testing.md)",
 ]
 
-[tool.importlinter]
-root_package = "tradingbot"
-include_external_packages = true
-
-# The four contracts from the Phase 0 brief (ARCHITECTURE.md, "Boundaries").
-[[tool.importlinter.contracts]]
-name = "1. domain imports nothing else from the project"
-type = "forbidden"
-source_modules = ["tradingbot.domain"]
-forbidden_modules = [
-  "tradingbot.data", "tradingbot.strategy", "tradingbot.portfolio", "tradingbot.risk",
-  "tradingbot.execution", "tradingbot.brokers", "tradingbot.ledger", "tradingbot.config",
-  "tradingbot.app",
-]
-
-[[tool.importlinter.contracts]]
-name = "2a. strategy, portfolio and risk import only domain and config (no brokers, data I/O, HTTP or environment)"
-type = "forbidden"
-source_modules = ["tradingbot.strategy", "tradingbot.portfolio", "tradingbot.risk"]
-forbidden_modules = [
-  "tradingbot.data", "tradingbot.execution", "tradingbot.brokers", "tradingbot.ledger",
-  "tradingbot.app", "os", "urllib", "http", "httpx", "requests", "urllib3", "aiohttp", "socket",
-]
-
-[[tool.importlinter.contracts]]
-name = "2b. strategy, portfolio and risk do not import each other"
-type = "independence"
-modules = ["tradingbot.strategy", "tradingbot.portfolio", "tradingbot.risk"]
-
-[[tool.importlinter.contracts]]
-name = "3a. only brokers (and app's GCP adapters) import HTTP libraries"
-type = "forbidden"
-source_modules = [
-  "tradingbot.domain", "tradingbot.data", "tradingbot.strategy", "tradingbot.portfolio",
-  "tradingbot.risk", "tradingbot.execution", "tradingbot.ledger", "tradingbot.config",
-]
-forbidden_modules = ["urllib", "http", "httpx", "requests", "urllib3", "aiohttp"]
-
-[[tool.importlinter.contracts]]
-name = "3b. only app wires in concrete brokers"
-type = "forbidden"
-source_modules = [
-  "tradingbot.domain", "tradingbot.data", "tradingbot.strategy", "tradingbot.portfolio",
-  "tradingbot.risk", "tradingbot.execution", "tradingbot.ledger", "tradingbot.config",
-]
-forbidden_modules = ["tradingbot.brokers.trading212", "tradingbot.brokers.fake"]
-
-[[tool.importlinter.contracts]]
-name = "4. research is never imported by src"
-type = "forbidden"
-source_modules = ["tradingbot"]
-forbidden_modules = ["research"]
+# Import contracts live in .importlinter (a high-risk path).
 
 [tool.mutmut]
 paths_to_mutate = ["src/tradingbot/domain/"]

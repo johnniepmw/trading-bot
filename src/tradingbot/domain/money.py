@@ -30,6 +30,8 @@ class Money:
     currency: Currency
 
     def __post_init__(self) -> None:
+        if not isinstance(self.currency, Currency):
+            raise TypeError(f"Money currency must be a Currency, got {self.currency!r}")
         if not isinstance(self.amount, Decimal):
             raise TypeError(f"Money amount must be a Decimal, got {type(self.amount).__name__}")
         if not self.amount.is_finite():
