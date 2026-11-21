@@ -20,9 +20,9 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 | `src/tradingbot/strategy` | signals from prices: `trend.in_trend` (close above its 210-day average), month ends | do I/O, read env vars, import brokers or HTTP |
 | `src/tradingbot/portfolio` | target weights (1/N sleeves, 25% cap, 10% volatility cap) and orders outside the rebalance band | as strategy |
 | `src/tradingbot/risk` | veto, shrink or pass each order; hard ceilings as constants | as strategy; be bypassed |
-| `src/tradingbot/execution` | send approved orders, ledger first | import a concrete broker |
-| `src/tradingbot/brokers` | `Broker` interface; `trading212/` and `fake/` | leak broker JSON past the adapter |
-| `src/tradingbot/ledger` | intended orders, fills, runs (SQLite in GCS, ADR-0013) | allow two concurrent writers |
+| `src/tradingbot/execution` | `execute`: only `ApprovedOrder`; kill switch read before each order; ledger first, then send; a timeout leaves the intent UNKNOWN and stops. `reconcile` settles open intents from the broker at the start of every run | import a concrete broker; resend an order whose outcome is unknown |
+| `src/tradingbot/brokers` | `port.Broker` (account, positions, quote, market orders by `ApprovedOrder`, broker order IDs, recent orders); `fake/` (no more capable than Trading 212); `trading212/` after the API check | leak broker JSON past the adapter |
+| `src/tradingbot/ledger` | `store.Ledger` (SQLite): intents recorded before sending, their states, and a high-water mark that only rises (a lower one is an error); GCS storage and lock in Phase 2 (ADR-0013) | allow two concurrent writers |
 | `src/tradingbot/config` | typed config, validated at start-up | hold secret values in code |
 | `src/tradingbot/app` | entry points (`python -m tradingbot.app`), wiring, flags, alerts, kill switch | contain trading logic |
 | `docs/strategies` | one spec per strategy: hypothesis, parameters, validation, gate | change parameters after results without a trial-log entry |
