@@ -79,8 +79,8 @@ docs-check: ## Docs links, AGENTS.md size, ADR index
 	python3 scripts/check_docs.py
 flags-check: ## flags.json valid, no expired release flags, no unregistered flags in code
 	python3 scripts/check_flags.py
-secrets-scan: ## gitleaks over the repo (and history in CI)
-	@if command -v gitleaks >/dev/null; then gitleaks git --no-banner --redact --config .gitleaks.toml $${GITLEAKS_LOG_OPTS:+--log-opts="$$GITLEAKS_LOG_OPTS"} . ; else echo "secrets-scan: gitleaks not installed (make setup)"; [ -z "$${CI:-}" ]; fi
+secrets-scan: ## gitleaks over this branch's history (SECRETS_SCAN_RANGE, default HEAD)
+	@bash scripts/secrets-scan.sh
 repo-lint: ## Lint workflows and shell scripts
 	@if command -v actionlint >/dev/null; then actionlint; else echo "repo-lint: actionlint missing"; [ -z "$${CI:-}" ]; fi
 	@if command -v shellcheck >/dev/null; then shellcheck -S warning scripts/*.sh .githooks/*; else echo "repo-lint: shellcheck missing"; [ -z "$${CI:-}" ]; fi

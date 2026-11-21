@@ -24,10 +24,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the secret scan in `make check` covers full history
+          fetch-depth: 0 # the secret scan needs the PR's base and head commits
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
       - run: make setup
-      - run: make check
+      - name: make check
+        env:
+          # Pull requests: scan only the PR's own commits. Pushes to main: main's history
+          # (the script's default, HEAD). A range that doesn't resolve fails the job.
+          SECRETS_SCAN_RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || 'HEAD' }}
+        run: make check
 
   e2e:
     name: e2e
