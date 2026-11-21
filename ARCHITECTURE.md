@@ -73,8 +73,12 @@ Each should have a test; the ones marked (Phase 0) already do.
   (`tests/app/test_flags.py`, `tests/app/test_main.py`).
 - **Live trading is owner-only**: the live switch and capital allocation come from the
   `operator` secret; missing or invalid means paper trading (ADR-0009).
-- **Risk ceilings are constants in code**: no leverage; a hard stop at a 20% drawdown
-  from peak; position-size caps. Day-to-day limits may only be tighter.
+- **Risk ceilings are constants in code** (`risk/limits.py`): no leverage (buys never
+  spend more than available cash); no new buys at 20% below the high-water mark; no
+  holding above 30% of equity; the daily-loss pause can't be looser than 5%. `Limits` may
+  only be tighter. `risk.review` passes, shrinks or rejects every order; buys fail closed
+  on a missing high-water mark, quote, quantity step or GBP price; sells are never blocked
+  (`tests/risk/`, 100% branch coverage enforced).
 - **Account data stays private**: balances, positions, orders, fills, P&L and raw broker
   responses never appear in Actions logs, PR or issue comments, check summaries or
   artifacts (ADR-0014).

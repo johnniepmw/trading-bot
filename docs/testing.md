@@ -18,7 +18,9 @@ read. The suite is the specification; treat it that way.
 1. **Test first for bugs.** Reproduce with a failing test, then fix. The test stays.
 2. **Every behaviour change has a test that fails without it.** Coverage percentage is a
    smoke alarm, not a goal; critical modules (money, risk, auth) aim for full branch
-   coverage and are mutation-tested nightly where the stack supports it.
+   coverage and are mutation-tested nightly where the stack supports it. `src/tradingbot/risk`
+   is held to 100% branch coverage by `make test-unit` (`--cov-fail-under=100` in `stack.mk`),
+   so CI fails on any untested risk branch.
 3. **Every user-visible flow has an end-to-end test.** New page, endpoint, CLI command or
    job → new or extended e2e test in the same PR.
 4. **E2E tests target a URL.** `E2E_BASE_URL` selects local or staging, so the same tests
