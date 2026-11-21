@@ -109,15 +109,17 @@ def test_an_unadjusted_ten_for_one_split_is_refused() -> None:
 
 
 def test_a_fund_that_starts_later_stays_cash_until_it_has_210_days() -> None:
-    # survivorship-safe: a late listing is not back-filled
+    # survivorship-safe: a late listing is not back-filled, then trades once it has history
     eq, late = UNIVERSE[0], UNIVERSE[2]
+    days = weekdays(date(2018, 1, 1), 600)
     history = {
-        eq: bars(eq, [100 + t * 0.1 for t in range(400)]),
-        late: bars(late, [50 + t * 0.1 for t in range(100)], start=date(2021, 1, 1)),
+        eq: bars(eq, [100 + t * 0.1 for t in range(600)]),
+        late: bars(late, [50 + t * 0.1 for t in range(300)], start=days[300]),
     }
-    res = run(history, CONFIG)
+    late_fills = [f.day for f in run(history, CONFIG).fills if f.instrument == late]
     late_days = sorted(b.day for b in history[late])
-    assert all(f.instrument != late for f in res.fills if f.day <= late_days[-1])
+    assert late_fills  # it does trade once it has 210 days
+    assert min(late_fills) > late_days[209]
 
 
 def test_regression_on_the_frozen_synthetic_market(result) -> None:
