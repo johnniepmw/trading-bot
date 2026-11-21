@@ -17,8 +17,11 @@ skip the owner's approval. The owner asked to set up the GitHub App now.
 | AC2 | Without the app token, risk-gate fails before any API call (fail closed) | `test_main_fails_closed_without_a_status_token` |
 | AC3 | The app key is readable only from `main` | `risk-gate.yml` uses environment `risk-gate` (`deployment: false`); runbook step 3 sets the branch policy to `main` |
 | AC4 | `github-setup.sh` pins `risk-gate` to the app when `RISK_GATE_APP_ID` is set, refuses a non-numeric ID, and keeps today's ruleset otherwise | rendered ruleset JSON for both cases (progress log); shellcheck |
+| AC7 | `github-setup.sh` creates the `risk-gate` environment with a `main`-only branch policy if missing, and stops (writing no ruleset) if the policy is anything but exactly `branch:main` | `tests/scripts/test_github_setup.py` (missing → created; extra branch, tag, `refs/pull/*` → stop) |
+| AC8 | Once pinned, re-running `github-setup.sh` keeps the pin; only `RISK_GATE_UNPIN=1` removes it | `test_rerun_without_the_id_keeps_the_pin`, `test_unpin_needs_the_explicit_switch` |
 | AC5 | The owner has a step-by-step runbook; security docs and tech-debt updated | `docs/runbooks/risk-gate-app.md`; `make docs-check` |
 | AC6 | After merge, a PR's `risk-gate` status is created by the app, then the ruleset is pinned | read-only `gh api …/statuses` (`creator.login`) and `…/rulesets` after the owner's step 5 |
+| AC9 | A workflow on another branch can't use the `risk-gate` environment | after setup: a throwaway branch with a one-job workflow (`environment: risk-gate`, `run: true`, no secret reference) is refused by environment protection rules; branch deleted |
 
 ## Non-goals
 - `agent-review` (a check run, still matched by name; tech-debt line kept, reworded).
@@ -43,6 +46,17 @@ skip the owner's approval. The owner asked to set up the GitHub App now.
   The workflow token loses `statuses: write`.
 - The ruleset pin is opt-in through `RISK_GATE_APP_ID` so re-running the setup script
   before the app exists doesn't lock every PR.
+
+- After security review (changes-required, 2 findings): the branch policy, which the key's
+  safety rests on, was set by hand with nothing checking it (GitHub's default for a new
+  environment is no restriction) → `github-setup.sh` now creates and verifies it; and a
+  plain re-run silently dropped the pin → re-runs keep it. Also: runbook hardening (ref
+  type Branch, no OAuth or device flow, key rotation, rollback that needs the check
+  removed temporarily), the runbook is now a high-risk path, stale security.md lines
+  fixed, `gh_api` raises on an empty token. The action pin was checked as a lightweight
+  tag on commit `f418cff3…` (`git ls-remote`, `git cat-file -t` → commit).
+- This session's proxy refuses the environments API, so the policy check runs in the
+  owner's `github-setup.sh`, plus the AC9 probe.
 
 ## Plan
 1. Tests for the status token and fail-closed start — check: they fail first

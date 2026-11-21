@@ -42,7 +42,9 @@ MARKER = "<!-- risk-gate:{sha} -->"
 
 def gh_api(path: str, *args: str, paginate: bool = False, token: str | None = None) -> object:
     cmd = ["gh", "api", path, *args]
-    env = {**os.environ, "GH_TOKEN": token} if token else None
+    if token == "":
+        raise ValueError("empty token")  # never fall back to the workflow token
+    env = {**os.environ, "GH_TOKEN": token} if token is not None else None
     if paginate:
         cmd += ["--paginate", "--slurp"]  # one JSON array of pages
         out = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env).stdout

@@ -12,3 +12,6 @@
    1–3, then write a postmortem.
 
 Agents never run these commands (the guard hook blocks reading or writing secret values).
+
+The risk-gate GitHub App key is a GitHub environment secret, not in Secret Manager: see
+[risk-gate-app.md](risk-gate-app.md#rotating-the-key).

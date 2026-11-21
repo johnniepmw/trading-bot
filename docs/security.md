@@ -13,8 +13,9 @@
   not environment variables (env vars leak into crash dumps and child processes).
 - **CI credentials**: none stored for GCP. GitHub Actions authenticates with Workload
   Identity Federation (OIDC), restricted to this repository; production-capable
-  identities are further restricted to `refs/heads/main`. The only stored CI secret is
-  `CLAUDE_CODE_OAUTH_TOKEN` for agent-review.
+  identities are further restricted to `refs/heads/main`. Stored CI secrets:
+  `CLAUDE_CODE_OAUTH_TOKEN` for agent-review, and `RISK_GATE_APP_KEY`, the risk-gate
+  app's private key, in the `main`-only `risk-gate` environment.
 - **Leak prevention**: gitleaks in the pre-commit hook and in `make check`, which scans
   the commits under review (`scripts/secrets-scan.sh`): a PR's own commits (`base..head`)
   in CI, main's history on pushes to main, and the current branch (`HEAD`) locally, so a
@@ -58,10 +59,12 @@
   owner approves from the GitHub web UI or app.
 - The `risk-gate` status itself is posted by a dedicated GitHub App (commit statuses
   only), whose private key is a secret of the `risk-gate` environment, readable only from
-  `main`. The `main` ruleset requires `risk-gate` from that app (`integration_id`), so a
-  status posted by a workflow on another branch, or any other token, doesn't count
-  ([runbooks/risk-gate-app.md](runbooks/risk-gate-app.md)). `agent-review` is still
-  matched by name (tech-debt).
+  `main`. Once the owner pins it (runbook step 5), the `main` ruleset requires
+  `risk-gate` from that app (`integration_id`), so a status posted by a workflow on
+  another branch, or any other token, doesn't count
+  ([runbooks/risk-gate-app.md](runbooks/risk-gate-app.md)). This assumes the Claude
+  GitHub App the agent uses has no Administration, Environments, Secrets or Variables
+  write access. `agent-review` is still matched by name (tech-debt).
 - A Dependabot workflow bump is also checked against the action's own repo: each pinned
   SHA must be the commit its `# vX.Y.Z` tag names there, so a commit pushed to a fork
   ("imposter commit") can't pass as a version bump.

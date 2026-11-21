@@ -16,15 +16,42 @@ gh api -X PATCH "repos/$repo" \
 gh api -X PUT "repos/$repo/vulnerability-alerts" >/dev/null || echo "warn: vulnerability alerts"
 gh api -X PUT "repos/$repo/automated-security-fixes" >/dev/null || echo "warn: automated security fixes"
 
+# The `risk-gate` environment holds the risk-gate app's private key, so only `main` may
+# use it: custom branch policies, exactly one rule `branch:main`. Created if missing;
+# anything else (no restriction, tags, refs/pull/*, extra branches) stops the script.
+gh api -X PUT "repos/$repo/environments/risk-gate" --input - >/dev/null <<'JSON'
+{ "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true } }
+JSON
+policies_path="repos/$repo/environments/risk-gate/deployment-branch-policies"
+policies="$(gh api "$policies_path" -q '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | sort | join(",")')"
+if [ -z "$policies" ]; then
+  gh api -X POST "$policies_path" -f name=main -f type=branch >/dev/null
+  policies="$(gh api "$policies_path" -q '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | sort | join(",")')"
+fi
+if [ "$policies" != "branch:main" ]; then
+  echo "error: environment risk-gate must allow only branch main, found: $policies" >&2
+  echo "       fix it in Settings → Environments → risk-gate, then re-run" >&2
+  exit 1
+fi
+echo "environment risk-gate: main only"
+
 # The required `risk-gate` status is pinned to the dedicated risk-gate GitHub App (its
 # numeric App ID, not the client ID), so a status posted by any other token (e.g. a
-# workflow on another branch) doesn't count. Without RISK_GATE_APP_ID it is matched by
-# name only: set it once the app is installed and risk-gate is posting through it.
-if [ -n "${RISK_GATE_APP_ID:-}" ]; then
-  case "$RISK_GATE_APP_ID" in *[!0-9]*) echo "RISK_GATE_APP_ID must be the numeric App ID" >&2; exit 1 ;; esac
-  risk_gate_check="{ \"context\": \"risk-gate\", \"integration_id\": $RISK_GATE_APP_ID }"
+# workflow on another branch) doesn't count. Set RISK_GATE_APP_ID once the app posts
+# risk-gate. Once pinned, re-runs keep the pin; only RISK_GATE_UNPIN=1 removes it.
+existing="$(gh api "repos/$repo/rulesets" -q '.[] | select(.name=="main-protection") | .id' || true)"
+current_pin=""
+if [ -n "$existing" ]; then
+  current_pin="$(gh api "repos/$repo/rulesets/$existing" -q '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[] | select(.context=="risk-gate") | .integration_id // empty] | first // empty')"
+fi
+app_id="${RISK_GATE_APP_ID:-$current_pin}"
+if [ "${RISK_GATE_UNPIN:-}" = "1" ]; then app_id=""; fi
+if [ -n "$app_id" ]; then
+  case "$app_id" in *[!0-9]*) echo "RISK_GATE_APP_ID must be the numeric App ID" >&2; exit 1 ;; esac
+  risk_gate_check="{ \"context\": \"risk-gate\", \"integration_id\": $app_id }"
+  echo "risk-gate status pinned to app $app_id"
 else
-  echo "warn: RISK_GATE_APP_ID not set; the risk-gate status is matched by name only"
+  echo "warn: risk-gate status matched by name only (set RISK_GATE_APP_ID to pin it)"
   risk_gate_check='{ "context": "risk-gate" }'
 fi
 
@@ -57,7 +84,6 @@ ruleset="$(cat <<JSON
 }
 JSON
 )"
-existing="$(gh api "repos/$repo/rulesets" -q '.[] | select(.name=="main-protection") | .id' || true)"
 if [ -n "$existing" ]; then
   echo "$ruleset" | gh api -X PUT "repos/$repo/rulesets/$existing" --input - >/dev/null
   echo "updated ruleset main-protection ($existing)"

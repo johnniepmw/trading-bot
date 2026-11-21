@@ -16,6 +16,9 @@ GitHub → your avatar → Settings → Developer settings → GitHub Apps → *
 - **Webhook**: untick **Active**.
 - **Repository permissions**: **Commit statuses: Read and write**. Nothing else
   (Metadata: read-only is added automatically).
+- **Identifying and authorizing users**: leave **Request user authorization (OAuth)**
+  and **Enable Device Flow** off, and don't generate a client secret (a user token of this
+  app would count as the app).
 - **Where can this app be installed**: **Only on this account**.
 - **Create GitHub App**. On the app's page, note the **App ID** (a number) and the
   **Client ID** (starts `Iv`). Neither is secret.
@@ -27,8 +30,10 @@ App page → **Install App** → your account → **Only select repositories** �
 
 ## 3. Create the `risk-gate` environment
 Repository → Settings → Environments → **New environment** → name `risk-gate`.
-- **Deployment branches and tags**: **Selected branches and tags** → add `main`. Nothing
-  else: this is what stops other branches reading the key.
+- **Deployment branches and tags**: **Selected branches and tags** → add rule, ref type
+  **Branch**, name `main`. Nothing else, ever (no tags, no `refs/pull/*`, no other
+  branches): this is what stops other branches reading the key. The repo-settings target
+  in step 5 checks this and stops if anything else is there.
 - No required reviewers and no wait timer (risk-gate must run unattended).
 - **Environment secrets** → add `RISK_GATE_APP_KEY`, paste the whole `.pem` file content.
 - **Environment variables** → add `RISK_GATE_APP_CLIENT_ID` = the Client ID.
@@ -48,11 +53,21 @@ numeric App ID:
 RISK_GATE_APP_ID=<the numeric App ID> make github-setup
 ```
 
-This re-applies the `main` ruleset with `risk-gate` required from that app. Pass the same
-variable whenever you re-run that target; without it the script warns and falls back to
-matching by name.
+This checks the environment's branch policy (exactly `branch:main`, or stops), then
+re-applies the `main` ruleset with `risk-gate` required from that app. Later re-runs keep
+the pin without the variable; only `RISK_GATE_UNPIN=1` removes it.
+
+Open PRs whose `risk-gate` status was posted before the pin need a fresh run: push to
+them, or comment the approval again.
+
+## Rotating the key
+App page → Private keys → generate a new key → replace `RISK_GATE_APP_KEY` in the
+environment → delete the old key on the app page. Do it at once if the key may have
+leaked.
 
 ## Rollback
-Re-run the repo-settings target without `RISK_GATE_APP_ID` (name-only matching), then
-revert the workflow change. Don't delete the app while the ruleset is pinned to it: every
-PR would wait on a status nothing can post.
+If the app can't post (key revoked, environment deleted), every PR waits, including the
+revert, because risk-gate runs main's workflow. Then: re-run the repo-settings target
+with `RISK_GATE_UNPIN=1`, temporarily remove `risk-gate` from the ruleset's required
+checks (Settings → Rules → main-protection), merge the fix or revert, and re-run the
+target to restore it. Don't delete the app while the ruleset is pinned to it.
