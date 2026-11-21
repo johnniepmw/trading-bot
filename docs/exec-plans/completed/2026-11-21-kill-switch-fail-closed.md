@@ -1,7 +1,7 @@
 # Kill switch fails closed in the job
 
-- **Status**: blocked (owner decision)
-- **Branch / PR**: `ccr-7fe1197d-l39xit` / (pending)
+- **Status**: shipped
+- **Branch / PR**: `ccr-7fe1197d-l39xit` / https://github.com/johnniepmw/trading-bot/pull/15 (merged as `ed9e363`, owner approved 2026-11-21)
 - **Risk class**: high (`src/tradingbot/app/**` is a risk path: kill switch and entry point)
 - **Started**: 2026-11-21
 
@@ -66,5 +66,8 @@ variable can beat a remote "off". This must be fixed before any order path reads
 - Round 1: reviewer — 1 blocking (AC6 tests), 7 non-blocking, all applied except the timeout parametrization note that is included too; security-reviewer — 1 medium and 3 low, all applied (see Decisions). 140 unit + 4 e2e pass.
 
 ## Outcome
+Shipped in PR #15 after the owner approved. CI, agent-review and risk-gate green. `make check-fast` 140 passed, `make e2e` 4 passed. Phase 2 must seed `{"overrides": {}}` in the flags bucket and alert on the ERROR lines `kill switch closed:` and `refusing to start:`.
 
 ## Learnings
+- Fail-closed behaviour needs a test per closing path *and* per log line, or the alert silently breaks later.
+- A hard reset plus force-push of the session branch after a squash merge is refused by the auto-mode classifier; merging `origin/main` into the branch gives an identical tree without rewriting history.

@@ -25,6 +25,7 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 | `src/tradingbot/ledger` | intended orders, fills, runs (SQLite in GCS, ADR-0013) | allow two concurrent writers |
 | `src/tradingbot/config` | typed config, validated at start-up | hold secret values in code |
 | `src/tradingbot/app` | entry points (`python -m tradingbot.app`), wiring, flags, alerts, kill switch | contain trading logic |
+| `docs/strategies` | one spec per strategy: hypothesis, parameters, validation, gate | change parameters after results without a trial-log entry |
 | `research/` | notebooks and experiments | be imported by `src` |
 | `tests/` | unit, property, e2e (`tests/e2e` runs the job entry point) | use real account data |
 | `scripts/phase0_api_check.py` | owner-run demo API check (stdlib only) | touch the live API |
