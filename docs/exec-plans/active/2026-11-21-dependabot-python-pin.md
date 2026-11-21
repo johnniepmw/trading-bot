@@ -38,6 +38,7 @@ closed PR #2, 3.13 → 3.15), while still taking patch and digest updates.
 
 ## Progress log
 - 2026-11-21 steps 1–2: done — evidence: `make check` and `make e2e` pass
+- 2026-11-21 review: security-reviewer pass, 0 blocking; took its wording note (digest updates carry patch fixes) and added an end-of-life tech-debt line
 
 ## Outcome
 <filled on merge>
