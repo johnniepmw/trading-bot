@@ -107,6 +107,16 @@ protected_modules =
 allowed_importers =
     tradingbot.app
 
+[importlinter:contract:approved-orders]
+name = 5. only risk, execution and brokers import ApprovedOrder (ADR-0016)
+type = protected
+protected_modules =
+    tradingbot.domain.approval
+allowed_importers =
+    tradingbot.risk
+    tradingbot.execution
+    tradingbot.brokers
+
 [importlinter:contract:no-research-imports]
 name = 4. research is never imported by src
 type = forbidden

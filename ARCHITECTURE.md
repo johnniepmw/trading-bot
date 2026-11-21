@@ -15,7 +15,7 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 ## Codemap
 | Path | Responsibility | Must not |
 |---|---|---|
-| `src/tradingbot/domain` | value types: `Money` (GBP/GBX/USD), later instruments, orders | import anything else from `tradingbot` |
+| `src/tradingbot/domain` | value types: `Money` (GBP/GBX/USD), `Instrument`, `Bar`, `Order`, `Position`; `ApprovedOrder` (only `risk` constructs it, ADR-0016) | import anything else from `tradingbot` |
 | `src/tradingbot/data` | load and clean market data | place orders |
 | `src/tradingbot/strategy` | signals from prices | do I/O, read env vars, import brokers or HTTP |
 | `src/tradingbot/portfolio` | target weights and order sizing | as strategy |
@@ -44,6 +44,9 @@ contracts in `.importlinter`):
    only `execution` and `app` import `brokers`, so every order goes through the path that
    applies risk (3c, 3d). Only `app` imports `brokers.trading212` or `brokers.fake` (3b).
 4. `research` is never imported by `src`.
+5. Only `risk`, `execution` and `brokers` import `domain.approval` (`ApprovedOrder`), and
+   only `risk` constructs one (`tests/domain/test_approval.py`), so an order that skipped
+   risk cannot reach the order port (ADR-0016).
 
 Contracts live in `.importlinter` (high risk; `make arch` names the file so no other
 file can shadow it). Contracts 3b–3d are allow-lists, so a new subpackage is covered
