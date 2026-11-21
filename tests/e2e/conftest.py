@@ -25,7 +25,13 @@ def run_job() -> RunJob:
         pytest.skip("the bot is a Cloud Run job with no URL; deployed e2e arrives in Phase 2")
 
     def _run(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-        full_env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "APP_VERSION": "e2e", **(env or {})}
+        full_env = {
+            **os.environ,
+            "PYTHONPATH": str(ROOT / "src"),
+            "APP_VERSION": "e2e",
+            "APP_ENV": "test",
+            **(env or {}),
+        }
         return subprocess.run(
             [sys.executable, "-m", "tradingbot.app", *args],
             cwd=ROOT,

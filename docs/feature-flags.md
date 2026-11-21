@@ -7,13 +7,34 @@
 - Resolution order at runtime:
   1. Environment variable `FLAG_<UPPER_SNAKE_NAME>` (`true/false/on/off/1/0`). For local
      development and tests.
-  2. Remote override: a JSON object in the environment's flags bucket
-     (`gs://<project>-flags-<env>/flags.json`), re-read every 30 seconds. Written only by the
-     `ops` workflow. If it can't be read, the last good value is kept; at startup, the
-     registry default is used.
+  2. Remote override: `{"overrides": {"<flag>": true|false}}` in the environment's flags
+     bucket (`gs://<project>-flags-<env>/flags.json`), re-read every 30 seconds. Written
+     only by the `ops` workflow, and seeded with `{"overrides": {}}` when the environment
+     is built. If it can't be read, the last good value is kept; at startup, the registry
+     default is used. **Kill switches are different, see below.**
   3. The registry default.
 - The stack pack's `flags` module implements this; app code calls
   `isEnabled("flag-name")` and nothing else.
+
+## Kill switches fail closed
+A job starts cold on every run, so it has no last good value. For flags of type
+`kill-switch` (e.g. `new-orders`):
+- A remote read that fails, times out, finds no object (404) or finds a malformed body
+  (anything but `{"overrides": {name: bool}}`) counts as **off**, with an ERROR log line
+  `kill switch closed: <flag>: ...` for alerting.
+- After one good read, later failures keep that value for 5 minutes at most, then off.
+- `FLAG_<NAME>=off` always works. `=on` works only when `APP_ENV` is `local` or `test`;
+  elsewhere it is ignored (and logged), so env can never beat a remote off.
+- An env value that is neither a true nor a false spelling (`disable`, `kill`, `"off"`) closes
+  the kill switch (and logs), so a mistyped emergency value never leaves trading on. An
+  overrides object naming an unregistered flag (`new_orders`) is a failed read.
+- `APP_ENV=local|test` is ignored on Cloud Run (`CLOUD_RUN_JOB` or `K_SERVICE` set).
+- The job refuses to start (exit 1) without `FLAGS_BUCKET` unless `APP_ENV` is `local` or
+  `test`. Unset `APP_ENV` counts as deployed.
+- Never name a deployed environment `local` or `test`: `APP_ENV` (set by the deploy) would make it trusted.
+- Change overrides only through the `ops` workflow, which validates `true|false`; a hand-edited
+  malformed object keeps the last good value for up to 5 minutes, then closes.
+- Infra must seed the overrides object at env-up; a missing object keeps trading off.
 
 ## Types
 | Type | Default | Lifetime | Example |

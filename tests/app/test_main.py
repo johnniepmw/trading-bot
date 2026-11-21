@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 
 import pytest
 
@@ -13,7 +14,7 @@ REGISTRY = {"new-orders": FlagSpec(type="kill-switch", default=True)}
 
 def run(argv: list[str], env: dict[str, str]) -> tuple[int, str]:
     out = io.StringIO()
-    code = main(argv, flags=Flags(REGISTRY, env=env), version="abc123", out=out)
+    code = main(argv, flags=Flags(REGISTRY, env=env, trusted_env=True), version="abc123", out=out)
     return code, out.getvalue()
 
 
@@ -32,3 +33,43 @@ def test_unknown_command_is_refused() -> None:
     with pytest.raises(SystemExit) as exc:
         run(["trade-now"], env={})
     assert exc.value.code == 2
+
+
+def _unreachable(*_: object, **__: object) -> None:
+    raise OSError("no network in unit tests")
+
+
+@pytest.mark.parametrize("app_env", [None, "", "prod", "production", "staging"])
+def test_job_refuses_to_start_without_a_flags_bucket_when_deployed(
+    app_env: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    out = io.StringIO()
+    env = {} if app_env is None else {"APP_ENV": app_env}
+    with caplog.at_level(logging.ERROR):
+        code = main(["smoke"], env=env, out=out)
+    assert code == 1
+    assert out.getvalue() == ""
+    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("refusing to start:")]
+
+
+@pytest.mark.parametrize("app_env", ["local", "test"])
+def test_job_starts_without_a_flags_bucket_in_local_and_test(app_env: str) -> None:
+    out = io.StringIO()
+    assert main(["smoke"], env={"APP_ENV": app_env}, version="v", out=out) == 0
+    assert json.loads(out.getvalue())["new_orders"] is True
+
+
+@pytest.mark.parametrize("marker", ["CLOUD_RUN_JOB", "K_SERVICE"])
+def test_app_env_local_is_not_trusted_on_cloud_run(marker: str) -> None:
+    out = io.StringIO()
+    code = main(["smoke"], env={"APP_ENV": "local", marker: "x"}, version="v", out=out)
+    assert code == 1
+
+
+def test_deployed_job_with_a_bucket_builds_a_gcs_backed_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    out = io.StringIO()
+    # No network in unit tests: the bucket read fails, so the kill switch reports off.
+    monkeypatch.setattr("tradingbot.app.flags.urllib.request.urlopen", _unreachable)
+    code = main(["smoke"], env={"FLAGS_BUCKET": "b", "APP_ENV": "prod"}, version="v", out=out)
+    assert code == 0
+    assert json.loads(out.getvalue())["new_orders"] is False
