@@ -41,12 +41,18 @@ def sleeve_weights(signals: Mapping[Instrument, bool]) -> dict[Instrument, float
 
 
 def vol_scaled(
-    weights: Mapping[Instrument, float], returns: Mapping[Instrument, Sequence[float]]
+    weights: Mapping[Instrument, float],
+    returns: Mapping[Instrument, Sequence[float]],
+    target: float = VOL_TARGET,
 ) -> dict[Instrument, float]:
-    """Scale all weights down (never up) if estimated annual volatility exceeds VOL_TARGET.
+    """Scale all weights down (never up) if estimated annual volatility exceeds `target`.
+
+    `target` is VOL_TARGET in production; other values exist only for logged stability trials.
 
     The estimate uses the last VOL_DAYS daily returns of the weighted portfolio.
     """
+    if not 0 < target < 1:  # also false for NaN
+        raise ValueError(f"volatility target must be a fraction between 0 and 1, got {target}")
     held = {i: w for i, w in weights.items() if w > 0}
     if not held:
         return dict(weights)
@@ -57,7 +63,7 @@ def vol_scaled(
             raise ValueError(f"{instrument.ticker}: daily returns must be finite")
     portfolio = [sum(w * returns[i][-VOL_DAYS:][t] for i, w in held.items()) for t in range(VOL_DAYS)]
     vol = statistics.stdev(portfolio) * math.sqrt(TRADING_DAYS_PER_YEAR)
-    scale = min(1.0, VOL_TARGET / vol) if vol > 0 else 1.0
+    scale = min(1.0, target / vol) if vol > 0 else 1.0
     return {i: w * scale for i, w in weights.items()}
 
 

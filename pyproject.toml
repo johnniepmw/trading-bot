@@ -25,7 +25,7 @@ select = ["E", "F", "I", "B", "UP", "S", "N", "SIM", "RUF", "BLE", "A", "PL"]
 [tool.mypy]
 strict = true
 mypy_path = "src"
-packages = ["tradingbot"]
+packages = ["tradingbot", "research"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

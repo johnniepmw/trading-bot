@@ -14,7 +14,7 @@ from typing import Protocol
 
 from tradingbot.domain.market import Bar, Instrument
 
-# A day-over-day move beyond 10x either way is a data error (typically pounds read as
+# A day-over-day move of 10x or more either way is a data error (typically pounds read as
 # pence), not a market move. Real ETF moves are far smaller.
 MAX_DAILY_RATIO = 10.0
 
@@ -44,5 +44,5 @@ def validate_history(instrument: Instrument, bars: Sequence[Bar]) -> Sequence[Ba
 
 
 def _check_ratio(instrument: Instrument, ratio: float, what: str) -> None:
-    if ratio > MAX_DAILY_RATIO or ratio < 1 / MAX_DAILY_RATIO:
+    if ratio >= MAX_DAILY_RATIO or ratio <= 1 / MAX_DAILY_RATIO:
         raise DataError(f"{instrument.ticker}: implausible jump of {ratio:.2f}x, {what}")
