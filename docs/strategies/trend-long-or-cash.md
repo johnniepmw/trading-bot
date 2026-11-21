@@ -61,7 +61,7 @@ and any splice date are recorded with the data. The list is data, not code.
 7. Paper trading for at least 3 months on the demo account (Phase 3), compared with the
    backtest.
 
-## Gate (proposed; the owner may change it before the hold-out file is first opened)
+## Gate (owner approved 2026-11-21; may change only before the hold-out file is first opened)
 Statistics need long samples, so significance is tested on the **full** history and the
 hold-out is only a sanity check. Paper trading may start only if, with 2x costs:
 1. full-history net Sharpe above 0.5 and Deflated Sharpe above 0.90 for the logged trial

@@ -31,6 +31,8 @@ pytest.toml
 .pytest.toml
 conftest.py
 tests/risk/**
+# The frozen strategy's pinned backtest result (docs/strategies): changing it needs the owner
+tests/backtest/regression.json
 # Gate scripts, deploy and kill-switch scripts, and scripts the owner runs with their
 # own credentials (secret-set, gh-vars, phase0_api_check)
 scripts/**

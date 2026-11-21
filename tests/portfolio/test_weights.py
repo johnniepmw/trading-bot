@@ -268,3 +268,17 @@ def test_a_later_bar_never_changes_the_returns_used_on_a_signal_date(
     history = bars(A, closes)
     day = history[-1].day
     assert daily_returns(history, day) == daily_returns(bars(A, [*closes, later]), day)
+
+
+def test_a_lower_volatility_target_scales_harder() -> None:
+    returns = {A: [0.01, -0.01] * 30}  # ~16% a year at full weight; 4% at a quarter
+    assert vol_scaled({A: 0.25}, returns, target=0.02)[A] == pytest.approx(
+        0.25 * 0.02 / (0.25 * 0.01 * math.sqrt(252) * math.sqrt(60 / 59))
+    )
+    assert vol_scaled({A: 0.25}, returns, target=0.10) == {A: 0.25}
+
+
+@pytest.mark.parametrize("bad", [0.0, -0.1, 1.0, 15.0, math.nan, math.inf])
+def test_a_volatility_target_must_be_a_fraction(bad: float) -> None:
+    with pytest.raises(ValueError, match="target"):
+        vol_scaled({A: 0.25}, {A: [0.01] * 60}, target=bad)
