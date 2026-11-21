@@ -4,8 +4,9 @@
 that is clean (no open intent, no working broker order the ledger doesn't know), and it
 refuses a run ID that already recorded orders, so a retry can't send a batch twice.
 Before each order it asks `may_send` (the app wires the `new-orders` kill switch here,
-read fresh each time), records the intent, then sends. Any outcome that isn't certain leaves the intent UNKNOWN and stops the run:
-it is never resent. `reconcile` runs at the start of every run.
+read fresh each time), records the intent, then sends. Any outcome that isn't certain
+leaves the intent UNKNOWN and stops the run: it is never resent. `reconcile` runs at the
+start of every run.
 """
 
 from __future__ import annotations
