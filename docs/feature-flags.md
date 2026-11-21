@@ -27,6 +27,9 @@ A job starts cold on every run, so it has no last good value. For flags of type
   elsewhere it is ignored (and logged), so env can never beat a remote off.
 - The job refuses to start (exit 1) without `FLAGS_BUCKET` unless `APP_ENV` is `local` or
   `test`. Unset `APP_ENV` counts as deployed.
+- Never name a deployed environment `local` or `test`: `APP_ENV` (set by the deploy) would make it trusted.
+- Change overrides only through the `ops` workflow, which validates `true|false`; a hand-edited
+  malformed object keeps the last good value for up to 5 minutes, then closes.
 - Infra must seed the overrides object at env-up; a missing object keeps trading off.
 
 ## Types

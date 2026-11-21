@@ -65,7 +65,7 @@ Each should have a test; the ones marked (Phase 0) already do.
   start.
 - **Kill switch**: the `new-orders` flag off means no new orders, and it fails closed: an
   unreadable, missing or malformed remote source, a missing `FLAGS_BUCKET` outside
-  local/test, or an env `on` in a deployed environment all mean off or no start
+  local/test, mean off or no start, and an env `on` is ignored in a deployed environment
   (`tests/app/test_flags.py`, `tests/app/test_main.py`).
 - **Live trading is owner-only**: the live switch and capital allocation come from the
   `operator` secret; missing or invalid means paper trading (ADR-0009).

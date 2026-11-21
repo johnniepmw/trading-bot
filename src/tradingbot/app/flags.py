@@ -127,7 +127,7 @@ class Flags:
             self._overrides = self._source.fetch_overrides()
             self._last_good_at = self._now()
         except Exception as exc:  # noqa: BLE001 - any failure keeps last good values
-            log.warning("flag refresh failed: %s", exc)
+            log.error("flag refresh failed: %s", exc)
         finally:
             self._fetched_at = self._now()
             self._lock.release()

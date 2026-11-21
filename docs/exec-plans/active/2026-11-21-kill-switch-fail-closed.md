@@ -19,14 +19,14 @@ variable can beat a remote "off". This must be fixed before any order path reads
 | AC3 | After one good fetch, later failures keep the last good value for at most 5 minutes, then kill switches are off | `test_last_good_overrides_survive_a_failure_for_a_limited_time` |
 | AC4 | An env `FLAG_X=on` never turns a kill switch on unless the process is local/test; env `off` still turns it off | `test_env_off_always_turns_a_kill_switch_off`, `test_env_on_does_not_beat_a_remote_off_when_deployed`, `test_env_on_does_not_rescue_an_unreadable_source_when_deployed`, `test_env_on_works_in_a_trusted_local_or_test_environment` |
 | AC5 | The job refuses to start (non-zero exit, no report) when `FLAGS_BUCKET` is unset and `APP_ENV` is not `local` or `test` | `test_main.py::test_job_refuses_to_start_without_a_flags_bucket_when_deployed` (5 cases), `tests/e2e/test_smoke.py::test_deployed_job_without_a_flags_bucket_refuses_to_start` |
-| AC6 | Every fail-closed decision logs an ERROR with a stable message so Cloud Monitoring can alert on it (Phase 2 wires the alert) | `test_every_fail_closed_decision_logs_an_error`, `test_env_on_ignored_when_deployed_logs_an_error` |
+| AC6 | Every fail-closed decision logs an ERROR with a stable message so Cloud Monitoring can alert on it (Phase 2 wires the alert) | `test_every_fail_closed_decision_logs_an_error`, `test_env_on_ignored_when_deployed_logs_an_error`, `test_closing_for_lack_of_a_source_logs_an_error`, `test_main.py::test_job_refuses_to_start_...` (asserts the `refusing to start:` ERROR) |
 | AC7 | `make check` and `make e2e` pass; docs (feature-flags.md, ARCHITECTURE.md, kill-switch runbook, tech-debt) updated | `make check-fast`: 123 passed; `make e2e`: 4 passed; `make check`: ruff, mypy, 8 contracts kept, docs-check and flags-check 0 errors, kit-check ok (gitleaks, actionlint, shellcheck not installed in this session; CI runs them) |
 
 ## Non-goals
 - The alert policy itself and the flags bucket (Phase 2 infra). Seeding `flags.json` in
   the bucket is a Phase 2 infra requirement, recorded below.
 - Reading the flag on any order path (later change).
-- Changing release or ops flag behaviour.
+- Changing release or ops flag behaviour on purpose. Side effect, accepted: a 404 or malformed body now keeps their last good overrides (or defaults) instead of dropping to defaults or ignoring only the bad entry.
 
 ## Rollout and rollback
 - Flag / kill switch: this *is* the kill switch's safety. Nothing trades yet.
@@ -53,7 +53,7 @@ variable can beat a remote "off". This must be fixed before any order path reads
 
 ## Plan
 1. Tests first (AC1–AC6), confirm they fail — check: `make test-one T=tests/app`
-2. `flags.py`: `FetchFailed` handling, staleness, kill-switch resolution, `trusted_env`; `GcsSource` 404/malformed raise — check: tests pass
+2. `flags.py`: any failed read, staleness, kill-switch resolution, `trusted_env`; `GcsSource` 404/malformed raise — check: tests pass
 3. `__main__.py`: `APP_ENV`, refuse to start without bucket; e2e conftest sets `APP_ENV=test` — check: tests, `make e2e`
 4. Docs and tech-debt entry removal — check: `make docs-check`, `make flags-check`
 5. `make check`, review, PR, escalate brief

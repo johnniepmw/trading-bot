@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 
 import pytest
 
@@ -39,12 +40,16 @@ def _unreachable(*_: object, **__: object) -> None:
 
 
 @pytest.mark.parametrize("app_env", [None, "", "prod", "production", "staging"])
-def test_job_refuses_to_start_without_a_flags_bucket_when_deployed(app_env: str | None) -> None:
+def test_job_refuses_to_start_without_a_flags_bucket_when_deployed(
+    app_env: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
     out = io.StringIO()
     env = {} if app_env is None else {"APP_ENV": app_env}
-    code = main(["smoke"], env=env, out=out)
+    with caplog.at_level(logging.ERROR):
+        code = main(["smoke"], env=env, out=out)
     assert code == 1
     assert out.getvalue() == ""
+    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("refusing to start:")]
 
 
 @pytest.mark.parametrize("app_env", ["local", "test"])

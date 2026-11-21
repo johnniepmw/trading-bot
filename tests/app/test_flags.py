@@ -81,9 +81,10 @@ def test_refreshes_at_most_once_per_interval() -> None:
 
 
 # AC1
-def test_kill_switch_is_off_when_the_first_fetch_fails() -> None:
+@pytest.mark.parametrize("error", [RuntimeError("storage down"), TimeoutError("timed out")])
+def test_kill_switch_is_off_when_the_first_fetch_fails(error: Exception) -> None:
     # A Cloud Run job starts cold every run, so there are no last good overrides to keep.
-    flags = Flags(REGISTRY, env={}, source=FakeSource(RuntimeError("storage down")))
+    flags = Flags(REGISTRY, env={}, source=FakeSource(error))
     assert flags.is_enabled(KILL) is False
 
 
@@ -162,8 +163,17 @@ def test_every_fail_closed_decision_logs_an_error(caplog: pytest.LogCaptureFixtu
     flags = Flags(REGISTRY, env={}, source=FakeSource(RuntimeError("storage down")))
     with caplog.at_level(logging.WARNING, logger="tradingbot.app.flags"):
         flags.is_enabled(KILL)
-    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-    assert [r.getMessage() for r in errors] == [f"kill switch closed: {KILL}: no recent good flag read"]
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert f"kill switch closed: {KILL}: no recent good flag read" in errors
+    assert any(m.startswith("flag refresh failed") for m in errors)
+
+
+def test_closing_for_lack_of_a_source_logs_an_error(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR, logger="tradingbot.app.flags"):
+        assert Flags(REGISTRY, env={}).is_enabled(KILL) is False
+    assert [r.getMessage() for r in caplog.records] == [
+        f"kill switch closed: {KILL}: no flag source outside local/test"
+    ]
 
 
 def test_env_on_ignored_when_deployed_logs_an_error(caplog: pytest.LogCaptureFixture) -> None:
