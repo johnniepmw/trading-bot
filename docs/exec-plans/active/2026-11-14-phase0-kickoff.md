@@ -1,7 +1,7 @@
 # Phase 0 bootstrap: python stack, project docs, ADRs and gates
 
-- **Status**: active (bootstrap PR open; needs the owner's `/approve-risk`)
-- **Branch / PR**: `claude/relaxed-thompson-22prga` (based on `claude/phase0-seed`) / see PR
+- **Status**: blocked (owner decision: `/approve-risk` on the bootstrap PR)
+- **Branch / PR**: `claude/relaxed-thompson-22prga` (based on `claude/phase0-seed`) / https://github.com/johnniepmw/trading-bot/pull/1
 - **Risk class**: high (`make risk`: `.claude/settings.json`, `.github/**`, `Dockerfile`, `flags.json`, `src/tradingbot/{app,brokers,config,execution,ledger,risk}/**`)
 - **Started**: 2026-11-14 (brief) / 2026-11-21 (bootstrap)
 
@@ -124,6 +124,8 @@ working, and a checklist of what only the owner can do. No strategy code.
 - 2026-11-21 step 2: `src/tradingbot` layout, `Money`, `smoke`, contracts — evidence: 35 unit + 3 e2e tests pass; contracts table below
 - 2026-11-21 step 3: hooks in `.claude/settings.json` — evidence: hook tables below; guard blocked a live `git -c core.hooksPath=/dev/null` in this session
 - 2026-11-21 step 4: docs and ADRs — evidence: docs-check 0 errors
+- 2026-11-21 step 6: two review rounds each (reviewer, security-reviewer); all blocking findings fixed — evidence: Review section
+- 2026-11-21 step 7: PR https://github.com/johnniepmw/trading-bot/pull/1 opened with the owner brief
 - 2026-11-21 step 5: `make check`, `make e2e`, `make image` green (gitleaks, actionlint, shellcheck installed locally from Go/PyPI for this run)
 
 ### Import contracts: planted violations (`PYTHONPATH=src uv run lint-imports`)
