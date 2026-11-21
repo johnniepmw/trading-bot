@@ -64,3 +64,8 @@ def test_a_later_bar_never_changes_an_earlier_signal(closes: list[float], later:
     extended = bars(VWRP, [*closes, later])
     day = history[-1].day
     assert signals({VWRP: history}, day) == signals({VWRP: extended}, day)
+
+
+def test_signals_do_not_depend_on_bar_order() -> None:
+    history = bars(VWRP, [100.0] * 209 + [101.0])
+    assert signals({VWRP: list(reversed(history))}, history[-1].day) == {VWRP: True}

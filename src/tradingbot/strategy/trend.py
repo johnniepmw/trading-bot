@@ -24,7 +24,7 @@ def in_trend(closes: Sequence[float]) -> bool:
 def signals(history: Mapping[Instrument, Sequence[Bar]], as_of: date) -> dict[Instrument, bool]:
     """The trend signal for each instrument, using only bars on or before `as_of`."""
     return {
-        instrument: in_trend([b.close for b in bars if b.day <= as_of])
+        instrument: in_trend([b.close for b in sorted(bars, key=lambda b: b.day) if b.day <= as_of])
         for instrument, bars in history.items()
     }
 

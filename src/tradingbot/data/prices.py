@@ -35,10 +35,14 @@ def validate_history(instrument: Instrument, bars: Sequence[Bar]) -> Sequence[Ba
     for bar in bars:
         if bar.instrument != instrument:
             raise DataError(f"bar for {bar.instrument.ticker} in the history of {instrument.ticker}")
+        _check_ratio(instrument, bar.open / bar.close, f"open against close on {bar.day}")
     for before, after in itertools.pairwise(bars):
         if after.day <= before.day:
             raise DataError(f"{instrument.ticker}: bars out of order at {after.day}")
-        ratio = after.close / before.close
-        if ratio > MAX_DAILY_RATIO or ratio < 1 / MAX_DAILY_RATIO:
-            raise DataError(f"{instrument.ticker}: implausible jump of {ratio:.2f}x on {after.day}")
+        _check_ratio(instrument, after.close / before.close, f"close on {after.day}")
     return bars
+
+
+def _check_ratio(instrument: Instrument, ratio: float, what: str) -> None:
+    if ratio > MAX_DAILY_RATIO or ratio < 1 / MAX_DAILY_RATIO:
+        raise DataError(f"{instrument.ticker}: implausible jump of {ratio:.2f}x, {what}")

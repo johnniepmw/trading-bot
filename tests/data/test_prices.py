@@ -50,3 +50,9 @@ def test_weekend_dates_are_not_checked_here() -> None:
     # Trading calendars belong to the data source; validation only checks order and scale.
     sat = Bar(VWRP, date(2026, 11, 21), open=1.0, close=1.0)
     assert validate_history(VWRP, [sat]) == [sat]
+
+
+def test_an_open_far_from_its_own_close_is_refused() -> None:
+    # backtest fills use the open, so a pence/pounds slip there matters too
+    with pytest.raises(DataError, match="open"):
+        validate_history(VWRP, [Bar(VWRP, date(2026, 11, 20), open=10_000.0, close=100.0)])

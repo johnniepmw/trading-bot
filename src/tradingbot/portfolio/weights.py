@@ -6,12 +6,14 @@ which rounds down to each instrument's quantity step. Pure: callers pass everyth
 
 from __future__ import annotations
 
+import itertools
 import math
 import statistics
 from collections.abc import Mapping, Sequence
-from decimal import ROUND_FLOOR, Decimal
+from datetime import date
+from decimal import ROUND_FLOOR, Context, Decimal, DivisionByZero, InvalidOperation, Overflow, localcontext
 
-from tradingbot.domain.market import Instrument, Order, Side
+from tradingbot.domain.market import Bar, Instrument, Order, Side
 from tradingbot.domain.money import CurrencyMismatchError, Money
 
 SLEEVE_CAP = 0.25
@@ -20,6 +22,14 @@ VOL_DAYS = 60
 TRADING_DAYS_PER_YEAR = 252
 REBALANCE_BAND_TARGET = 0.10  # trade only if off target by more than 10% of the target...
 REBALANCE_BAND_EQUITY = 0.02  # ...or 2% of equity, whichever is larger
+# Same fixed arithmetic as the risk layer: round down, always raise on bad operations.
+_CONTEXT = Context(prec=28, rounding=ROUND_FLOOR, traps=[InvalidOperation, DivisionByZero, Overflow])
+
+
+def daily_returns(bars: Sequence[Bar], as_of: date) -> list[float]:
+    """Simple close-to-close returns from bars on or before `as_of` (the signal date)."""
+    closes = [b.close for b in sorted(bars, key=lambda b: b.day) if b.day <= as_of]
+    return [after / before - 1 for before, after in itertools.pairwise(closes)]
 
 
 def sleeve_weights(signals: Mapping[Instrument, bool]) -> dict[Instrument, float]:
@@ -64,20 +74,31 @@ def _order(  # noqa: PLR0913 - one instrument's sizing inputs
     step: Decimal | None,
     equity: Decimal,
 ) -> Order | None:
-    if price is None or step is None:
-        return None
+    target = Decimal(repr(weight)) * equity
+    if target == 0:
+        # "A sleeve that fails the filter stays cash": exit completely, band or not, and
+        # whatever the price data says (an exit needs no price).
+        return Order(instrument, Side.SELL, held) if held > 0 else None
+    usable = (
+        price is not None
+        and price.currency is instrument.currency
+        and price.amount > 0
+        and step is not None
+        and step.is_finite()
+        and step > 0
+    )
+    if not usable or price is None or step is None:
+        return None  # bad or missing data never invents a trade
     try:
         unit = price.to_gbp().amount
     except CurrencyMismatchError:
         return None
-    target = Decimal(repr(weight)) * equity
     diff = target - held * unit
     band = max(Decimal(repr(REBALANCE_BAND_TARGET)) * target, Decimal(repr(REBALANCE_BAND_EQUITY)) * equity)
     if abs(diff) <= band:
         return None
     if diff < 0:
-        quantity = held if target == 0 else min(held, _floor(-diff / unit, step))
-        side = Side.SELL
+        quantity, side = min(held, _floor(-diff / unit, step)), Side.SELL
     else:
         quantity, side = _floor(diff / unit, step), Side.BUY
     return Order(instrument, side, quantity) if quantity > 0 else None
@@ -93,10 +114,21 @@ def orders_for(
 ) -> list[Order]:
     """Orders that move holdings to the target weights, outside the rebalance band.
 
-    Instruments held but not targeted are sold. Missing prices or steps mean no order.
-    Everything goes through the risk layer before it can be sent.
+    Instruments held with a zero (or no) target are sold completely. Otherwise a bad or
+    missing price or step means no order for that instrument only. Everything goes through
+    the risk layer before it can be sent.
     """
-    total = equity.to_gbp().amount
+    with localcontext(_CONTEXT):
+        return _orders_for(targets, holdings, prices, equity.to_gbp().amount, steps)
+
+
+def _orders_for(
+    targets: Mapping[Instrument, float],
+    holdings: Mapping[Instrument, Decimal],
+    prices: Mapping[Instrument, Money],
+    total: Decimal,
+    steps: Mapping[Instrument, Decimal],
+) -> list[Order]:
     instruments = sorted({*targets, *holdings}, key=lambda i: (i.ticker, i.currency))
     orders = (
         _order(
