@@ -60,10 +60,6 @@ def test_weights_are_never_negative_over_the_cap_or_over_100_percent(signals: di
     assert sum(weights.values()) <= 1.0 + 1e-12
 
 
-def flat_then(values: list[float]) -> list[float]:
-    return [0.0] * (VOL_DAYS - len(values)) + values
-
-
 def test_calm_markets_leave_weights_alone() -> None:
     returns = {A: [0.001, -0.001] * 30}  # about 1.6% a year
     assert vol_scaled({A: 0.25}, returns) == {A: 0.25}
