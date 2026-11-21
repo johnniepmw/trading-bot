@@ -2,7 +2,7 @@
 
 - **Status**: blocked (owner decision: `/approve-risk` on the bootstrap PR)
 - **Branch / PR**: `claude/relaxed-thompson-22prga` (based on `claude/phase0-seed`) / https://github.com/johnniepmw/trading-bot/pull/1
-- **Risk class**: high (`make risk`: `.claude/settings.json`, `.github/**`, `Dockerfile`, `flags.json`, `src/tradingbot/{app,brokers,config,execution,ledger,risk}/**`)
+- **Risk class**: high (`make risk`: `.claude/settings.json`, `.github/**`, `Dockerfile`, `flags.json`, `src/tradingbot/{app,brokers,config,execution,ledger,risk}/**`, `.claude/hooks/**`, `.claude/kit.lock`, `infra/**`)
 - **Started**: 2026-11-14 (brief) / 2026-11-21 (bootstrap)
 
 ## Goal
@@ -22,8 +22,8 @@ working, and a checklist of what only the owner can do. No strategy code.
 | AC7 | ADRs 0006–0011, 0013, 0014 accepted; 0012 proposed (deferred) | `docs/adr/README.md`; docs-check passes |
 | AC8 | AGENTS.md, README, ARCHITECTURE.md filled in; AGENTS.md under 150 lines with the four extra rules | `wc -l AGENTS.md` = 124 |
 | AC9 | High-risk paths from the brief in `.github/risk-paths.txt` | file diff |
-| AC10 | Kit hooks run from `.claude/settings.json` without the plugin; each tested | hook table below; the guard blocked a real `core.hooksPath` override in this session |
-| AC11 | First-time setup runbook describes the public repo, not GitHub Pro | `docs/runbooks/first-time-setup.md` §1 |
+| AC10 | Agentic kit v0.2.0 installed into `.claude/` as plain project files; hooks run from `.claude/hooks/` via `.claude/settings.json`; each tested | `make kit-check` "kit files match .claude/kit.lock"; hook table below (re-run on the new paths 2026-11-21); the guard blocked a real `core.hooksPath` override in this session |
+| AC11 | First-time setup runbook describes the public repo, not GitHub Pro | `docs/runbooks/first-time-setup.md` §1 (public intro, item 1 hardening) |
 | AC12 | Container builds (digest-pinned base, root-owned code) and its command reports healthy | `make image` (base image via mirror.gcr.io; Docker Hub rate-limited); runtime uid 10001 gets "Permission denied" touching `/app/flags.json` (root 644); `docker run --rm trading-bot:local` printed `{"status": "ok", "version": "8ba8452", "new_orders": true}`; with `-e FLAG_NEW_ORDERS=off` → `"new_orders": false` |
 | AC13 | A planted fake secret and a broken import rule are each rejected by the same checks CI runs | Local: pre-commit hook and `gitleaks dir` both rejected a fake `T212_API_KEY` (exit 1); `lint-imports` exits 1 on each planted violation. The CI demonstration is a post-merge follow-up (Plan step 8) |
 
@@ -32,7 +32,7 @@ working, and a checklist of what only the owner can do. No strategy code.
   any API keys or GCP changes.
 - Recorded broker contract tests, the nightly demo contract check and backtest
   regression arrive in Phases 1–3.
-- Changing the vendored kit (`.claude/skills/agentic/`).
+- Changing the kit's own files (listed in `.claude/kit.lock`); they change upstream.
 
 ## Rollout and rollback
 - Flag / kill switch: `new-orders` (kill-switch, default true). Nothing trades yet.
@@ -49,8 +49,9 @@ working, and a checklist of what only the owner can do. No strategy code.
 - Template example app removed (`server.py`, `greeting`); `flags.py` moved to
   `tradingbot.app.flags`. The job's health check is `python -m tradingbot.app smoke`
   (status, version, kill-switch state) because a job has no `/healthz` (ADR-0011).
-- `make e2e` runs the entry point as a subprocess; with `E2E_BASE_URL` set (the
-  service-shaped preview job) it skips, since a job has no URL until Phase 2.
+- `make e2e` runs the entry point as a subprocess; with `E2E_BASE_URL` set (a deployed
+  service URL, as the nightly staging run passes) it skips, since a job has no URL until
+  Phase 2.
 - Contract 3 allows `app` as well as `brokers` to import HTTP libraries: the template's
   flag override reader (`GcsSource`) fetches from Cloud Storage with `urllib`. Moving it
   into `brokers` would be wrong (it isn't a broker). The pure packages (contract 2a) and
@@ -60,13 +61,13 @@ working, and a checklist of what only the owner can do. No strategy code.
   ("only domain and config").
 - `Money` currencies: GBP, GBX, USD. `to_gbp()` converts pence; USD needs an explicit FX
   rate later.
-- Hooks: copied the four entries from `hooks/hooks.json` into `.claude/settings.json`
-  with `$CLAUDE_PROJECT_DIR/.claude/skills/agentic/hooks/...` paths (owner request). If a
-  session also loads the plugin, hooks run twice (tech-debt).
+- Hooks: `.claude/settings.json` wires the kit's four hooks (session orientation, Bash
+  guard, file guard, stop gate) to `.claude/hooks/*.sh`. Superseded the first approach
+  (settings pointing into the vendored plugin folder) when kit v0.2.0 landed; see below.
 - `scripts/github-setup.sh` left unchanged; public-repo settings are a manual checklist
   in the runbook (tech-debt to script them).
-- The kit's bootstrap owner checklist still mentions GitHub Pro; it's vendored, so the
-  fix goes upstream (tech-debt).
+- The kit's bootstrap owner checklist still mentions GitHub Pro; kit files change
+  upstream only, so the fix goes there (tech-debt).
 - `phase0_report.json` added to `.gitignore`: it holds demo account data (ADR-0014).
 - The seed's `tests/scripts/` stay where they are; they pass and are ruff-clean.
 - Review round 1: import contracts moved from `pyproject.toml` to `.importlinter`, and
@@ -101,6 +102,41 @@ working, and a checklist of what only the owner can do. No strategy code.
 - Deferred to tech-debt with reasons: kill-switch fail-open, market-data/order port split,
   redirect credential forwarding, the phase0 ref-price trap, Dependabot cooldown, and the
   pre-existing risk-gate self-approval gap (owner decision).
+- 2026-11-21, agentic kit v0.2.0 and template sync. This repo was created from template
+  commit `5cdc84a`, so it also lacked the template's 14 Nov audit pass (`c728476`) and
+  kit-sync fix (`af119d9`). Brought in everything in the template's `5cdc84a..main` diff
+  that isn't specific to trading-bot: a three-way merge per file, where files this repo
+  never changed take the template's version.
+  - **Taken from the template**: kit v0.2.0 installed into `.claude/` as plain project
+    files (skills `/deliver` etc., subagents, hooks in `.claude/hooks/`, PR helper
+    `.claude/scripts/gh-pr.sh`), listed in `.claude/kit.lock` and checked by
+    `make kit-check` (part of `make check`, so CI runs it); `scripts/kit-sync.sh`;
+    every GitHub Action pinned to a commit SHA with a version comment, including
+    `anthropics/claude-code-action` in agent-review; PR preview deployments removed (the
+    `preview` job in ci.yml, `preview-cleanup.yml`, the `ci-preview` identity and its IAM
+    in `infra/bootstrap`, so three CI identities remain); the separate `secrets-scan` CI
+    job folded into `make check` (the `check` job fetches full history); nightly drift
+    issues updated instead of duplicated; an Artifact Registry cleanup policy (delete
+    images older than 30 days, keep the 30 most recent); the risk-gate comment fix
+    (`pull-requests: write`, gh errors printed) in the template's version, replacing
+    this branch's equivalent `8053f69`; `CLAUDE.md`, `cloud-sessions.md` as-is; doc
+    changes (ADR-0004, security.md, workflow.md, operations.md, exec-plans README).
+  - **Kept from this PR**: the required check names `ci-required`, `agent-review` and
+    `risk-gate` (in `scripts/github-setup.sh`; the template renames only the `e2e-local`
+    job to `e2e`, which isn't required); `--settings '{"disableAllHooks": true}'` in
+    agent-review; every trading-bot-specific file and line (risk paths, ADRs 0006–0014,
+    `.importlinter`, `stack.mk`, Dockerfile hardening, the job/smoke e2e and its
+    `E2E_BASE_URL` skip, AGENTS.md Project and non-negotiables); the public-repo setup
+    (first-time-setup.md §1 is public-only, with the template's five hardening bullets);
+    the Phase 2 `gh-vars` warning, reworded now that the preview job is gone.
+  - **New**: `.claude/kit.lock` is a risk path next to `.claude/hooks/**`. Any change to
+    the kit's skills, subagents or hooks must update `kit.lock` to pass kit-check, so
+    every kit change waits for the owner's `/approve-risk`.
+  - The file guard now also blocks *reading* secret and state files (`.env`, keys,
+    `*.tfstate`, `secrets/`) and protects the files in `kit.lock`.
+  - Conflicts resolved for trading-bot: `tests/e2e/conftest.py` keeps its job docstring
+    (the template's describes a server); testing.md keeps the job note and drops "PR
+    preview"; ADR-0011 no longer lists the preview among things to adapt.
 
 ## Open questions
 - CI canary PRs for AC13 need branches other than this session's one
@@ -117,7 +153,7 @@ working, and a checklist of what only the owner can do. No strategy code.
 5. Full verification — check: `make check`, `make e2e`, `make image`
 6. Fresh-eyes review — check: reviewer findings resolved
 7. PR, escalate brief for `/approve-risk`, owner checklist
-8. After merge: two throwaway draft PRs (fake secret; broken import rule) to show CI's `secrets-scan` and `check` jobs fail, then close them unmerged — check: failing check runs linked here (brief's "Done when")
+8. After merge: two throwaway draft PRs (fake secret; broken import rule) to show CI's `check` job (which runs the secret scan) fails, then close them unmerged — check: failing check runs linked here (brief's "Done when")
 
 ## Progress log
 - 2026-11-21 step 1: stack pack applied (manual finish after mise download failure) — evidence: commit `chore: apply the python stack pack`
@@ -130,6 +166,8 @@ working, and a checklist of what only the owner can do. No strategy code.
 - 2026-11-21 CI: `image` failed trivy (HIGH, fixed upstream): `zlib1g` CVE in the base image's Debian packages and `msgpack`/`setuptools` CVEs in pip's vendored libraries. Dockerfile now applies Debian security updates and removes pip (unused at runtime). Locally verified pip is gone and `smoke` still runs; the apt upgrade can't be exercised here (containers can't reach deb.debian.org), so CI's trivy run is the evidence.
 - 2026-11-21 CI: `agent-review` fails on its first model call (2 s, no usage): the `CLAUDE_CODE_OAUTH_TOKEN` secret is present but appears invalid or not entitled — owner checklist item 4. Re-run once.
 - 2026-11-21 step 5: `make check`, `make e2e`, `make image` green (gitleaks, actionlint, shellcheck installed locally from Go/PyPI for this run)
+- 2026-11-21 kit v0.2.0 + template sync (`5cdc84a..main`): `scripts/kit-sync.sh` installed `johnniepmw/agentic-dev-kit@b93101e39e91` (kit 0.2.0) into `.claude/` and the settings hooks block switched in the same command; `ls .claude/hooks` → guard-bash.sh guard-write.sh lib.sh orient.sh stop-gate.sh; `.claude/kit.lock` identical to the template's
+- 2026-11-21 verification after the sync: `make kit-check` → "kit files match .claude/kit.lock"; `make check` exit 0 (ruff clean, mypy 16 files, 38 passed + 1 xfailed, 8 contracts kept, docs-check and flags-check 0 errors, kit-check ok, gitleaks "no leaks found", actionlint and shellcheck clean); `make repo-lint` exit 0 with every action SHA-pinned; `make e2e` 3 passed; guard probes `git push origin main` → 2 and Read `.env` → 2; hook table re-run on the new paths (below); `risk_classify.py --paths .claude/kit.lock` → high
 
 ### Import contracts: planted violations (`PYTHONPATH=src uv run lint-imports`)
 | Planted in | Statement | Contract broken |
@@ -170,7 +208,11 @@ it is added to 3a's sources (documented in `.importlinter` and ARCHITECTURE.md).
 | guard-bash | `gh workflow run ops.yml -f action=kill -f env=prod -f flag=new-orders` | allow | 0 | pass |
 | guard-write | Write `.env` | block | 2 | pass |
 | guard-write | Write `.env.example` | allow | 0 | pass |
-| guard-write | Write `.claude/skills/agentic/README.md` | block | 2 | pass |
+| guard-write | Read `.env` | block | 2 | pass |
+| guard-write | Read `infra/envs/prod/terraform.tfstate` | block | 2 | pass |
+| guard-write | Write `.claude/hooks/lib.sh` (kit file in `kit.lock`) | block | 2 | pass |
+| guard-write | Edit `.claude/skills/deliver/SKILL.md` (kit file) | block | 2 | pass |
+| guard-write | Read `AGENTS.md` | allow | 0 | pass |
 | guard-write | Write `src/tradingbot/domain/money.py` | allow | 0 | pass |
 | guard-write | Write `.git/config` | block | 2 | pass |
 | guard-write | Write `infra/envs/prod/terraform.tfstate` | block | 2 | pass |
@@ -185,16 +227,17 @@ Stop-gate cases ran in a temporary git worktree.
 ## Owner checklist (owner-only; run in Google Cloud Shell)
 1. Merge this PR: read the escalate brief, then comment `/approve-risk <sha>`.
 2. `make github-setup` (repo settings, `main` ruleset, labels, Dependabot).
-3. Public-repo settings from ADR-0014 (`docs/runbooks/first-time-setup.md` §1.2):
-   interaction limits to collaborators; fork PR workflows need approval for all external
-   contributors; secret scanning and push protection on; commit email private.
+3. Public-repo hardening from ADR-0014 (`docs/runbooks/first-time-setup.md` §1 item 1):
+   PRs and issues limited to collaborators; fork PR workflows need approval for all
+   external contributors; Actions workflow permissions read-only, without creating or
+   approving PRs; secret scanning and push protection on; commit email private.
 4. Agent-review token: `npm install -g @anthropic-ai/claude-code && claude setup-token`,
    then `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (paste at the prompt, never in chat).
 5. GCP project (europe-west2) with billing: `gcloud auth login && gcloud auth
    application-default login`, fill `infra/bootstrap/bootstrap.tfvars`,
    `make infra-bootstrap`. **Don't run `make gh-vars` until the Phase 2 job module
-   lands**: with the variables set, CI's preview job and the deploy workflow try to
-   deploy the bot as a service and fail on every PR.
+   lands**: once the variables exist, the deploy workflow tries to deploy the bot as a
+   service and fails on every merge to main.
 6. Run `scripts/phase0_api_check.py` from the merged `main` (not a PR branch) with a
    demo key entered via `read -rs`; keep `phase0_report.json` out of the repo and share
    it only privately.
@@ -219,16 +262,21 @@ Stop-gate cases ran in a temporary git worktree.
 - Round 2 (security-reviewer): same blocker (fixed); verified that `disableAllHooks`
   stops project hooks in claude-code-action (CLI 2.1.330, action @v1 source read);
   contracts 3b–3d moved to allow-lists; kill-switch tripwire test added; remaining
-  deferrals judged acceptable for Phase 0. Residual: `claude-code-action@v1` is a floating
-  tag (pre-existing; tech-debt).
+  deferrals judged acceptable for Phase 0. Residual: `claude-code-action@v1` was a floating
+  tag (pinned by commit SHA with the template sync, 2026-11-21).
 
 ## Outcome
 <filled when shipped>
 
 ## Learnings
-- Cloud sessions: repo plugins don't load, so hooks must come from project settings;
-  mise can't download from GitHub; gitleaks/actionlint/shellcheck install via
+- Cloud sessions: repo plugins don't load, so the kit is installed into `.claude/` as
+  plain project files (kit v0.2.0); mise can't download from GitHub; gitleaks/actionlint/shellcheck install via
   `go install` and PyPI wrappers; Docker Hub may rate-limit, `mirror.gcr.io` works.
+- Kit upgrade lockout: `.claude/settings.json` hooks are re-read live and fail closed. An
+  earlier session switched the hook paths to `.claude/hooks/*.sh` before those files
+  existed, and every Bash/Read/Edit/Write call was blocked. Install and switch in one
+  command (`bash scripts/kit-sync.sh && python3 <rewrite hooks block>`), then check
+  `ls .claude/hooks` before anything else. Upstream suggestion in tech-debt.
 
 ---
 
