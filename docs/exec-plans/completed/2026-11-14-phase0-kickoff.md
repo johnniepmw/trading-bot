@@ -283,8 +283,12 @@ import contracts, ADRs, gates, kit v0.2.0). Follow-ups, 2026-11-21:
 Still open, owner only (see the Owner checklist above): items 2 (`make github-setup`),
 3 (public-repo hardening from ADR-0014), 5 (GCP project), 6 (`phase0_api_check.py` with a
 demo key) and 7 (the risk-gate self-approval gap). Item 4 appears done (agent-review runs);
-confirm the token is the one you intend to keep. Also delete the branches
-`canary/fake-secret` and `canary/broken-import` (the session's proxy refused).
+confirm the token is the one you intend to keep.
+
+**Urgent, owner:** delete the branches `canary/fake-secret` and `canary/broken-import`
+(the session's proxy refused). Until `canary/fake-secret` is gone, CI's full-history
+gitleaks scan finds its fake key (`generic-api-key`, commit `51dad3b`) and fails `check`
+on every PR, this one included. Then re-run the failed `check` jobs.
 
 ## Learnings
 - Canary PRs: `make check` stops at the first failing target, and ruff runs before
@@ -294,6 +298,10 @@ confirm the token is the one you intend to keep. Also delete the branches
 - In cloud sessions the proxy refuses REST writes to `git/refs` and `contents`, and it
   refused deleting the canary branches (REST and `git push --delete`). The GitHub MCP
   tools create branches and files; branch deletion falls to the owner.
+- `make secrets-scan` in CI runs `gitleaks git` with full history, which scans every
+  fetched branch, not just the PR. A secret canary therefore fails CI repo-wide until its
+  branch is deleted. Next time, check the branch can be deleted before planting, or delete
+  it straight after the run.
 - Cloud sessions: repo plugins don't load, so the kit is installed into `.claude/` as
   plain project files (kit v0.2.0); mise can't download from GitHub; gitleaks/actionlint/shellcheck install via
   `go install` and PyPI wrappers; Docker Hub may rate-limit, `mirror.gcr.io` works.
