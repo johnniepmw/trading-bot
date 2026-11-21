@@ -16,9 +16,9 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 | Path | Responsibility | Must not |
 |---|---|---|
 | `src/tradingbot/domain` | value types: `Money` (GBP/GBX/USD), `Instrument`, `Bar`, `Order`, `Position`; `ApprovedOrder` (only `risk` constructs it, ADR-0016) | import anything else from `tradingbot` |
-| `src/tradingbot/data` | load and clean market data | place orders |
-| `src/tradingbot/strategy` | signals from prices | do I/O, read env vars, import brokers or HTTP |
-| `src/tradingbot/portfolio` | target weights and order sizing | as strategy |
+| `src/tradingbot/data` | `PriceHistory` port (daily bars; not on `Broker`) and `validate_history` (order, instrument, 10x-jump check) | place orders |
+| `src/tradingbot/strategy` | signals from prices: `trend.in_trend` (close above its 210-day average), month ends | do I/O, read env vars, import brokers or HTTP |
+| `src/tradingbot/portfolio` | target weights (1/N sleeves, 25% cap, 10% volatility cap) and orders outside the rebalance band | as strategy |
 | `src/tradingbot/risk` | veto, shrink or pass each order; hard ceilings as constants | as strategy; be bypassed |
 | `src/tradingbot/execution` | send approved orders, ledger first | import a concrete broker |
 | `src/tradingbot/brokers` | `Broker` interface; `trading212/` and `fake/` | leak broker JSON past the adapter |
