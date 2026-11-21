@@ -10,7 +10,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC2034  # read by json_field in lib.sh
 HOOK_INPUT="$(cat)"
-cmd="$(json_field tool_input.command)"
+cmd="$(json_field tool_input.command)" || block "could not read the hook input (fails closed)."
 cwd="$(json_field cwd)"
 [ -z "$cmd" ] && exit 0
 

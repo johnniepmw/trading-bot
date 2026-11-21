@@ -7,7 +7,8 @@
 .github/**
 .githooks/**
 .claude/settings.json
-.claude/skills/agentic/hooks/**
+.claude/hooks/**
+.claude/kit.lock
 Makefile
 stack.mk
 .importlinter

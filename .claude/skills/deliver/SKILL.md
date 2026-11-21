@@ -14,7 +14,7 @@ Repo conventions assumed below (from the agentic template): `make` verbs, plans 
 `docs/exec-plans/`, `scripts/risk_classify.py`, the PR template. If the repo lacks one,
 use the closest equivalent and note the gap in the plan's Decisions section.
 
-GitHub: use the kit's PR helper, `GHPR` below = `bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-pr.sh"`.
+GitHub: use the kit's PR helper, `GHPR` below = `bash "${CLAUDE_SKILL_DIR}/../../scripts/gh-pr.sh"`.
 It works everywhere, including cloud sessions, where `gh pr` and `gh issue` fail because
 the GitHub proxy blocks GraphQL (`gh api` REST calls and `gh run`/`gh workflow` work).
 

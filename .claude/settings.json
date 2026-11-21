@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/skills/agentic/hooks/orient.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/orient.sh\"",
             "timeout": 15
           }
         ]
@@ -53,18 +53,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/skills/agentic/hooks/guard-bash.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-bash.sh\"",
             "timeout": 10,
             "onFailure": "block"
           }
         ]
       },
       {
-        "matcher": "Edit|Write|NotebookEdit",
+        "matcher": "Read|Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/skills/agentic/hooks/guard-write.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-write.sh\"",
             "timeout": 10,
             "onFailure": "block"
           }
@@ -76,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/skills/agentic/hooks/stop-gate.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-gate.sh\"",
             "timeout": 600
           }
         ]

@@ -10,7 +10,8 @@ Entropy accumulates quietly in agent-written codebases. This pass removes it in 
 reviewable PRs. Each item below is its own branch and PR (standard risk unless noted);
 skip items with nothing to do. Cap the run at five PRs.
 
-1. **Kit sync.** `bash scripts/kit-sync.sh --check`. If a newer kit release exists, run
+1. **Kit sync.** `bash scripts/kit-sync.sh --check` (in a cloud session the kit repo
+   must be attached to the session). If it reports an update (exit 10), run
    `bash scripts/kit-sync.sh`, and open `chore(kit): sync agentic kit <version>` with the
    kit changelog excerpt in the PR body. (Changes under the kit's hooks are high risk;
    the escalate brief is the changelog in plain English.)
@@ -23,7 +24,7 @@ skip items with nothing to do. Cap the run at five PRs.
    (`gh run list --status failure --limit 30`) for tests that failed then passed on rerun.
    Fix or quarantine per `docs/testing.md`. Note `check-fast` duration; if over 60s, fix.
 5. **Dependency PRs.** For open Dependabot PRs that are green: patch and minor updates of
-   dev dependencies can merge (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-pr.sh" merge <pr>`). Majors: read the changelog, run the
+   dev dependencies can merge (`bash "${CLAUDE_SKILL_DIR}/../../scripts/gh-pr.sh" merge <pr>`). Majors: read the changelog, run the
    `deliver` loop to adapt code if needed.
 6. **Tech debt.** Pick at most one item from `docs/exec-plans/tech-debt.md` that is small
    and clearly valuable; deliver it.

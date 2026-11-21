@@ -21,7 +21,9 @@ with a recommended default for each.
   copy in everything except `stacks/` that does not already exist. Merge (do not
   overwrite) `.gitignore`, `Makefile`, `mise.toml` and any existing CI. List conflicts
   in the plan and resolve them conservatively.
-- Make sure the kit is vendored: `bash scripts/kit-sync.sh` (creates `.claude/skills/agentic/`).
+- Make sure the kit is installed: `bash scripts/kit-sync.sh` puts its skills, subagents,
+  hooks and scripts into `.claude/` and lists them in `.claude/kit.lock`. Check that
+  `.claude/settings.json` wires the four hooks as the template's does.
 
 ## 2. Apply the stack pack
 `bash scripts/init-stack.sh <pack>`. It copies the pack, installs the toolchain with mise,

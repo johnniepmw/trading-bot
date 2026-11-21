@@ -9,6 +9,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC2034  # read by json_field in lib.sh
 HOOK_INPUT="$(cat)"
+once || exit 0
 cwd="$(json_field cwd)"
 root="$(repo_root "${cwd:-${CLAUDE_PROJECT_DIR:-.}}")"
 [ -z "$root" ] && exit 0
@@ -17,7 +18,9 @@ cd "$root" || exit 0
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 dirty="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 ahead="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo '?')"
+# Plugin install: the manifest. Installed into a repo's .claude/: the kit.lock header.
 kit_version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HERE/../.claude-plugin/plugin.json" 2>/dev/null | head -n 1)"
+[ -n "$kit_version" ] || kit_version="$(sed -n '1s/^# Agentic kit \([^ ]*\).*/\1/p' "$HERE/../kit.lock" 2>/dev/null)"
 
 echo "Repository orientation (generated at session start by the agentic kit ${kit_version:-}):"
 echo "- Branch: ${branch}; ${ahead} commit(s) ahead of origin/main (as last fetched); ${dirty} uncommitted path(s)."

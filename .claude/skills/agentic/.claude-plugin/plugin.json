@@ -1,9 +1,0 @@
-{
-  "name": "agentic",
-  "description": "Opinionated agentic-engineering kit: an end-to-end delivery loop (spec, plan, test-first build, fresh-eyes review, PR, deploy, verify), reviewer agents, and guardrail hooks so Claude can run features to completion with minimal human input.",
-  "version": "0.1.0",
-  "author": {
-    "name": "johnniepmw"
-  },
-  "keywords": ["workflow", "code-review", "ci-cd", "guardrails", "autonomy"]
-}

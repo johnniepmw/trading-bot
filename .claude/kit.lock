@@ -1,0 +1,25 @@
+# Agentic kit 0.2.0 from johnniepmw/agentic-dev-kit@b93101e39e9122c558314533ee8db59d5ff1a8f0, installed by scripts/kit-sync.sh.
+# These files change in the kit repo, then make kit-sync; make kit-check verifies them.
+8b9fce054147d924ca00bad02da14b0943def6e1626659813661ffc478b78c80  .claude/agents/architect.md
+47c658f040a5bb534740829a60258c331507165ccdd857251aab6e0daaf91176  .claude/agents/qa.md
+5344ef9da0caf8cad4fb9648276dd3864835ec26959fa33b4d5b49873f5d7c59  .claude/agents/reviewer.md
+aa3eee7952c302bc4011b24a12de2a692ebdd06c68ef95fd2f0d548b73759679  .claude/agents/security-reviewer.md
+abee3954c01bc3c3a8d1c30f26aea267c9d5aee060fd874771a061fb6ccd5cd2  .claude/hooks/guard-bash.sh
+87f5aa954ac05fea14ff667300abe4699cb6e170b2b6f1c49c32c7b423b00400  .claude/hooks/guard-write.sh
+ff7575cca1027ededac78efcb046213605d77ada45ff988d34562d01278b4305  .claude/hooks/lib.sh
+c02533c08fcc342d6ebe2606460e572e5dc5c1b14d841c50f998e578a18e0a89  .claude/hooks/orient.sh
+70e886385a2b269e9babdf5d8423733288087419784b186a237dcb9adbfd82c0  .claude/hooks/stop-gate.sh
+ec7b67436b23165ee6e76f778f51a49bfc0043e234c671757fb2bf349455006f  .claude/scripts/gh-pr.sh
+58fd5be28acd62f60fd6465f15a54fd2aec09427b84fad53185f59d0117a649f  .claude/skills/adr/SKILL.md
+376ca9745be7188bd4a44a775851dd8a05e591f94c3d207db331addfac723aa0  .claude/skills/adr/template.md
+b57b4b5e52f9a87de5ae600e3341d99e499858ae3d3888502ca0eaca8e782d7c  .claude/skills/bootstrap/SKILL.md
+f864a2fe72b6dbcde5feb60a2398c6b5c6aa9ff786b2ed048010667a0c566976  .claude/skills/deliver/SKILL.md
+b01c4e44453db024bb55a5f0766f2637d312d375d107e430e3befecb6fbacb27  .claude/skills/escalate/SKILL.md
+43c90ee1ea93b3aa733a4b3de13815bcba5f979790d6d8e47b5bff83fd362381  .claude/skills/feature-flag/SKILL.md
+69cc30252b3177cf15668e7318e344b4b95a22de179b9777fd41aa13e9d3421c  .claude/skills/fix-ci/SKILL.md
+e6c1ca080e1707213bae42ece2773c8597bd90412a5138a0142a679556cefc5d  .claude/skills/garden/SKILL.md
+d6a75d6e4124de991c52bfb7991eefcac38a00b9827bf463e6b337ea818ea031  .claude/skills/incident/SKILL.md
+71b224b74bfb12f51bd688cf4cd209cae26c09ebc261e8f427c6b51bfb8d3cd6  .claude/skills/optimize/SKILL.md
+7797a46d939e2fb8189b78a558f159f0c2c83e788375583b80d935f79bf4d2c2  .claude/skills/review/SKILL.md
+9a4ad7f291aafbd207913efb4fc072ebbff5e6324e76cb39a94662483b5afdac  .claude/skills/spec/SKILL.md
+9c6e8474e9bf65f93451059f34f3cf764a6530833e44acf7e722003b11afb625  .claude/skills/spec/plan-template.md

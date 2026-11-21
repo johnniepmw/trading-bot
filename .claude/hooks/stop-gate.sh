@@ -2,7 +2,8 @@
 # Stop hook. If the working tree has uncommitted changes and the repo defines
 # `make check-fast`, the turn may only end when it passes. Exit 2 sends Claude back to
 # work with the failure output. Escape hatch for deliberate escalation: create
-# .agentic/allow-stop (single use).
+# .agentic/allow-stop (single use). In CI (e.g. the agent-review job) CI itself is the
+# gate, so this hook stands down.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
@@ -10,6 +11,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC2034  # read by json_field in lib.sh
 HOOK_INPUT="$(cat)"
+[ -n "${CI:-}" ] && exit 0
+once || exit 0  # a duplicate wiring of this hook is already running the check
 cwd="$(json_field cwd)"
 root="$(repo_root "${cwd:-${CLAUDE_PROJECT_DIR:-.}}")"
 [ -z "$root" ] && exit 0

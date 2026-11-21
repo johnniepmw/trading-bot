@@ -1,12 +1,12 @@
 ---
 name: fix-ci
-description: Diagnose and fix failing checks on the current pull request or main, including flaky tests, without weakening the checks. Use when gh pr checks shows a failure, a CI run is red, or the agent-review check requests changes.
+description: Diagnose and fix failing checks on the current pull request or main, including flaky tests, without weakening the checks. Use when a pull request check fails, a CI run on main is red, or the agent-review check requests changes.
 argument-hint: "[PR number or run id]"
 ---
 
 # Fix CI: find the real cause, keep the gates intact
 
-1. Identify what failed: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-pr.sh" checks <pr>` (or
+1. Identify what failed: `bash "${CLAUDE_SKILL_DIR}/../../scripts/gh-pr.sh" checks <pr>` (or
    `gh run list --branch <branch> --limit 5`), then `gh run view <id> --log-failed`. For
    the agent-review check, read its PR comment
    (`gh api repos/{owner}/{repo}/issues/<pr>/comments`). `gh pr` commands fail in cloud

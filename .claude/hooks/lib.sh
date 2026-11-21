@@ -33,3 +33,19 @@ block() {
 repo_root() {
   git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null || true
 }
+
+# once  — true for the first of identical runs of a hook, false for a duplicate.
+# A hook can be wired twice (a repo's .claude/settings.json and an installed agentic
+# plugin); both copies then receive the same event at the same moment. The event JSON plus
+# the transcript's size identifies the event, so a later event always runs. Only the slow
+# or chatty hooks use this; the guards always run, because a duplicate guard is harmless.
+once() {
+  local dir t size=""
+  dir="${TMPDIR:-/tmp}/agentic-hooks-$(id -u)"
+  t="$(json_field transcript_path)"
+  [ -n "$t" ] && size="$(wc -c <"$t" 2>/dev/null | tr -d ' ')"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  find "$dir" -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} + 2>/dev/null
+  # Bash's noclobber create (O_EXCL) is atomic; `mkdir` isn't on every coreutils build.
+  ( set -C; : >"$dir/$(printf '%s %s' "$HOOK_INPUT" "$size" | cksum | tr ' ' '-')" ) 2>/dev/null
+}

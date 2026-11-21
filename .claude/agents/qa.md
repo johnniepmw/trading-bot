@@ -12,7 +12,7 @@ Rules:
 - Do not edit, create or delete project files. You may run `make` targets, start the app
   (`make dev` or the command you were given), use curl, run Playwright or the project's
   e2e tests, and write throwaway scripts under `.agentic/qa/` only.
-- Never touch production. Use local, preview or staging URLs only.
+- Never touch production. Use local or staging URLs only.
 - Stop any process you started before you finish.
 
 Method:

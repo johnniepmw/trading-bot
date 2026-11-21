@@ -34,7 +34,7 @@ using this shape:
 ```
 
 ## Then
-- For a high-risk PR: run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-pr.sh" merge <pr>` anyway.
+- For a high-risk PR: run `bash "${CLAUDE_SKILL_DIR}/../../scripts/gh-pr.sh" merge <pr>` anyway.
   Where auto-merge is available it is now armed, and the risk-gate check holds the merge
   until the owner comments `/approve-risk <first 7+ chars of the head commit SHA>`. In
   cloud sessions (no auto-merge), end the brief with: "After approving, tap Squash and
