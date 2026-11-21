@@ -8,7 +8,7 @@ paths:
   text directly into `run:`. Pass them through `env:` and quote them.
 - `pull_request_target` / `issue_comment` workflows must not check out or run PR code.
 - Keep third-party actions to a minimum; prefer `gh`, `gcloud` and `make` in `run:` steps.
-  New actions are pinned by commit SHA.
+  Pin every action to a full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps both).
 - Job names that are required checks (`ci-required`, `agent-review`) and the
   `risk-gate` status context must not be renamed without updating the ruleset
   (`scripts/github-setup.sh`).
