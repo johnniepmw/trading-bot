@@ -26,7 +26,8 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 | `src/tradingbot/config` | typed config, validated at start-up | hold secret values in code |
 | `src/tradingbot/app` | entry points (`python -m tradingbot.app`), wiring, flags, alerts, kill switch | contain trading logic |
 | `docs/strategies` | one spec per strategy: hypothesis, parameters, validation, gate | change parameters after results without a trial-log entry |
-| `research/` | notebooks and experiments | be imported by `src` |
+| `src/tradingbot/backtest` | day-by-day simulation sharing `strategy`, `portfolio` and `risk` with live code; own fill simulator (next open plus costs) | import `execution`, brokers or HTTP; be imported by the pure core |
+| `research/` | validation statistics (Sharpe, Deflated Sharpe, block bootstrap, rolling windows, 1/N benchmark, trial log, CSV loader); real data lives outside the repo (`research/data/` is gitignored) | be imported by `src` |
 | `tests/` | unit, property, e2e (`tests/e2e` runs the job entry point) | use real account data |
 | `scripts/phase0_api_check.py` | owner-run demo API check (stdlib only) | touch the live API |
 | `infra/` | OpenTofu for GCP (ADR-0004; job module in Phase 2) | contain secret values |
@@ -43,7 +44,8 @@ contracts in `.importlinter`):
    adapters (flag overrides from Cloud Storage) (3a). Only `app` imports `execution`, and
    only `execution` and `app` import `brokers`, so every order goes through the path that
    applies risk (3c, 3d). Only `app` imports `brokers.trading212` or `brokers.fake` (3b).
-4. `research` is never imported by `src`.
+4. `research` is never imported by `src`. `backtest` is in contracts 1, 2a (the pure core
+   can't import it) and 3a (no HTTP); 3b–3d keep it away from `execution` and brokers.
 5. Only `risk`, `execution` and `brokers` import `domain.approval` (`ApprovedOrder`), and
    only `risk` constructs one (`tests/domain/test_approval.py`), so an order that skipped
    risk cannot reach the order port (ADR-0016).

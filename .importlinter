@@ -23,6 +23,7 @@ forbidden_modules =
     tradingbot.ledger
     tradingbot.config
     tradingbot.app
+    tradingbot.backtest
 
 [importlinter:contract:pure-core-no-io]
 name = 2a. strategy, portfolio and risk import only domain and config (no brokers, data I/O, HTTP or environment)
@@ -37,6 +38,7 @@ forbidden_modules =
     tradingbot.brokers
     tradingbot.ledger
     tradingbot.app
+    tradingbot.backtest
     os
     importlib
     subprocess
@@ -71,6 +73,7 @@ source_modules =
     tradingbot.execution
     tradingbot.ledger
     tradingbot.config
+    tradingbot.backtest
 forbidden_modules =
     urllib
     http

@@ -13,18 +13,23 @@ from tradingbot.domain.market import Bar, Instrument
 SMA_DAYS = 210  # about 10 months of trading days, including the signal day
 
 
-def in_trend(closes: Sequence[float]) -> bool:
-    """True when the last close is above the simple average of the last SMA_DAYS closes."""
-    if len(closes) < SMA_DAYS:
+def in_trend(closes: Sequence[float], days: int = SMA_DAYS) -> bool:
+    """True when the last close is above the simple average of the last `days` closes.
+
+    `days` is SMA_DAYS in production; other values exist only for logged stability trials.
+    """
+    if len(closes) < days:
         return False
-    window = closes[-SMA_DAYS:]
-    return window[-1] > sum(window) / SMA_DAYS
+    window = closes[-days:]
+    return window[-1] > sum(window) / days
 
 
-def signals(history: Mapping[Instrument, Sequence[Bar]], as_of: date) -> dict[Instrument, bool]:
+def signals(
+    history: Mapping[Instrument, Sequence[Bar]], as_of: date, days: int = SMA_DAYS
+) -> dict[Instrument, bool]:
     """The trend signal for each instrument, using only bars on or before `as_of`."""
     return {
-        instrument: in_trend([b.close for b in sorted(bars, key=lambda b: b.day) if b.day <= as_of])
+        instrument: in_trend([b.close for b in sorted(bars, key=lambda b: b.day) if b.day <= as_of], days)
         for instrument, bars in history.items()
     }
 

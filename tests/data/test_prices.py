@@ -56,3 +56,9 @@ def test_an_open_far_from_its_own_close_is_refused() -> None:
     # backtest fills use the open, so a pence/pounds slip there matters too
     with pytest.raises(DataError, match="open"):
         validate_history(VWRP, [Bar(VWRP, date(2026, 11, 20), open=10_000.0, close=100.0)])
+
+
+@pytest.mark.parametrize("ratio", [10.0, 0.1])  # an unadjusted 10:1 split or consolidation
+def test_exactly_tenfold_is_already_refused(ratio: float) -> None:
+    with pytest.raises(DataError, match="jump"):
+        validate_history(VWRP, bars(VWRP, [100.0, 100.0 * ratio]))

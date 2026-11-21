@@ -49,3 +49,7 @@ mutants/
 
 # Phase 0 API check output (contains demo account data; never commit, see ADR-0014)
 phase0_report*.json
+
+# Real market data stays out of the public repo (licensing, ADR-0014); research reads it from a private bucket
+research/data/
+research/**/*.csv
