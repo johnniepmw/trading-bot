@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 HARD_STOP_DRAWDOWN = Decimal("0.20")  # no new buys at 20% below the high-water mark
-MAX_POSITION_FRACTION = Decimal("0.30")  # no single holding above 30% of equity
+MAX_POSITION_FRACTION = Decimal("0.30")  # no buy takes a holding above 30% of equity
 MAX_DAILY_LOSS = Decimal("0.05")  # the daily-loss pause can't be set looser than 5%
 
 

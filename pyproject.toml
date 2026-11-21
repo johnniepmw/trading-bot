@@ -40,7 +40,7 @@ markers = [
 # Import contracts live in .importlinter (a high-risk path).
 
 [tool.mutmut]
-paths_to_mutate = ["src/tradingbot/domain/"]
+paths_to_mutate = ["src/tradingbot/domain/", "src/tradingbot/risk/"]
 tests_dir = ["tests/"]
 
 [dependency-groups]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import decimal
 from collections.abc import Mapping
 from decimal import Decimal
 
@@ -236,3 +237,45 @@ def test_account_amounts_must_be_in_pounds(field: str) -> None:
 def test_impossible_account_states_are_refused(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError, match="account state"):
         state(**kwargs)  # type: ignore[arg-type]
+
+
+# --- review round 1: bad quotes are rejected per order, never crash the run ---------
+@pytest.mark.parametrize("bad", [Decimal(0), Decimal(-5)])
+def test_a_non_positive_quote_rejects_that_buy_and_keeps_the_sells(bad: Decimal) -> None:
+    decisions = review(
+        [buy("1"), sell("1", SGLN)],
+        state(
+            quotes={VWRP: Money(bad, Currency.GBP), SGLN: Money(Decimal(4000), Currency.GBX)},
+            holdings={SGLN: Decimal(2)},
+        ),
+    )
+    assert [d.reason for d in decisions] == ["passed", "rejected: bad quote"]
+
+
+def test_a_quote_in_another_currency_than_the_instrument_is_rejected() -> None:
+    # A GBP fund quoted as pence would look 100x cheaper and buy 100x too much.
+    [d] = review([buy("1")], state(quotes={VWRP: Money(Decimal(100), Currency.GBX)}))
+    assert d.reason == "rejected: quote currency does not match instrument"
+
+
+def test_a_partial_sell_rounds_down_to_the_step_but_a_full_exit_is_exact() -> None:
+    [partial] = review([sell("1.005")], state(holdings={VWRP: Decimal(3)}))
+    assert approved_qty(partial) == Decimal("1.00")
+    assert partial.reason == "shrunk: to the quantity step"
+    [full] = review([sell("5")], state(holdings={VWRP: Decimal("2.345")}))
+    assert approved_qty(full) == Decimal("2.345")  # all of it, even off-step
+    [tiny] = review([sell("0.004")], state(holdings={VWRP: Decimal(3)}))
+    assert tiny.reason == "rejected: below the quantity step"
+
+
+def test_a_partial_sell_without_a_step_still_goes_through() -> None:
+    [d] = review([sell("1")], state(holdings={VWRP: Decimal(3)}, steps={}))
+    assert approved_qty(d) == Decimal(1)
+
+
+def test_divisions_round_down_whatever_the_callers_decimal_context() -> None:
+    with decimal.localcontext(prec=3, rounding=decimal.ROUND_CEILING):
+        # £250 / £30 = 8.333.. must not round up past the cap
+        [d] = review([buy("20")], state(quotes={VWRP: gbp(30)}))
+    assert d.approved is not None
+    assert d.approved.order.quantity * 30 <= 250

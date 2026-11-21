@@ -57,7 +57,7 @@ def states(draw: st.DrawFn) -> AccountState:
 limits_strategy = st.builds(
     Limits,
     position_fraction=st.decimals(min_value=Decimal("0.01"), max_value=Decimal("0.30"), places=2),
-    drawdown_halve=st.just(Decimal("0.10")),
+    drawdown_halve=st.decimals(min_value=Decimal("0.01"), max_value=Decimal("0.10"), places=2),
     drawdown_stop=st.decimals(min_value=Decimal("0.11"), max_value=Decimal("0.20"), places=2),
     daily_loss=st.decimals(min_value=Decimal("0.01"), max_value=Decimal("0.05"), places=2),
 )
@@ -97,5 +97,21 @@ def test_no_approved_order_breaks_a_limit(proposed: list[Order], state: AccountS
         spent += o.quantity * price
         held[o.instrument] += o.quantity
         cap = limits.position_fraction * (Decimal("0.5") if drawdown >= limits.drawdown_halve else 1)
-        assert held[o.instrument] * price <= cap * state.equity.amount + Decimal("1e-20")  # position cap
+        assert held[o.instrument] * price <= cap * state.equity.amount  # position cap
     assert spent <= state.cash.amount  # no leverage
+
+
+@settings(max_examples=200)
+@given(orders, states(), limits_strategy)
+def test_a_sell_of_something_held_is_always_approved(
+    proposed: list[Order], state: AccountState, limits: Limits
+) -> None:
+    left = dict(state.holdings)
+    for d in review(proposed, state, limits):
+        if d.order.side is not Side.SELL:
+            continue
+        step = STEPS[d.order.instrument]
+        sellable = min(d.order.quantity, left[d.order.instrument])
+        if left[d.order.instrument] > 0 and (sellable == left[d.order.instrument] or sellable >= step):
+            assert d.approved is not None, d.reason  # liveness: sells are never blocked
+            left[d.order.instrument] -= d.approved.order.quantity

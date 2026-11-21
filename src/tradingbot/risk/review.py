@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_FLOOR, Decimal, localcontext
 
 from tradingbot.domain.approval import ApprovedOrder
 from tradingbot.domain.market import Instrument, Order, Side
@@ -72,7 +72,16 @@ class _Run:
 
 
 def review(orders: Sequence[Order], state: AccountState, limits: Limits | None = None) -> list[Decision]:
-    """Decide every order. Sells first, then buys, each in the order given."""
+    """Decide every order. Sells first, then buys, each in the order given.
+
+    Arithmetic runs in a fixed context that rounds down, so a caller's Decimal settings
+    can never round a quantity up past a limit.
+    """
+    with localcontext(prec=28, rounding=ROUND_FLOOR):
+        return _review(orders, state, limits)
+
+
+def _review(orders: Sequence[Order], state: AccountState, limits: Limits | None) -> list[Decision]:
     mark = state.high_water_mark
     drawdown = None if mark is None else max(ZERO, 1 - state.equity.amount / mark.amount)
     run = _Run(state, limits or Limits(), state.cash.amount, drawdown)
@@ -93,12 +102,20 @@ def _reject(order: Order, why: str) -> Decision:
 
 
 def _sell(run: _Run, order: Order) -> Decision:
+    """Sells are never blocked by limits. A full exit is exact; a partial one rounds down to the step."""
     held = run.holding(order.instrument)
-    quantity = min(order.quantity, held)
-    if quantity <= 0:
+    if held <= 0:
         return _reject(order, "nothing to sell")
+    if order.quantity >= held:
+        quantity, why = held, "to the holding"
+    else:
+        step = run.state.quantity_steps.get(order.instrument)
+        quantity = order.quantity if step is None else _floor(order.quantity, step)
+        why = "to the quantity step"
+        if quantity <= 0:
+            return _reject(order, "below the quantity step")
     run.held[order.instrument] = held - quantity
-    return _decide(order, quantity, "to the holding")
+    return _decide(order, quantity, why)
 
 
 def _buy_veto(run: _Run) -> str | None:
@@ -120,6 +137,10 @@ def _price_and_step(run: _Run, instrument: Instrument) -> tuple[Decimal, Decimal
     step = run.state.quantity_steps.get(instrument)
     if quote is None:
         return "no quote"
+    if quote.currency is not instrument.currency:
+        return "quote currency does not match instrument"
+    if quote.amount <= 0:
+        return "bad quote"
     if step is None:
         return "no quantity step"
     try:
