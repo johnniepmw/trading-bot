@@ -8,13 +8,14 @@ type-check. Three checks keep construction inside `risk`:
   and subclassing fail the test;
 - the class is final, immutable and not a dataclass, so `dataclasses.replace` and
   `copy.replace` raise instead of re-wrapping an order risk never saw.
-Accepted gap: code that already holds an ApprovedOrder can call `type(x)(order)` or use
-`object.__new__`/`object.__setattr__`. Review must catch that; nothing static does.
+The scan also flags `type(x)(...)`, `x.__class__` and imports of the name from anywhere but
+this module. Accepted gap: `object.__new__`/`object.__setattr__` on an instance, and
+string lookups (`getattr`); the order port's runtime `isinstance` check is the backstop.
 """
 
 from __future__ import annotations
 
-from typing import Any, final
+from typing import final
 
 from tradingbot.domain.market import Order
 
@@ -29,7 +30,7 @@ class ApprovedOrder:
             raise TypeError(f"ApprovedOrder wraps an Order, got {type(order).__name__}")
         object.__setattr__(self, "order", order)
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
+    def __init_subclass__(cls, **kwargs: object) -> None:
         raise TypeError("ApprovedOrder cannot be subclassed")
 
     def __setattr__(self, name: str, value: object) -> None:

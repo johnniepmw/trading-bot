@@ -77,3 +77,11 @@ def test_price_is_the_one_place_a_float_price_becomes_money() -> None:
 def test_price_money_rejects_non_positive_or_non_finite(bad: float) -> None:
     with pytest.raises(ValueError, match="price"):
         price_money(VWRP, bad)
+
+
+def test_price_money_accepts_float_subclasses_with_odd_reprs() -> None:
+    class Scalar(float):  # numpy 2 scalars repr as "np.float64(101.5)"
+        def __repr__(self) -> str:
+            return f"np.float64({float(self)})"
+
+    assert price_money(VWRP, Scalar(101.5)) == Money(Decimal("101.5"), Currency.GBP)

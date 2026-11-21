@@ -54,7 +54,9 @@ def price_money(instrument: Instrument, value: float) -> Money:
     Uses the float's shortest repr, so 0.1 becomes Decimal("0.1"). A GBX price stays GBX.
     """
     _check_price("instrument", value)
-    return Money(Decimal(repr(value)), instrument.currency)
+    return Money(
+        Decimal(repr(float(value))), instrument.currency
+    )  # float(): numpy scalars repr as np.float64(...)
 
 
 class Side(StrEnum):

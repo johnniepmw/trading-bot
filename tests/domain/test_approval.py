@@ -50,6 +50,17 @@ def _names_it(node: ast.AST) -> bool:
     )
 
 
+def _rebuilds_from_an_instance(node: ast.AST) -> bool:
+    """type(x)(...) or x.__class__: building a new object from one already held."""
+    calls_type_result = (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Call)
+        and isinstance(node.func.func, ast.Name)
+        and node.func.func.id == "type"
+    )
+    return calls_type_result or (isinstance(node, ast.Attribute) and node.attr == "__class__")
+
+
 def misuses(source: str) -> list[int]:
     """Lines that use ApprovedOrder other than in an un-aliased import, annotation or isinstance."""
     tree = ast.parse(source)
@@ -57,8 +68,12 @@ def misuses(source: str) -> list[int]:
     lines = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            lines += [node.lineno for a in node.names if a.name == NAME and a.asname is not None]
-        elif _names_it(node) and id(node) not in allowed:
+            lines += [
+                node.lineno
+                for a in node.names
+                if a.name == NAME and (a.asname is not None or node.module != "tradingbot.domain.approval")
+            ]
+        elif _rebuilds_from_an_instance(node) or (_names_it(node) and id(node) not in allowed):
             lines.append(node.lineno)
     return sorted(set(lines))
 
@@ -100,6 +115,9 @@ def test_the_scan_allows_imports_annotations_and_isinstance() -> None:
         "ApprovedOrder.__new__(ApprovedOrder)",
         "class Mine(ApprovedOrder): pass",
         "approval.ApprovedOrder(o)",
+        "from tradingbot.brokers.port import ApprovedOrder",
+        "type(approved)(o)",
+        "approved.__class__(o)",
     ],
 )
 def test_the_scan_finds_each_way_round_it(planted: str) -> None:
