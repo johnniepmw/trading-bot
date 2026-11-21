@@ -26,6 +26,10 @@
 - Lockfiles committed; CI installs with frozen lockfiles.
 - Dependabot: grouped weekly updates for the stack, monthly for GitHub Actions and the
   base image. Security updates immediately.
+- The Python version changes only on purpose, in one PR that moves the Dockerfile base
+  image, `mise.toml` and `pyproject.toml` together. Dependabot ignores minor and major
+  updates of the `python` base image; digest updates of the pinned `3.13-slim` tag (which
+  carry CPython patch and Debian fixes) still come through.
 - New dependencies need a reason in the PR (what it replaces, maintenance status,
   licence). Prefer the standard library and existing dependencies.
 - GitHub Actions are kept to a minimum and pinned to full commit SHAs with a version

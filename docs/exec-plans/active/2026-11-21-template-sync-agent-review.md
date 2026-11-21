@@ -34,7 +34,10 @@ trading-bot-specific line.
 - The config restore is the action's behaviour, not this repo's; claude-code-action has
   `src/github/operations/restore-config.ts` and `test/restore-config.test.ts` on its default
   branch (GitHub code search). The file at the pinned SHA couldn't be read from this session.
-- Merged after PR #3 (both touch `agent-review.yml`), so no conflict.
+- Branched after PR #3 merged (both touch `agent-review.yml`). After PR #4 merged, main
+  was merged in (no rebase); `docs/exec-plans/tech-debt.md` conflicted and was resolved by
+  keeping both new top lines (#5's agent-review line, #4's python end-of-life line),
+  newest first. `docs/security.md` merged cleanly with both PRs' additions.
 
 ## Plan
 1. Apply the five edits — check: diff matches the brief

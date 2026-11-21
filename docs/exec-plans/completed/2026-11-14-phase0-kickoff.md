@@ -1,6 +1,6 @@
 # Phase 0 bootstrap: python stack, project docs, ADRs and gates
 
-- **Status**: blocked (owner decision: `/approve-risk` on the bootstrap PR)
+- **Status**: shipped
 - **Branch / PR**: `claude/relaxed-thompson-22prga` (based on `claude/phase0-seed`) / https://github.com/johnniepmw/trading-bot/pull/1
 - **Risk class**: high (`make risk`: `.claude/settings.json`, `.github/**`, `Dockerfile`, `flags.json`, `src/tradingbot/{app,brokers,config,execution,ledger,risk}/**`, `.claude/hooks/**`, `.claude/kit.lock`, `infra/**`)
 - **Started**: 2026-11-14 (brief) / 2026-11-21 (bootstrap)
@@ -25,7 +25,7 @@ working, and a checklist of what only the owner can do. No strategy code.
 | AC10 | Agentic kit v0.2.0 installed into `.claude/` as plain project files; hooks run from `.claude/hooks/` via `.claude/settings.json`; each tested | `make kit-check` "kit files match .claude/kit.lock"; hook table below (re-run on the new paths 2026-11-21); the guard blocked a real `core.hooksPath` override in this session |
 | AC11 | First-time setup runbook describes the public repo, not GitHub Pro | `docs/runbooks/first-time-setup.md` §1 (public intro, item 1 hardening) |
 | AC12 | Container builds (digest-pinned base, root-owned code) and its command reports healthy | `make image` (base image via mirror.gcr.io; Docker Hub rate-limited); runtime uid 10001 gets "Permission denied" touching `/app/flags.json` (root 644); `docker run --rm trading-bot:local` printed `{"status": "ok", "version": "8ba8452", "new_orders": true}`; with `-e FLAG_NEW_ORDERS=off` → `"new_orders": false` |
-| AC13 | A planted fake secret and a broken import rule are each rejected by the same checks CI runs | Local: pre-commit hook and `gitleaks dir` both rejected a fake `T212_API_KEY` (exit 1); `lint-imports` exits 1 on each planted violation. The CI demonstration is a post-merge follow-up (Plan step 8) |
+| AC13 | A planted fake secret and a broken import rule are each rejected by the same checks CI runs | Met (CI). Local: pre-commit hook and `gitleaks dir` both rejected a fake `T212_API_KEY` (exit 1); `lint-imports` exits 1 on each planted violation. CI, throwaway PRs closed unmerged: fake secret (#6) — `ci-required` failed because job `check` failed at `make secrets-scan`, gitleaks "leaks found: 1" (redacted), https://github.com/johnniepmw/trading-bot/actions/runs/44919447964/job/136892100694 ; broken import (#7) — `ci-required` failed because job `check` failed at `make arch`, "3c. only app imports execution (risk can't be bypassed) BROKEN", `tradingbot.data -> tradingbot.execution (l.3)`, https://github.com/johnniepmw/trading-bot/actions/runs/44919489531/job/136892288491 |
 
 ## Non-goals
 - Strategy code (Phase 1), the Cloud Run job module and job deploy workflow (Phase 2),
@@ -165,6 +165,7 @@ working, and a checklist of what only the owner can do. No strategy code.
 - 2026-11-21 CI: `risk-gate-evaluate` set the `risk-gate` status to pending correctly but failed posting its explanatory comment (`gh api` exit 1, error text not logged). Likely cause: the job had `pull-requests: read`; the workflows that comment successfully have `write`. Fixed both: permission raised and the script now prints GitHub's error. The workflow runs from `main`, so the fix applies after merge; the red check on this PR isn't required for merge.
 - 2026-11-21 CI: `image` failed trivy (HIGH, fixed upstream): `zlib1g` CVE in the base image's Debian packages and `msgpack`/`setuptools` CVEs in pip's vendored libraries. Dockerfile now applies Debian security updates and removes pip (unused at runtime). Locally verified pip is gone and `smoke` still runs; the apt upgrade can't be exercised here (containers can't reach deb.debian.org), so CI's trivy run is the evidence.
 - 2026-11-21 CI: `agent-review` fails on its first model call (2 s, no usage): the `CLAUDE_CODE_OAUTH_TOKEN` secret is present but appears invalid or not entitled — owner checklist item 4. Re-run once.
+- 2026-11-21 step 8: canary PRs #6 (fake secret) and #7 (broken import) both failed `ci-required` for the planted reason; closed unmerged — evidence: AC13 links
 - 2026-11-21 step 5: `make check`, `make e2e`, `make image` green (gitleaks, actionlint, shellcheck installed locally from Go/PyPI for this run)
 - 2026-11-21 kit v0.2.0 + template sync (`5cdc84a..main`): `scripts/kit-sync.sh` installed `johnniepmw/agentic-dev-kit@b93101e39e91` (kit 0.2.0) into `.claude/` and the settings hooks block switched in the same command; `ls .claude/hooks` → guard-bash.sh guard-write.sh lib.sh orient.sh stop-gate.sh; `.claude/kit.lock` identical to the template's
 - 2026-11-21 verification after the sync: `make kit-check` → "kit files match .claude/kit.lock"; `make check` exit 0 (ruff clean, mypy 16 files, 38 passed + 1 xfailed, 8 contracts kept, docs-check and flags-check 0 errors, kit-check ok, gitleaks "no leaks found", actionlint and shellcheck clean); `make repo-lint` exit 0 with every action SHA-pinned; `make e2e` 3 passed; guard probes `git push origin main` → 2 and Read `.env` → 2; hook table re-run on the new paths (below); `risk_classify.py --paths .claude/kit.lock` → high
@@ -225,7 +226,7 @@ it is added to 3a's sources (documented in `.importlinter` and ARCHITECTURE.md).
 Stop-gate cases ran in a temporary git worktree.
 
 ## Owner checklist (owner-only; run in Google Cloud Shell)
-1. Merge this PR: read the escalate brief, then comment `/approve-risk <sha>`.
+1. ~~Merge this PR~~ — done: PR #1 merged as `92d6d18`.
 2. `make github-setup` (repo settings, `main` ruleset, labels, Dependabot).
 3. Public-repo hardening from ADR-0014 (`docs/runbooks/first-time-setup.md` §1 item 1):
    PRs and issues limited to collaborators; fork PR workflows need approval for all
@@ -266,9 +267,41 @@ Stop-gate cases ran in a temporary git worktree.
   tag (pinned by commit SHA with the template sync, 2026-11-21).
 
 ## Outcome
-<filled when shipped>
+Shipped. PR #1 merged as `92d6d18` (python stack, `tradingbot` layout with enforced
+import contracts, ADRs, gates, kit v0.2.0). Follow-ups, 2026-11-21:
+- PR #2 (Dependabot python 3.13 → 3.15) closed unmerged: the Python version moves only on
+  purpose, with `mise.toml` and `pyproject.toml`.
+- PR #3 (SHA-pinned `claude-code-action` and `mise-action` bumps) merged as `4c70a5e`;
+  standard risk through `risk_classify.py`'s Dependabot-Actions exemption.
+- PR #4 (Dependabot ignores python minor/major base-image bumps) and PR #5 (template sync:
+  agent-review config restore notes and audit wording) are high risk, open for the owner's
+  `/approve-risk`.
+- AC13 shown in CI with canary PRs #6 and #7 (links in the table), closed unmerged.
+- agent-review now runs (passed on PRs #4 and #5), so the review token in checklist item 4
+  works.
+
+Still open, owner only (see the Owner checklist above): items 2 (`make github-setup`),
+3 (public-repo hardening from ADR-0014), 5 (GCP project), 6 (`phase0_api_check.py` with a
+demo key) and 7 (the risk-gate self-approval gap). Item 4 appears done (agent-review runs);
+confirm the token is the one you intend to keep.
+
+**Urgent, owner:** delete the branches `canary/fake-secret` and `canary/broken-import`
+(the session's proxy refused). Until `canary/fake-secret` is gone, CI's full-history
+gitleaks scan finds its fake key (`generic-api-key`, commit `51dad3b`) and fails `check`
+on every PR, this one included. Then re-run the failed `check` jobs.
 
 ## Learnings
+- Canary PRs: `make check` stops at the first failing target, and ruff runs before
+  `make arch`, so a planted unused import fails on F401 and never reaches the contracts.
+  The import canary needs `# noqa: F401` and a blank line after the docstring to fail for
+  the planted reason.
+- In cloud sessions the proxy refuses REST writes to `git/refs` and `contents`, and it
+  refused deleting the canary branches (REST and `git push --delete`). The GitHub MCP
+  tools create branches and files; branch deletion falls to the owner.
+- `make secrets-scan` in CI runs `gitleaks git` with full history, which scans every
+  fetched branch, not just the PR. A secret canary therefore fails CI repo-wide until its
+  branch is deleted. Next time, check the branch can be deleted before planting, or delete
+  it straight after the run.
 - Cloud sessions: repo plugins don't load, so the kit is installed into `.claude/` as
   plain project files (kit v0.2.0); mise can't download from GitHub; gitleaks/actionlint/shellcheck install via
   `go install` and PyPI wrappers; Docker Hub may rate-limit, `mirror.gcr.io` works.
