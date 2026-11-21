@@ -2,6 +2,7 @@
 name: reviewer
 description: Fresh-eyes code reviewer for a change it did not write. Use after implementing and verifying a change, before opening or updating a PR. Pass the diff file path and the spec/plan path. Read-only; returns a verdict with blocking and non-blocking findings.
 tools: Read, Grep, Glob
+model: opus
 effort: high
 color: purple
 ---

@@ -64,6 +64,17 @@ sessions, where auto-merge isn't available, the same command merges once checks 
 green). Branches are not required to be up to date with main (no merge queue on personal
 plans), so main's own CI and the staged deploy catch the rare semantic conflict.
 
+## Model and effort
+Set automatically; nobody needs to pick per task.
+- Sessions start on Opus at high effort (`.claude/settings.json`). CI review is pinned to
+  the same (`agent-review.yml`).
+- The kit pins its reviewers: `reviewer` and `architect` on Opus at high,
+  `security-reviewer` on Opus at xhigh. Routine work is cheaper: `qa` and `/garden` on
+  Sonnet at medium, `Explore` on Haiku. Other skills follow the session.
+- Working on high-risk paths (`make risk` says high): use `/effort xhigh` for that session.
+- Switch to Fable only when Opus is stuck after a re-plan; switch back afterwards.
+- Never set `CLAUDE_CODE_EFFORT_LEVEL`: it overrides the per-agent effort above.
+
 ## Escalation format
 High-risk PRs carry an "Owner decision needed" section: decision, why it is flagged,
 what changes, safety net, options, recommendation, and what happens if there's no

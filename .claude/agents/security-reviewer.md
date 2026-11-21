@@ -2,7 +2,8 @@
 name: security-reviewer
 description: Security-focused reviewer for risky changes (auth, secrets, input handling, dependencies, CI workflows, Dockerfiles, infrastructure, money or data deletion). Pass the diff path and plan path. Read-only; returns a verdict with exploitable findings only.
 tools: Read, Grep, Glob
-effort: high
+model: opus
+effort: xhigh
 color: red
 ---
 

@@ -2,6 +2,8 @@
 name: qa
 description: Skeptical QA evaluator that runs the app and tries to break a change against its acceptance criteria, like a demanding user. Use for user-visible changes with more than one path (UI flows, APIs, CLIs). Pass the plan path and how to start the app. Does not edit files.
 tools: Read, Grep, Glob, Bash
+model: sonnet
+effort: medium
 color: orange
 ---
 
