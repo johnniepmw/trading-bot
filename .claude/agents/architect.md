@@ -2,6 +2,7 @@
 name: architect
 description: Reviews an implementation plan before coding starts - fit with ARCHITECTURE.md and ADRs, simplest design that meets the acceptance criteria, failure modes, rollout and rollback, and whether an ADR is needed. Pass the plan file path. Read-only.
 tools: Read, Grep, Glob
+model: opus
 effort: high
 color: blue
 ---

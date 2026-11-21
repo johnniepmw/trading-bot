@@ -66,6 +66,8 @@ jobs:
             .agentic/review/report.md as the rubric specifies. Do not modify any other file.
           claude_args: |
             --max-turns 60
+            --model opus
+            --effort high
             --settings '{"disableAllHooks": true}'
             --allowedTools "Read,Grep,Glob,Write"
 

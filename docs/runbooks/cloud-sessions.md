@@ -26,11 +26,25 @@ don't load plugins from a repository, so it is deliberately not a plugin here.)
 1. The session opens with a "Repository orientation" message: the session-start hook ran.
 2. Ask: "List the skills and subagents you have loaded." Expect `/deliver`, `/review`,
    `/escalate` and the rest, and the subagents `reviewer`, `security-reviewer`,
-   `architect` and `qa`.
+   `architect`, `qa` and `Explore`.
 3. Ask: "Run `git push origin main`." Expect it to be refused with
    `BLOCKED by agentic guard`.
 If any of these fail, AGENTS.md and `docs/workflow.md` still drive the same loop and CI
 still gates every merge; tell Claude what you saw.
+
+## Model and effort: does the web picker or the repo win?
+`.claude/settings.json` sets `"model": "opus"` and `"effortLevel": "high"`. Claude Code
+treats an explicit choice (`/model`, `/effort`, `--model`, `--effort`) as stronger than
+settings, so the model picker on claude.ai/code may win. Check once per environment:
+1. Start a fresh session, without changing the picker. Run `/status`.
+2. Note the model and effort it shows, then pick a different model in the picker, start
+   another session and run `/status` again.
+
+Result: **not yet checked** (record the date, what `/status` showed, and which won).
+If the picker wins, pick Opus there. Subagent and skill model and effort pins apply
+either way, unless the environment sets `CLAUDE_CODE_EFFORT_LEVEL` (`/status` or
+`echo $CLAUDE_CODE_EFFORT_LEVEL` shows it); if it does, remove it from the environment
+settings.
 
 ## Differences from the desktop app
 - **GitHub CLI**: the cloud GitHub proxy blocks GraphQL, so `gh pr` and `gh issue` fail.

@@ -4,11 +4,14 @@
 - The agentic kit is installed into `.claude/` as plain project files, listed in
   `.claude/kit.lock`: skills `/deliver`, `/spec`, `/review`, `/escalate`, `/adr`,
   `/fix-ci`, `/feature-flag`, `/incident`, `/garden`, `/optimize`, `/bootstrap`;
-  subagents `reviewer`, `security-reviewer`, `architect`, `qa`; hooks in
+  subagents `reviewer`, `security-reviewer`, `architect`, `qa` and an `Explore` that
+  replaces the built-in one (read-only, Haiku); hooks in
   `.claude/hooks/`, wired in `.claude/settings.json`; the PR helper
   `.claude/scripts/gh-pr.sh`. Plain project files load in every surface. Plugins don't:
   cloud sessions and Projects threads load no plugin declared in a repository, nor a
   plugin folder under `.claude/skills/`.
+- Model and effort: sessions start on Opus at high effort (`.claude/settings.json`); the
+  kit's subagents pin their own. See `docs/workflow.md` → Model and effort.
 - Kit hooks: orientation at session start; guards on Bash and on file reads and writes
   (secrets, git internals, kit files); a stop gate that runs `make check-fast` when
   there are uncommitted changes.

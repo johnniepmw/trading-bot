@@ -2,6 +2,8 @@
 name: garden
 description: Weekly codebase and documentation hygiene - fix doc drift, remove expired flags, triage flaky tests and tech debt, review dependency updates, sync the agentic kit. Opens small, separate PRs. Meant to run on a schedule.
 disable-model-invocation: true
+model: sonnet
+effort: medium
 ---
 
 # Garden: keep the harness sharp
