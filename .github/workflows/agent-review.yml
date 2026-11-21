@@ -4,6 +4,12 @@ name: agent-review
 # Blocks merge on confirmed correctness, security or spec problems (see
 # .github/agent-review.md). Dependabot PRs get no Actions secrets, so they skip this job
 # (a skipped required check counts as passed) and rely on CI.
+#
+# The review action replaces `.claude/`, `CLAUDE.md`, `.mcp.json` and a few other config
+# paths in the checkout with the base branch's versions before Claude starts (a PR must
+# not change the reviewer's settings), and keeps the PR's versions in `.claude-pr/`.
+# Hooks are switched off too: the reviewer only reads, and a hook would run repo code
+# while the token is present.
 
 on:
   pull_request:
@@ -51,11 +57,13 @@ jobs:
           prompt: |
             You are the independent CI reviewer for pull request #${{ github.event.pull_request.number }}.
             Read .github/agent-review.md and follow it exactly. Inputs are in .agentic/review/
-            (diff.patch, stat.txt, pr.json, risk.json); the repository is checked out at the
-            PR's merge commit. Write .agentic/review/verdict.json and .agentic/review/report.md
-            as the rubric specifies. Do not modify any other file.
-          # Hooks off: .claude/settings.json runs the kit's hook scripts, and in this job
-          # those scripts come from the PR's checkout while the OAuth token is present.
+            (diff.patch, stat.txt, pr.json, risk.json). The repository is checked out at the
+            PR's merge commit, except that the review action has replaced .claude/, CLAUDE.md,
+            CLAUDE.local.md, .mcp.json, .claude.json, .gitmodules, .ripgreprc and .husky with
+            the base branch's versions (removing ones the PR adds), so the PR can't change your
+            settings. That is expected, not a finding. Review the PR's versions of those paths
+            in .claude-pr/ and in diff.patch. Write .agentic/review/verdict.json and
+            .agentic/review/report.md as the rubric specifies. Do not modify any other file.
           claude_args: |
             --max-turns 60
             --settings '{"disableAllHooks": true}'
