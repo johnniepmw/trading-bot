@@ -1,6 +1,6 @@
 # Kill switch fails closed in the job
 
-- **Status**: active
+- **Status**: blocked (owner decision)
 - **Branch / PR**: `ccr-7fe1197d-l39xit` / (pending)
 - **Risk class**: high (`src/tradingbot/app/**` is a risk path: kill switch and entry point)
 - **Started**: 2026-11-21
