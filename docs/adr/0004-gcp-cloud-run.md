@@ -12,7 +12,7 @@ and cost.
 
 ## Options considered
 1. **Cloud Run services (and Cloud Run jobs for batch)** — managed, scales to zero,
-   revision-based traffic control (instant rollback, tagged previews); container-based.
+   revision-based traffic control (instant rollback, tagged candidates); container-based.
 2. **GKE** — far more control and far more to operate.
 3. **Compute Engine VM** — simple mental model; patching, deploys and rollbacks are ours.
 
@@ -23,9 +23,8 @@ secrets per environment — less isolation, much simpler.
 ## Decision
 Cloud Run, option (b): one GCP project per app, region `europe-west2`, with
 `<app>-staging` and `<app>-prod` services. OpenTofu with state in GCS. GitHub Actions
-authenticates through Workload Identity Federation: a preview identity (any branch,
-staging service only), a deployer and an infra-apply identity (main branch only), and a
-read-only infra-plan identity. Ownership split: OpenTofu owns the shape of each service
+authenticates through Workload Identity Federation: a deployer and an infra-apply
+identity (main branch only), and a read-only infra-plan identity (any branch). Ownership split: OpenTofu owns the shape of each service
 (identity, scaling, secret mounts, ingress); the deploy pipeline owns image, traffic and
 environment variables (OpenTofu ignores those fields).
 

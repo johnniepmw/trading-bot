@@ -41,7 +41,6 @@ module "service" {
   secrets             = [] # e.g. ["broker-api-key"]; set values with make secret-set
   deletion_protection = true
   deployer_sa         = local.b.sa_deployer
-  extra_developer_sas = [] # the PR preview identity never touches prod
   alert_email         = local.b.alert_email
 }
 

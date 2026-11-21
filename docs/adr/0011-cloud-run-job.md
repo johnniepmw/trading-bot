@@ -26,6 +26,6 @@ and e2e tests run that entry point as a subprocess.
 
 ## Consequences
 - Good: no public endpoint; cheap; one run at a time (with the ledger lock, ADR-0013).
-- Bad / costs: the template's preview, smoke and traffic-based rollback assume a service
+- Bad / costs: the template's smoke check and traffic-based rollback assume a service
   and must be adapted (tracked in `docs/exec-plans/tech-debt.md`).
 - Revisit when: the bot needs to react to events intraday.

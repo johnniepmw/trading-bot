@@ -1,8 +1,7 @@
 # One-time, owner-run foundation for an app's GCP project (make infra-bootstrap):
 # APIs, OpenTofu state bucket, Artifact Registry, Workload Identity Federation for GitHub
-# Actions, and four CI identities:
-#   ci-preview     any branch of this repo   → push images, deploy PR previews to staging
-#   ci-deployer    main branch only          → deploy staging and prod, ops workflow
+# Actions, and three CI identities:
+#   ci-deployer    main branch only          → push images, deploy staging and prod, ops workflow
 #   ci-infra-plan  any branch of this repo   → read-only plans and drift checks
 #   ci-infra-apply main branch only          → apply infra/envs
 # No service-account keys are created, ever.
@@ -67,14 +66,14 @@ resource "google_artifact_registry_repository" "images" {
   format        = "DOCKER"
   description   = "Container images for ${var.app_name}"
 
+  # Delete images older than 30 days, except the 30 most recent (rollback targets).
   cleanup_policy_dry_run = false
   cleanup_policies {
-    id     = "delete-old-previews"
+    id     = "delete-old"
     action = "DELETE"
     condition {
-      tag_state    = "TAGGED"
-      tag_prefixes = ["pr-"]
-      older_than   = "1209600s" # 14 days
+      tag_state  = "ANY"
+      older_than = "2592000s" # 30 days
     }
   }
   cleanup_policies {
@@ -104,7 +103,6 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "google.subject"       = "assertion.sub"
     "attribute.repository" = "assertion.repository"
     "attribute.ref"        = "assertion.ref"
-    "attribute.event_name" = "assertion.event_name"
   }
   # Only this repository can use the pool at all.
   attribute_condition = "assertion.repository == \"${var.github_repository}\""
@@ -115,15 +113,14 @@ resource "google_iam_workload_identity_pool_provider" "github" {
 
 # ---------- CI identities ----------------------------------------------------------------
 resource "google_service_account" "ci" {
-  for_each     = toset(["ci-preview", "ci-deployer", "ci-infra-plan", "ci-infra-apply"])
+  for_each     = toset(["ci-deployer", "ci-infra-plan", "ci-infra-apply"])
   project      = var.project_id
   account_id   = each.value
   display_name = "GitHub Actions: ${each.value}"
 }
 
 resource "google_service_account_iam_member" "wif_any_ref" {
-  for_each           = toset(["ci-preview", "ci-infra-plan"])
-  service_account_id = google_service_account.ci[each.value].name
+  service_account_id = google_service_account.ci["ci-infra-plan"].name
   role               = "roles/iam.workloadIdentityUser"
   member             = local.pool_principal_repo
 }
@@ -136,12 +133,11 @@ resource "google_service_account_iam_member" "wif_main_only" {
 }
 
 resource "google_artifact_registry_repository_iam_member" "push" {
-  for_each   = toset(["ci-preview", "ci-deployer"])
   project    = var.project_id
   location   = var.region
   repository = google_artifact_registry_repository.images.name
   role       = "roles/artifactregistry.writer"
-  member     = "serviceAccount:${google_service_account.ci[each.value].email}"
+  member     = "serviceAccount:${google_service_account.ci["ci-deployer"].email}"
 }
 
 # Deployer: manage Cloud Run revisions and traffic project-wide (revision listing needs

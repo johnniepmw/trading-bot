@@ -11,7 +11,7 @@ read. The suite is the specification; treat it that way.
 | Integration | Our code against real local dependencies or faithful fakes behind our interfaces (DB in a container, recorded HTTP) | `tests/integration/` | `make check`, CI |
 | Architecture | Module boundaries and dependency direction | config + `make arch` | `make check`, CI |
 | Contract | Our assumptions about third-party APIs (recorded responses replayed; nightly live check against sandbox) | `tests/contract/` | CI (replay), nightly (live) |
-| End-to-end | A user-visible flow through the deployed shape of the app (browser or HTTP) | `e2e/` | CI locally, CI against the PR preview, nightly against staging |
+| End-to-end | A user-visible flow through the deployed shape of the app (browser or HTTP) | `e2e/` | CI on every PR (app started locally), staging on every deploy, nightly against staging |
 | Smoke | The deployed revision is alive and is the expected version | `scripts/smoke.sh` | every deploy, before traffic |
 
 ## Rules
@@ -21,8 +21,8 @@ read. The suite is the specification; treat it that way.
    coverage and are mutation-tested nightly where the stack supports it.
 3. **Every user-visible flow has an end-to-end test.** New page, endpoint, CLI command or
    job → new or extended e2e test in the same PR.
-4. **E2E tests target a URL.** `E2E_BASE_URL` selects local, PR preview or staging, so the
-   same tests run everywhere. They create their own data and clean up after themselves.
+4. **E2E tests target a URL.** `E2E_BASE_URL` selects local or staging, so the same tests
+   run everywhere. They create their own data and clean up after themselves.
    This repo's bot is a job with no URL: its e2e tests run the entry point as a
    subprocess and skip when `E2E_BASE_URL` is set, until Phase 2 (ADR-0011).
 5. **Mock at our boundaries, not inside.** Fake the broker, not our own order service.

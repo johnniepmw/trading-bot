@@ -4,7 +4,6 @@
 | Env | What | Created by | Who changes it |
 |---|---|---|---|
 | local | `make dev`, local e2e | `make setup` | anyone |
-| preview | a no-traffic tagged revision `pr-<n>` on the staging service, one per PR | CI on each PR push | CI |
 | staging | `<app>-staging` Cloud Run service, own runtime identity and secrets | `infra/envs/staging` | CI on merge; agent may apply infra to staging |
 | prod | `<app>-prod` Cloud Run service, own runtime identity and secrets | `infra/envs/prod` | CI on merge only; owner for manual actions |
 
