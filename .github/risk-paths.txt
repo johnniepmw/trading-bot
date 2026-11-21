@@ -13,6 +13,15 @@ stack.mk
 .importlinter
 .gitleaks.toml
 mise.toml
+# Config files that would silently shadow the gate settings above if created
+setup.cfg
+tox.ini
+pytest.ini
+mypy.ini
+.mypy.ini
+ruff.toml
+.ruff.toml
+.gitleaksignore
 # Gate scripts, deploy and kill-switch scripts, and scripts the owner runs with their
 # own credentials (secret-set, gh-vars, phase0_api_check)
 scripts/**

@@ -1,6 +1,6 @@
 # Import contracts (ARCHITECTURE.md, "Boundaries"). Run by `make arch` (lint-imports).
 # High risk (.github/risk-paths.txt): loosening a contract needs the owner's approval.
-# New subpackages must be added to the source lists of contracts 1, 3a, 3b and 3c.
+# A new subpackage goes in contract 1's forbidden list and the source lists of 3a, 3b, 3c.
 [importlinter]
 root_package = tradingbot
 include_external_packages = True

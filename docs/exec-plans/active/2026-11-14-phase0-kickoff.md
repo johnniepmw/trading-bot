@@ -24,7 +24,7 @@ working, and a checklist of what only the owner can do. No strategy code.
 | AC9 | High-risk paths from the brief in `.github/risk-paths.txt` | file diff |
 | AC10 | Kit hooks run from `.claude/settings.json` without the plugin; each tested | hook table below; the guard blocked a real `core.hooksPath` override in this session |
 | AC11 | First-time setup runbook describes the public repo, not GitHub Pro | `docs/runbooks/first-time-setup.md` §1 |
-| AC12 | Container builds (digest-pinned base, root-owned code) and its command reports healthy | `make image` (base image via mirror.gcr.io; Docker Hub rate-limited); runtime uid 10001 gets "Permission denied" touching `/app/flags.json` (root 644); `docker run --rm trading-bot:local` printed `{"status": "ok", "version": "96155eb", "new_orders": true}`; with `-e FLAG_NEW_ORDERS=off` → `"new_orders": false` |
+| AC12 | Container builds (digest-pinned base, root-owned code) and its command reports healthy | `make image` (base image via mirror.gcr.io; Docker Hub rate-limited); runtime uid 10001 gets "Permission denied" touching `/app/flags.json` (root 644); `docker run --rm trading-bot:local` printed `{"status": "ok", "version": "8ba8452", "new_orders": true}`; with `-e FLAG_NEW_ORDERS=off` → `"new_orders": false` |
 | AC13 | A planted fake secret and a broken import rule are each rejected by the same checks CI runs | Local: pre-commit hook and `gitleaks dir` both rejected a fake `T212_API_KEY` (exit 1); `lint-imports` exits 1 on each planted violation. The CI demonstration is a post-merge follow-up (Plan step 8) |
 
 ## Non-goals
@@ -84,6 +84,10 @@ working, and a checklist of what only the owner can do. No strategy code.
   hooks into `.claude/settings.json` would otherwise run PR-controlled hook scripts in a
   job that holds the review token. Unverified until the first CI run: whether the action
   honours `--settings '{"disableAllHooks": true}'`.
+- Round 2: `make arch` passes `--config .importlinter` (a new `setup.cfg` would
+  otherwise shadow it), and config files that could shadow gate settings (`setup.cfg`,
+  `tox.ini`, `pytest.ini`, `mypy.ini`, `ruff.toml`, `.gitleaksignore` and dotted
+  variants) are risk paths; they don't exist, so they cost no approvals until created.
 - Contract 3c added (only `app` imports `execution`; only `execution` and `app` import
   `brokers`); contract 2a also forbids `importlib`, `subprocess`, `asyncio`, `ssl` and
   `pathlib`; 3a forbids `socket` and `subprocess`.

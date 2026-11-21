@@ -39,12 +39,14 @@ contracts in `.importlinter`):
 2. `strategy`, `portfolio` and `risk` import only `domain` and config types, never each
    other, and never brokers, data I/O, HTTP libraries or `os` (environment variables).
 3. Only `brokers` imports HTTP libraries to reach a broker; `app` may too for GCP
-   adapters (flag overrides from Cloud Storage). Only `app` imports `brokers.trading212`
-   or `brokers.fake`.
+   adapters (flag overrides from Cloud Storage) (3a). Only `app` imports `execution`, and
+   only `execution` and `app` import `brokers`, so every order goes through the path that
+   applies risk (3c). Only `app` imports `brokers.trading212` or `brokers.fake` (3b).
 4. `research` is never imported by `src`.
 
-Contracts live in `.importlinter` (high risk). They list source packages one by one, so
-a new subpackage must be added to contracts 1, 3a and 3b. Contract 2 checks indirect
+Contracts live in `.importlinter` (high risk; `make arch` passes `--config` so no other
+file can shadow it). They list packages one by one, so a new subpackage must be added to
+contract 1's forbidden list and to the source lists of 3a, 3b and 3c. Contract 2 checks indirect
 imports too: keep config *types* in an `os`-free module (for example `config/types.py`)
 and the loading that reads the environment elsewhere (`config/load.py`). GCP client
 libraries (`google`) aren't on the HTTP list yet; decide where the GCS ledger adapter
