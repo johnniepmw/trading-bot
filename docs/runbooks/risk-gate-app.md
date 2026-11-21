@@ -69,5 +69,6 @@ leaked.
 If the app can't post (key revoked, environment deleted), every PR waits, including the
 revert, because risk-gate runs main's workflow. Then: re-run the repo-settings target
 with `RISK_GATE_UNPIN=1`, temporarily remove `risk-gate` from the ruleset's required
-checks (Settings → Rules → main-protection), merge the fix or revert, and re-run the
-target to restore it. Don't delete the app while the ruleset is pinned to it.
+checks (Settings → Rules → main-protection), merge the fix or revert, then re-run the
+target with `RISK_GATE_APP_ID=<App ID>` to restore the pinned check (a plain re-run after
+an unpin leaves it matched by name only). Don't delete the app while the ruleset is pinned to it.

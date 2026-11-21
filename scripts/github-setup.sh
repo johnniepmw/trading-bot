@@ -23,10 +23,10 @@ gh api -X PUT "repos/$repo/environments/risk-gate" --input - >/dev/null <<'JSON'
 { "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true } }
 JSON
 policies_path="repos/$repo/environments/risk-gate/deployment-branch-policies"
-policies="$(gh api "$policies_path" -q '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | sort | join(",")')"
+policies="$(gh api "$policies_path" -q '[.branch_policies[] | "\(.type // "?"):\(.name)"] | sort | join(",")')"
 if [ -z "$policies" ]; then
   gh api -X POST "$policies_path" -f name=main -f type=branch >/dev/null
-  policies="$(gh api "$policies_path" -q '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | sort | join(",")')"
+  policies="$(gh api "$policies_path" -q '[.branch_policies[] | "\(.type // "?"):\(.name)"] | sort | join(",")')"
 fi
 if [ "$policies" != "branch:main" ]; then
   echo "error: environment risk-gate must allow only branch main, found: $policies" >&2
