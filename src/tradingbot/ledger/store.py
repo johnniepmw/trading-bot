@@ -93,7 +93,10 @@ class Ledger:
             raise LedgerError(f"ledger file missing: {path}")
         # mode=rw: SQLite must not create the file if it vanishes between the check and here
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, isolation_level=None)
-        conn.executescript(_SCHEMA)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not {"intents", "marks"} <= tables:  # e.g. an empty or truncated download
+            conn.close()
+            raise LedgerError(f"not a ledger (missing tables): {path}")
         return cls(conn)
 
     @classmethod
@@ -203,6 +206,8 @@ class Ledger:
     def update_high_water_mark(self, equity: Money, at: datetime) -> None:
         """Record equity as the mark if it is a new peak. The mark only rises, and an update
         never creates the first one (that would re-seed a lost history from today's equity)."""
+        if equity.currency is not Currency.GBP:
+            raise LedgerError("the high-water mark is in GBP")
         current = self.high_water_mark()
         if current is None:
             raise LedgerError("no high-water mark: seed it first (owner step)")

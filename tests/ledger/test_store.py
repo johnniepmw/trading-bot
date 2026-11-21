@@ -134,3 +134,16 @@ def test_london_time_is_refused_even_in_winter(ledger: Ledger) -> None:
     london = datetime(2026, 12, 1, 9, 0, tzinfo=ZoneInfo("Europe/London"))  # offset 0 in winter
     with pytest.raises(LedgerError, match="UTC"):
         ledger.record_intent("run-1", BUY, london)
+
+
+def test_an_empty_or_truncated_file_is_not_a_ledger(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.sqlite"
+    empty.write_bytes(b"")
+    with pytest.raises(LedgerError, match="not a ledger"):
+        Ledger.open(empty)
+
+
+def test_a_mark_in_pence_is_refused_even_when_lower(ledger: Ledger) -> None:
+    ledger.seed_high_water_mark(gbp("1000"), NOW)
+    with pytest.raises(LedgerError, match="GBP"):
+        ledger.update_high_water_mark(Money(Decimal(500), Currency.GBX), NOW)
