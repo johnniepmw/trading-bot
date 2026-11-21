@@ -70,7 +70,7 @@ skip the owner's approval. The owner asked to set up the GitHub App now.
 - 2026-11-21 step 2: rendered ruleset — without the ID: `{'context': 'risk-gate'}` plus a
   warning; with `123456`: `{'context': 'risk-gate', 'integration_id': 123456}`; `12a`
   refused
-- 2026-11-21 step 4: `make check` exit 0 (81 passed, actionlint, shellcheck, docs, no leaks), `make e2e` 3 passed
+- 2026-11-21 step 4: `make check` exit 0 (90 passed after the review fixes, actionlint, shellcheck, docs, no leaks), `make e2e` 3 passed
 
 ## Outcome
 <filled on merge>

@@ -39,7 +39,7 @@ echo "environment risk-gate: main only"
 # numeric App ID, not the client ID), so a status posted by any other token (e.g. a
 # workflow on another branch) doesn't count. Set RISK_GATE_APP_ID once the app posts
 # risk-gate. Once pinned, re-runs keep the pin; only RISK_GATE_UNPIN=1 removes it.
-existing="$(gh api "repos/$repo/rulesets" -q '.[] | select(.name=="main-protection") | .id' || true)"
+existing="$(gh api "repos/$repo/rulesets" -q '.[] | select(.name=="main-protection") | .id')"
 current_pin=""
 if [ -n "$existing" ]; then
   current_pin="$(gh api "repos/$repo/rulesets/$existing" -q '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[] | select(.context=="risk-gate") | .integration_id // empty] | first // empty')"

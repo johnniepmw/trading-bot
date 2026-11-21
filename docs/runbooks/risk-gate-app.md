@@ -29,7 +29,9 @@ App page → **Install App** → your account → **Only select repositories** �
 `trading-bot` → **Install**.
 
 ## 3. Create the `risk-gate` environment
-Repository → Settings → Environments → **New environment** → name `risk-gate`.
+Repository → Settings → Environments → **New environment** → name `risk-gate` (if it
+already exists, open it: GitHub creates an environment, unrestricted, the first time a
+workflow names it). Set the branch rule **first**, and add the key only after it's saved:
 - **Deployment branches and tags**: **Selected branches and tags** → add rule, ref type
   **Branch**, name `main`. Nothing else, ever (no tags, no `refs/pull/*`, no other
   branches): this is what stops other branches reading the key. The repo-settings target
