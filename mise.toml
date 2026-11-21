@@ -8,3 +8,4 @@ shellcheck = "0.10"
 opentofu = "1"
 trivy = "0"
 # --- stack tools (added by scripts/init-stack.sh) ---
+uv = "latest"
