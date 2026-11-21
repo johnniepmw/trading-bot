@@ -1,37 +1,27 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.parse
-import urllib.request
+import subprocess
+from collections.abc import Callable
 
 import pytest
+
+RunJob = Callable[..., subprocess.CompletedProcess[str]]
 
 pytestmark = pytest.mark.e2e
 
 
-def get(url: str) -> tuple[int, str]:
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 - test target URL
-            return resp.status, resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8")
+def test_smoke_command_reports_ok_with_the_real_flag_registry(run_job: RunJob) -> None:
+    result = run_job("smoke")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "ok", "version": "e2e", "new_orders": True}
 
 
-def test_health_reports_ok_and_a_version(base_url: str) -> None:
-    status, body = get(f"{base_url}/healthz")
-    assert status == 200
-    data = json.loads(body)
-    assert data["status"] == "ok"
-    assert data["version"]
+def test_kill_switch_override_is_visible_to_the_job(run_job: RunJob) -> None:
+    result = run_job("smoke", env={"FLAG_NEW_ORDERS": "off"})
+    assert json.loads(result.stdout)["new_orders"] is False
 
 
-def test_home_page_greets_by_name_and_escapes_input(base_url: str) -> None:
-    status, body = get(f"{base_url}/?name=" + urllib.parse.quote("<b>Ada</b>"))
-    assert status == 200
-    assert "<h1>Hello, &lt;b&gt;Ada&lt;/b&gt;!</h1>" in body
-
-
-def test_unknown_path_is_404(base_url: str) -> None:
-    status, _ = get(f"{base_url}/definitely-not-here")
-    assert status == 404
+def test_unknown_command_fails_closed(run_job: RunJob) -> None:
+    result = run_job("place-orders")
+    assert result.returncode != 0

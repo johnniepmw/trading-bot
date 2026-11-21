@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.flags import Flags, FlagSpec, env_override
+from tradingbot.app.flags import Flags, FlagSpec, env_override
 
 REGISTRY = {
     "home-greeting": FlagSpec(type="kill-switch", default=True),
