@@ -115,6 +115,10 @@ access token (not the app) would post with `null`; cloud sessions don't have one
   approval → full SHA), #2 (imposter commits → tag check), #4 (3000-file cap → high).
   #3 (status forgeable by name, pre-existing) → docs softened, tech-debt, owner brief.
   Notes → tech-debt (`tests/scripts/**` risk path, gitleaks `-m`, kit escalate wording)
+- 2026-11-21 security-reviewer re-review of the fixes: pass; #1, #2 and #4 closed. Notes →
+  tech-debt (head-SHA race in `main()`, tag downgrades). Owner should approve this PR with
+  the full 40-character SHA: main's current gate still accepts a 7-character prefix.
+- 2026-11-21 `make check` exit 0, `make e2e` 3 passed, `make check-fast` 79 passed
 
 ## Outcome
 <filled on merge>
