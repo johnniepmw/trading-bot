@@ -6,10 +6,14 @@
 - **Started**: 2026-11-22
 
 ## Goal
-In 30 seconds a day the owner can tell whether the bot is safe and working. When he wants
-to, he can see why it did what it did, and he can pause it from his phone. Anything
-urgent comes to him as an alert. Account data never leaves private storage. The
-questions come from the owner's dashboard brainstorm (planning chat, 2026-11-22).
+In 30 seconds a day the owner can tell whether the bot is safe and working. When they
+want to, they can see why it did what it did, and pause it from their phone. Anything
+urgent reaches them as an alert. Account data goes only to these places: Cloud Logging,
+the ledger (private, versioned bucket), the dashboard behind IAP (owner only), and the
+owner's own inbox and phone (the daily email and alert notifications). Nowhere else,
+including any public surface (ADR-0014); step 5's tests check the email goes only to the
+configured owner address. The questions come from the owner's dashboard brainstorm
+(planning chat, 2026-11-22).
 
 ## Acceptance criteria
 | # | Criterion (observable, pass/fail) | Evidence |
@@ -57,7 +61,7 @@ questions come from the owner's dashboard brainstorm (planning chat, 2026-11-22)
 0. This spec — check: `make docs-check`
 1. Decision record in the ledger: AC1–AC4 (high; Phase 2, before the first scheduled run). AC4's Trading 212 fields wait for the owner's API check; the rest doesn't — check: `make check`, cycle drills
 2. Alerts: drawdown-crossing log lines and OpenTofu policies, with Phase 2's job module (AC5) — check: staging drill
-3. Pause requests: bucket and IAM, bot check, `ops` resume (AC6) — check: unit tests, staging drill
+3. Pause requests: bucket and IAM, bot check, `ops` resume (AC6). The `smoke` health check reports the effective state too: `new_orders` is false while a pause request exists or the location can't be read — check: unit tests, staging drill
 4. Dashboard service: access, views, pause button (AC7–AC9, AC11) — before paper trading starts (Phase 3) — check: view-model tests, staging e2e
 5. Daily email (AC10, AC11), after the open question — check: rendering tests, staging email
 
