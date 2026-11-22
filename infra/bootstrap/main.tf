@@ -198,9 +198,17 @@ resource "google_project_iam_custom_role" "infra_plan_reader" {
 resource "google_project_iam_member" "infra_plan" {
   # static keys: the custom role's id is only known after apply
   for_each = { reader = google_project_iam_custom_role.infra_plan_reader.id, security = "roles/iam.securityReviewer" }
-  project  = var.project_id
-  role     = each.value
-  member   = "serviceAccount:${google_service_account.ci["ci-infra-plan"].email}"
+
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.ci["ci-infra-plan"].email}"
+}
+
+# The state from the first bootstrap keys this binding by role name; rename it in place
+# rather than destroy and re-create the same binding (the two could race).
+moved {
+  from = google_project_iam_member.infra_plan["roles/iam.securityReviewer"]
+  to   = google_project_iam_member.infra_plan["security"]
 }
 
 resource "google_project_iam_member" "infra_apply" {
