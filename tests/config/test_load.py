@@ -26,7 +26,7 @@ drawdown_stop = "0.20"
 daily_loss = "0.02"
 
 [calendar]
-until = "2027-12-31"
+until = "2026-12-31"
 holidays = ["2026-12-25", "2026-12-28"]
 
 [[instrument]]
@@ -56,7 +56,7 @@ def test_a_valid_file_loads_into_typed_values(tmp_path: Path) -> None:
     assert config.limits.drawdown_stop == Decimal("0.20")
     assert config.schedule_time == time(7, 15)
     assert config.holidays == frozenset({date(2026, 12, 25), date(2026, 12, 28)})
-    assert config.calendar_until == date(2027, 12, 31)
+    assert config.calendar_until == date(2026, 12, 31)
     assert config.operator_secret_path == "/secrets/prod-operator/value"  # noqa: S105 - a path
     assert config.instruments_verified is False
 
@@ -69,13 +69,25 @@ def test_a_valid_file_loads_into_typed_values(tmp_path: Path) -> None:
         (('currency = "GBX"', 'currency = "EUR"'), "currency"),
         (('quantity_step = "0.001"', 'quantity_step = "0"'), "quantity_step"),
         (('schedule_time = "07:15"', 'schedule_time = "7am"'), "schedule_time"),
-        (('until = "2027-12-31"', 'until = "soon"'), "until"),
+        (('until = "2026-12-31"', 'until = "soon"'), "until"),
         (('"2026-12-28"]', '"2026-12-26"]'), "holiday"),  # a Saturday listed as a holiday: a typo
         (("instruments_verified = false", 'instruments_verified = "no"'), "instruments_verified"),
         (('ticker = "SGLN"', 'ticker = "VWRP"'), "twice"),
         (('ticker = "SGLN"', 'ticker = "SSAC"'), "benchmark"),
         (("[limits]", "colour = 1\n[limits]"), "unknown"),  # a misspelt key is an error, not ignored
         (('operator_secret_path = "/secrets/prod-operator/value"', ""), "operator_secret_path"),
+        (('ticker = "SGLN"', 'ticker = "vwrp"'), "twice"),  # tickers compare without case
+        (('schedule_time = "07:15"', 'schedule_time = "07:15+01:00"'), "schedule_time"),  # London wall-clock
+        (('schedule_time = "07:15"', 'schedule_time = "07:15:30"'), "schedule_time"),
+        (('until = "2026-12-31"', 'until = "2026-12-30"'), "until"),  # must end a year
+        (('until = "2026-12-31"', 'until = "2027-12-31"'), "2027"),  # a year with no holidays listed
+        (('"2026-12-28"]', '"2026-12-28", "2027-01-04"]'), "holiday"),  # after `until`
+        (('daily_loss = "0.02"\n', ""), "daily_loss"),  # missing
+        (('drawdown_halve = "0.10"', 'drawdown_halve = "0.20"'), "drawdown_halve"),
+        (('quantity_step = "0.001"', 'quantity_step = "NaN"'), "quantity_step"),
+        (('quantity_step = "0.001"', 'quantity_step = "Infinity"'), "quantity_step"),
+        (('ticker = "SGLN"', 'ticker = "SG.LN"'), "letters"),
+        (('holidays = ["2026-12-25", "2026-12-28"]', 'holidays = "2026-12-25"'), "list"),
     ],
 )
 def test_invalid_config_is_refused(tmp_path: Path, change: tuple[str, str], message: str) -> None:
@@ -83,6 +95,12 @@ def test_invalid_config_is_refused(tmp_path: Path, change: tuple[str, str], mess
     assert old in GOOD
     with pytest.raises(ConfigFileError, match=message):
         load_config(write(tmp_path, GOOD.replace(old, new, 1)))
+
+
+def test_an_empty_universe_is_refused(tmp_path: Path) -> None:
+    text = GOOD.split("[[instrument]]", maxsplit=1)[0]
+    with pytest.raises(ConfigFileError, match="instrument"):
+        load_config(write(tmp_path, text))
 
 
 def test_malformed_toml_is_refused(tmp_path: Path) -> None:
@@ -108,3 +126,9 @@ def test_the_bundled_universe_is_the_strategys_trade_funds() -> None:
 
 def test_the_bundled_calendar_covers_the_next_year() -> None:
     assert load_config(BUNDLED).calendar_until >= date(2027, 12, 31)
+
+
+def test_the_bundled_calendar_lists_englands_eight_closures_each_year() -> None:
+    holidays = load_config(BUNDLED).holidays
+    assert sorted({d.year for d in holidays}) == [2026, 2027]
+    assert [sum(d.year == y for d in holidays) for y in (2026, 2027)] == [8, 8]

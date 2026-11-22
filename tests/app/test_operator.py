@@ -64,3 +64,20 @@ def test_a_valid_live_setting_is_parsed(tmp_path: Path) -> None:
 
 def test_paper_can_be_written_explicitly(tmp_path: Path) -> None:
     assert read_operator(secret(tmp_path, '{"mode": "paper"}')) == Operator(live=False, capital_gbp=None)
+
+
+def test_a_secret_that_isnt_utf8_means_paper_without_revealing_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "value"
+    path.write_bytes(b'{"mode": "live", "capital_gbp": "\xa3500"}')  # a Latin-1 pound sign
+    with caplog.at_level(logging.ERROR):
+        assert read_operator(path).live is False
+    assert "operator secret unreadable" in caplog.text
+    assert "0xa3" not in caplog.text and "500" not in caplog.text
+
+
+def test_deeply_nested_json_means_paper(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR):
+        assert read_operator(secret(tmp_path, "[" * 100_000)).live is False
+    assert "operator secret invalid" in caplog.text

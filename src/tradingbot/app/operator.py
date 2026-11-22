@@ -15,10 +15,11 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from tradingbot.risk.limits import MAX_CAPITAL_GBP
+
 log = logging.getLogger(__name__)
 
 PLACEHOLDER = "__unset__"
-MAX_CAPITAL_GBP = Decimal(1000)  # the project's ceiling (AGENTS.md: up to £1,000)
 
 
 @dataclass(frozen=True)
@@ -53,13 +54,13 @@ def read_operator(path: Path) -> Operator:
         text = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return PAPER
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:  # never the error text: it can quote the bytes
         log.error("operator secret unreadable (%s): paper trading", type(error).__name__)
         return PAPER
     if text == PLACEHOLDER:
         return PAPER
     try:
         return _parse(text)
-    except (ValueError, InvalidOperation):  # json.JSONDecodeError is a ValueError
+    except (ValueError, InvalidOperation, RecursionError):  # JSONDecodeError is a ValueError
         log.error("operator secret invalid: paper trading (the owner sets it with make secret-set)")
         return PAPER

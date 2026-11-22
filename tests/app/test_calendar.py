@@ -7,6 +7,7 @@ from datetime import date
 import pytest
 
 from tradingbot.app.calendar import CalendarError, TradingCalendar
+from tradingbot.config.load import load_config
 
 # London Stock Exchange closures, 2026 (as in the bundled config)
 HOLIDAYS = frozenset(
@@ -67,3 +68,23 @@ def test_dates_beyond_the_calendar_are_refused() -> None:
 def test_a_signal_day_needs_the_calendar_to_cover_today() -> None:
     with pytest.raises(CalendarError):
         CAL.signal_day(date(2027, 1, 4))
+
+
+BUNDLED = TradingCalendar(load_config().holidays, until=load_config().calendar_until)
+
+
+@pytest.mark.parametrize(
+    ("today", "signal_day"),
+    [
+        (date(2027, 1, 4), date(2026, 12, 31)),  # across the year boundary
+        (date(2027, 1, 1), date(2026, 12, 31)),  # New Year's Day itself
+        (date(2027, 9, 1), date(2027, 8, 31)),  # the day after a month ending just after a bank holiday
+    ],
+)
+def test_the_bundled_calendar_picks_the_signal_day(today: date, signal_day: date) -> None:
+    assert BUNDLED.signal_day(today) == signal_day
+
+
+def test_the_bundled_calendar_refuses_2028() -> None:
+    with pytest.raises(CalendarError):
+        BUNDLED.signal_day(date(2028, 1, 4))

@@ -78,7 +78,7 @@ def _universe(raw: object) -> Mapping[Instrument, Decimal]:
             raise ConfigFileError(f"ticker must be letters and digits, got {ticker!r}")
         if ticker.upper() in BENCHMARK_ONLY:
             raise ConfigFileError(f"{ticker} is a benchmark only and can't be in the trading universe")
-        if any(i.ticker == ticker for i in universe):
+        if any(i.ticker.upper() == ticker.upper() for i in universe):
             raise ConfigFileError(f"{ticker} is listed twice")
         currency = _parse(entry["currency"], f"{ticker} currency", Currency)
         universe[Instrument(ticker, currency)] = _positive(entry["quantity_step"], f"{ticker} quantity_step")
@@ -90,6 +90,8 @@ def _calendar(raw: object) -> tuple[frozenset[date], date]:
         raise ConfigFileError("[calendar] must be a table")
     _keys(raw, {"until", "holidays"}, "[calendar]")
     until = _parse(raw["until"], "calendar until", date.fromisoformat)
+    if (until.month, until.day) != (12, 31):
+        raise ConfigFileError(f"calendar until must be 31 December, got {until}")
     holidays = raw["holidays"]
     if not isinstance(holidays, list):
         raise ConfigFileError("calendar holidays must be a list of dates")
@@ -97,7 +99,24 @@ def _calendar(raw: object) -> tuple[frozenset[date], date]:
     for day in sorted(days):
         if day.weekday() >= 5 or day > until:  # noqa: PLR2004 - Saturday
             raise ConfigFileError(f"calendar holiday {day} is a weekend day or after `until`: a typo?")
+    missing = [
+        y
+        for y in range(min(d.year for d in days or {until}), until.year + 1)
+        if not any(d.year == y for d in days)
+    ]
+    if missing:
+        raise ConfigFileError(
+            f"calendar lists no holidays for {', '.join(map(str, missing))}: add them before `until`"
+        )
     return days, until
+
+
+def _wall_clock(text: str) -> time:
+    """HH:MM, London wall-clock time: no seconds, no offset."""
+    parsed = time.fromisoformat(text)
+    if len(text) != 5 or parsed.tzinfo is not None:  # noqa: PLR2004 - "HH:MM"
+        raise ValueError("expected HH:MM")
+    return parsed
 
 
 def load_config(path: Path = BUNDLED) -> BotConfig:
@@ -118,7 +137,7 @@ def load_config(path: Path = BUNDLED) -> BotConfig:
     return BotConfig(
         universe=_universe(raw["instrument"]),
         limits=_limits(raw["limits"]),
-        schedule_time=_parse(raw["schedule_time"], "schedule_time", time.fromisoformat),
+        schedule_time=_parse(raw["schedule_time"], "schedule_time", _wall_clock),
         holidays=holidays,
         calendar_until=until,
         operator_secret_path=secret_path,
