@@ -39,7 +39,7 @@ Deploys are serialised (one at a time). Re-running the workflow redeploys the sa
   Writes a remote override that the app re-reads every 30 seconds. Agents may kill;
   turning a feature back on (`restore`/`set`) in production is the owner's call.
 - **Roll forward** is the default for everything else: fix, PR, normal pipeline.
-- Runbooks: `docs/runbooks/rollback.md`, `kill-switch.md`.
+- Runbooks: `docs/runbooks/` (rollback, stopping new orders, deploys, stale lock, ledger restore, broker outage, closing positions, cycle alerts).
 
 ## Rebuild from scratch
 Infrastructure is code. `docs/runbooks/rebuild-environment.md` recreates staging with

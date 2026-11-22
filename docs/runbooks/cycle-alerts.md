@@ -1,11 +1,31 @@
 # Runbook: what the daily cycle's alerts mean
 
 Every check that fails stops the run with **no new orders** and logs `cycle stopped: <reason>`
-at ERROR (Cloud Logging; Phase 2 turns these into alerts). Nothing here needs a code change.
+at ERROR. An alert email names the **kind**; read the line itself with `make logs ENV=prod`
+(Cloud Logging only, never GitHub). Nothing here needs a code change.
+
+## Alert kinds (the email's `kind`)
+| Kind | Meaning | What to do |
+|---|---|---|
+| `cycle_stopped` | A run stopped; the reason is in the table below | See the reason |
+| *(empty)* | Cloud Scheduler couldn't start the job: today's run is missing | Check the schedule and job in the console; tell the agent |
+| `stale_lock` | A run died holding the ledger's lock; runs stop until it is cleared | stale-lock.md |
+| `run_died` | An earlier run never finished (reported by the next run) | Tell the agent; usually a timeout or a crash |
+| `crash` | Something unexpected; the run stopped | Tell the agent |
+| `order_short` | An order ended short of a full fill | Check the order in the Trading 212 app |
+| `account_veto` | Risk blocked buys for the whole account (daily loss, drawdown stop, no day-start equity) | Table below |
+| `drawdown` | Equity fell through 5, 10, 15 or 20% below the peak (once per crossing; 10% halves new positions, 20% stops buys) | Read it; nothing to do unless you want to step in |
+| `paused` | A pause request exists, so no new orders | Expected if you paused; `ops` → `clear-pause` to resume |
+| `pause_unreadable` | The pause bucket can't be read, so no new orders | Tell the agent |
+| `refused_to_start` / `setup_refused` / `lock_release` / `error` | Configuration or storage trouble | Tell the agent with the time of the alert |
+
+A dry run never sends an alert. A deploy that fails opens a GitHub `incident` issue instead.
+
+## Stop reasons
 
 | Alert contains | Meaning | What to do |
 |---|---|---|
-| `kill switch off` | `new-orders` is off | Nothing, unless you want trading back (owner: `ops` restore) |
+| `new orders off (kill switch or pause request)` | `new-orders` is off, or a pause request exists | Nothing, unless you want trading back (kill-switch.md) |
 | `not reconciled` | An earlier order's outcome is unknown or still working, or the broker has a working order the bot doesn't know (including one you placed by hand) | Wait for it to finish; if it persists, check the order in the Trading 212 app and tell the agent |
 | `order ended short` | An order the broker accepted was rejected or cancelled before filling. That month end's decision is not retried until the next one | Check the order in the app; tell the agent if it repeats |
 | `stale data` / `too short` / `implausible jump` | The price data is missing, short or wrong | Usually clears the next day; tell the agent if it doesn't |

@@ -3,6 +3,8 @@
 Things noticed but deliberately left out of scope. One line each, newest first.
 Format: `- YYYY-MM-DD <area>: <problem> — <impact> — <suggested fix>`
 
+- 2026-11-22 ledger: no owner command raises the high-water mark after a deposit of more than about 10% (runs stop with "implausible new peak"), or lowers it deliberately before a withdrawal — the owner has to ask the agent each time — add an owner-only job command (`mark --set <GBP>` with the broker's equity check, logged), reviewed as high risk
+- 2026-11-22 staging: setup refuses where a ledger ever existed (soft-deleted included), so staging's ledger can't be reset in place (staging-ledger-reset.md) — testing from a clean state means a 30-day wait — add a staging-only reset path that the prod wiring refuses
 - 2026-11-22 make logs: `make logs` prints only `jsonPayload.message`, so `smoke`'s JSON report (which has no message) shows as a blank line — the owner needed a hand-written `gcloud logging read` in the pause drill — have `smoke` also log an INFO line with its fields, or print `jsonPayload` when there is no message
 - 2026-11-22 calendar: the bot stops on the first run past `until` (2027-12-31) with no warning beforehand — a surprise stop in January 2028 — warn (an alert line) when `until` is within 60 days, with step 7's alerts
 - 2026-11-22 config: `config/load.py` and `app/cycle.py` each hold `BENCHMARK_ONLY`; the config check matches tickers by upper case while `cycle.base_ticker` also strips broker decoration (the cycle still refuses either form) — move the set and `base_ticker` to `domain` and use it in both

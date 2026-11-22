@@ -1,20 +1,22 @@
 # Runbook: rebuild an environment from code
 
-## Staging (agent or owner)
+## Staging (owner)
+Staging's ledger and lock buckets refuse to be destroyed (`prevent_destroy`), and setup
+refuses where a ledger existed (staging-ledger-reset.md). So a rebuild keeps them:
 ```bash
-make env-down ENV=staging   # destroys the staging service, its identity, secrets containers, flags bucket
-make env-up ENV=staging     # recreates them from infra/envs/staging
-make secret-set NAME=<each secret> ENV=staging   # owner: secret values are never in code
-gh workflow run deploy.yml  # redeploys main to staging and prod
+make infra-plan ENV=staging   # check: no deletes of the ledger or lock buckets
+make env-up ENV=staging       # recreates anything missing from infra/envs/staging
+gh workflow run deploy.yml    # redeploys main to staging
 ```
-Expected time: about 10 minutes. Anything that needed a manual step is a bug: fix it in
-code and note it in the drill log below.
+A missing job, schedule (created paused), flags or pause bucket comes back from code. If
+the ledger is gone too, see staging-ledger-reset.md. Anything that needed a manual step
+is a bug: fix it in code and note it in the drill log below.
 
 ## Production (owner only)
-Production has deletion protection. To rebuild: remove `deletion_protection` in a PR
-(high risk), merge, `make env-down ENV=prod && make env-up ENV=prod` locally with owner
-credentials, re-add secret values, redeploy, then restore deletion protection.
-Consider whether rollback, a kill switch or an in-place fix serves better first.
+Prod's job has deletion protection and its ledger and lock buckets `prevent_destroy`.
+Recreate missing pieces with a PR (CI applies on merge) rather than destroying anything.
+Secret values are re-added with `make secret-set` before a mount is applied
+(`.claude/rules/infra.md`). If the ledger itself is damaged: ledger-restore.md.
 
 ## Bootstrap layer
 `infra/bootstrap` (state bucket, registry, CI identities) is created once and protected
