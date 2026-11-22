@@ -1,0 +1,66 @@
+# The strategy's universe and benchmark, with data-source symbols (docs/strategies/trend-long-or-cash.md).
+# Read by scripts/export_history.py. Market data only; no account data.
+#
+# Symbols are UNVERIFIED until the owner's `--list` run (2026-11-23) and Phase 0 API check:
+# Yahoo uses the ".L" suffix for the London Stock Exchange; Stooq uses ".uk".
+# `proxies` are older funds tracking the same index, spliced under the fund's own history
+# (oldest first). They are chosen from `--list` output (first dates), before any price
+# data is examined, and then frozen in the strategy spec.
+
+hold_out_start = "2023-01-01"
+
+[[fund]]
+ticker = "VWRP"   # global equity, FTSE All-World (accumulating)
+role = "trade"
+yahoo = "VWRP.L"
+proxies = ["VWRL.L"]   # same index, distributing, since 2012; adjusted close includes dividends
+stooq = "vwrp.uk"
+
+[[fund]]
+ticker = "VUKE"   # UK equity, FTSE 100
+role = "trade"
+yahoo = "VUKE.L"
+proxies = []
+stooq = "vuke.uk"
+
+[[fund]]
+ticker = "EMIM"   # emerging markets, MSCI EM IMI
+role = "trade"
+yahoo = "EMIM.L"
+proxies = []
+stooq = "emim.uk"
+
+[[fund]]
+ticker = "IGLT"   # UK gilts
+role = "trade"
+yahoo = "IGLT.L"
+proxies = []
+stooq = "iglt.uk"
+
+[[fund]]
+ticker = "VAGP"   # global aggregate bonds, GBP hedged
+role = "trade"
+yahoo = "VAGP.L"
+proxies = []   # launched 2017: a proxy is needed; choose from `--list` output
+stooq = "vagp.uk"
+
+[[fund]]
+ticker = "INXG"   # UK index-linked gilts
+role = "trade"
+yahoo = "INXG.L"
+proxies = []
+stooq = "inxg.uk"
+
+[[fund]]
+ticker = "SGLN"   # physical gold
+role = "trade"
+yahoo = "SGLN.L"
+proxies = []
+stooq = "sgln.uk"
+
+[[fund]]
+ticker = "SSAC"   # MSCI ACWI, the owner's benchmark: never traded (monitoring spec)
+role = "benchmark"
+yahoo = "SSAC.L"
+proxies = []
+stooq = "ssac.uk"
