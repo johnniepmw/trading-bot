@@ -1,0 +1,65 @@
+# The bot's configuration (Phase 2 AC4). Baked into the image; a high-risk path: changing
+# anything here needs the owner's approval. Per-environment wiring (APP_ENV, buckets, the
+# broker's base URL) comes from env vars; secrets are files under /secrets/.
+
+# Currencies and quantity steps below are UNVERIFIED until the owner's Phase 0 API check;
+# prod refuses to trade while this is false. Staging runs on fakes and doesn't care.
+instruments_verified = false
+
+# Weekdays, Europe/London: before the open, after the data source publishes the previous
+# close (ADR-0018 confirms the time). The scheduler and the deploy window use it.
+schedule_time = "07:15"
+
+# The owner's live switch (ADR-0009). Read as a file; missing or invalid means paper.
+operator_secret_path = "/secrets/prod-operator/value"
+
+[limits]   # day-to-day limits; the risk layer's ceilings are constants in code
+position_fraction = "0.25"
+drawdown_halve = "0.10"
+drawdown_stop = "0.20"
+daily_loss = "0.02"
+
+[calendar]   # London Stock Exchange weekday closures, until the broker's schedule replaces them
+until = "2027-12-31"
+holidays = [
+    "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-04", "2026-05-25", "2026-08-31",
+    "2026-12-25", "2026-12-28",
+    "2027-01-01", "2027-03-26", "2027-03-29", "2027-05-03", "2027-05-31", "2027-08-30",
+    "2027-12-27", "2027-12-28",
+]
+
+# The strategy's trade funds (research/universe.toml; a test keeps the two in step).
+[[instrument]]
+ticker = "VWRP"
+currency = "GBP"
+quantity_step = "0.0001"
+
+[[instrument]]
+ticker = "VUKE"
+currency = "GBP"
+quantity_step = "0.0001"
+
+[[instrument]]
+ticker = "EMIM"
+currency = "GBX"
+quantity_step = "0.0001"
+
+[[instrument]]
+ticker = "IGLT"
+currency = "GBX"
+quantity_step = "0.0001"
+
+[[instrument]]
+ticker = "VAGP"
+currency = "GBP"
+quantity_step = "0.0001"
+
+[[instrument]]
+ticker = "INXG"
+currency = "GBX"
+quantity_step = "0.0001"
+
+[[instrument]]
+ticker = "SGLN"
+currency = "GBX"
+quantity_step = "0.0001"

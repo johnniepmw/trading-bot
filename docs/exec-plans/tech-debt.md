@@ -3,6 +3,8 @@
 Things noticed but deliberately left out of scope. One line each, newest first.
 Format: `- YYYY-MM-DD <area>: <problem> — <impact> — <suggested fix>`
 
+- 2026-11-22 calendar: the bot stops on the first run past `until` (2027-12-31) with no warning beforehand — a surprise stop in January 2028 — warn (an alert line) when `until` is within 60 days, with step 7's alerts
+- 2026-11-22 config: `config/load.py` and `app/cycle.py` each hold `BENCHMARK_ONLY`; the config check matches tickers by upper case while `cycle.base_ticker` also strips broker decoration (the cycle still refuses either form) — move the set and `base_ticker` to `domain` and use it in both
 - 2026-11-22 flags: `app/flags.py` reads overrides with its own `urlopen` and metadata-token code, which follows redirects, while the ledger uses `app/storage.py` (redirects refused) — two GCS clients, and the flags one could forward its token on a redirect — move `GcsSource` onto `GcsObjectStore` and `urllib_transport`
 - 2026-11-21 agent-review (pre-existing, high): the required `agent-review` check is matched by name only, so a workflow on any branch with `checks: write` could create a passing `agent-review` check run on a PR head (the `risk-gate` status is now pinned to its own app; see docs/runbooks/risk-gate-app.md) — post the verdict through a dedicated app too and pin `integration_id` to it
 - 2026-11-21 risk-gate (pre-existing): `main()` reads `head.sha`, then the file list, and sets the status on the first SHA without re-checking the head, so a quick push of a harmless commit can earn success for a malicious one that is force-pushed back (its old CI and review results are still green) — re-fetch the PR after listing files and set no status if `head.sha` changed
