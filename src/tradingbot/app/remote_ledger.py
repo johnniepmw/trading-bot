@@ -99,6 +99,7 @@ class RemoteLedger:
         self._clock = clock
         self._sleep = sleep
         self._lock: ObjectInfo | None = None
+        self._scratch = False
         self._ledger: Ledger | None = None
         self._generation = 0  # of the ledger object this run last read or wrote
         self._mark: Money | None = None
@@ -214,6 +215,14 @@ class RemoteLedger:
     def open(self) -> Ledger:
         """Download the ledger and check it against the reference mark."""
         self._require_lock()
+        return self._download()
+
+    def open_scratch(self) -> Ledger:
+        """A dry run's copy (Phase 2 AC6): no lock, and `checkpoint` refuses to upload it."""
+        self._scratch = True
+        return self._download()
+
+    def _download(self) -> Ledger:
         found = self._retry("ledger info", lambda: self._store.info(self._ledger_bucket, LEDGER_OBJECT))
         if found is None:
             raise LedgerStorageError("ledger missing: it is created only by the owner's setup")
@@ -229,7 +238,10 @@ class RemoteLedger:
         stored = ledger.high_water_mark()
         if self._mark is None:  # only setup creates it; recreating it is an owner step
             ledger.close()
-            log.error("reference mark missing: the run stops; restore it (ledger restore runbook)")
+            log.log(
+                logging.WARNING if self._scratch else logging.ERROR,  # a dry run alerts nothing
+                "reference mark missing: the run stops; restore it (ledger restore runbook)",
+            )
             raise RestoredLedgerError("reference mark missing: a run never re-creates it from the ledger")
         if stored is None or stored < self._mark:
             ledger.close()
@@ -258,6 +270,8 @@ class RemoteLedger:
         """Upload the ledger (generation match), then raise the reference mark if needed."""
         if self._ledger is None:
             raise LedgerStorageError("no ledger open")
+        if self._scratch:
+            raise LedgerStorageError("a dry run's scratch copy is never uploaded")
         saved = self._write(self._ledger_bucket, LEDGER_OBJECT, self._path.read_bytes(), self._generation)
         self._generation = saved.generation
         mark = self._ledger.high_water_mark()

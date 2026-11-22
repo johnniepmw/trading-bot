@@ -20,7 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import MappingProxyType
 
-from tradingbot.brokers.port import Broker
+from tradingbot.brokers.port import Broker, BrokerReader
 from tradingbot.data.prices import PriceHistory, validate_history
 from tradingbot.domain.market import Bar, Instrument, price_money
 from tradingbot.domain.money import Currency, Money
@@ -28,7 +28,7 @@ from tradingbot.execution.executor import execute, reconcile
 from tradingbot.ledger.store import DecisionRecord, Ledger, PositionRecord, PreviewRecord, SignalRecord
 from tradingbot.portfolio.weights import daily_returns, orders_for, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
-from tradingbot.risk.review import AccountState, review
+from tradingbot.risk.review import AccountState, Decision, review
 from tradingbot.strategy.trend import SMA_DAYS, signals
 
 log = logging.getLogger(__name__)
@@ -125,6 +125,38 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
     return report
 
 
+@dataclass(frozen=True)
+class DryRunReport:
+    would_send: int  # orders the risk layer approved, which a run would send now
+    stopped: str | None
+
+
+def dry_run_cycle(  # noqa: PLR0913 - as run_cycle, minus sending
+    *,
+    broker: BrokerReader,
+    ledger: Ledger,
+    history: PriceHistory,
+    config: CycleConfig,
+    signal_day: date | None,
+    clock: Callable[[], datetime],
+    run_id: str,
+) -> DryRunReport:
+    """The cycle up to sending, on a scratch ledger (Phase 2 AC6). Takes a `BrokerReader`, so
+    it can't send; logs its own outcome line, never `cycle stopped`, and alerts nothing (the
+    real run does that)."""
+    try:
+        decisions = _decide(
+            broker, ledger, history, config, signal_day, clock(), run_id, alert=logging.WARNING
+        )
+    except Exception as error:  # noqa: BLE001 - every stop is reported, never raised
+        reason = str(error) if isinstance(error, CycleStopError) else f"{type(error).__name__}: {error}"
+        log.warning("dry run stopped: %s", reason)
+        return DryRunReport(0, reason)
+    would_send = sum(d.approved is not None for d in decisions or [])
+    log.info("dry run: %d order(s) would be sent", would_send)
+    return DryRunReport(would_send, None)
+
+
 def _start_record(ledger: Ledger, run_id: str, now: datetime, version: str) -> None:
     """Report every earlier run that never finished, then record this one. A run ID that was
     used before (a retry of the same execution) is refused, so no attempt's record or
@@ -185,6 +217,32 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     may_send: Callable[[], bool],
     checkpoint: Callable[[], None],
 ) -> CycleReport:
+    decisions = _decide(broker, ledger, history, config, signal_day, now, run_id, alert=logging.ERROR)
+    if decisions is None or signal_day is None:
+        return CycleReport(0, None)
+    approved = [d.approved for d in decisions if d.approved is not None]
+    result = execute(
+        approved, broker, ledger, run_id=run_id, now=now, may_send=may_send, checkpoint=checkpoint
+    )
+    if result.stopped is None:
+        ledger.mark_signal_acted(signal_day)
+    return CycleReport(result.sent, result.stopped)
+
+
+def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
+    broker: BrokerReader,
+    ledger: Ledger,
+    history: PriceHistory,
+    config: CycleConfig,
+    signal_day: date | None,
+    now: datetime,
+    run_id: str,
+    *,
+    alert: int,
+) -> list[Decision] | None:
+    """Everything up to sending: the risk layer's decisions, or None when there is no month end
+    to act on. Takes a `BrokerReader`, so nothing here can place an order. `alert` is the
+    level for account-level problems: ERROR in a run, WARNING in a dry run."""
     if now.tzinfo is not UTC:
         raise CycleStopError(f"the clock must be UTC, got {now!r}")
     if signal_day is not None and signal_day >= now.date():
@@ -193,7 +251,9 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
         raise CycleStopError(f"signal day {signal_day} is too old")
     reconciled = reconcile(broker, ledger)
     for shortfall in reconciled.shortfalls:
-        log.error("order ended short: %s (the month end's decision stands until the next one)", shortfall)
+        log.log(
+            alert, "order ended short: %s (the month end's decision stands until the next one)", shortfall
+        )
     if not reconciled.clean:
         raise CycleStopError("not reconciled: " + "; ".join(reconciled.problems))
 
@@ -213,7 +273,7 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     ledger.record_equity(now.date(), account.equity)
     mark = ledger.high_water_mark()
     if signal_day is None or ledger.signal_acted(signal_day):
-        return CycleReport(0, None)
+        return None
 
     bars = _checked_history(history, config.universe, signal_day, now.date())
     quotes = {i: broker.quote(i) for i in config.universe}
@@ -240,9 +300,9 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     decisions = review(proposed, state, config.limits)
     for decision in decisions:
         if decision.approved is None:
-            alert = any(veto in decision.reason for veto in ACCOUNT_VETOES)
+            account_veto = any(veto in decision.reason for veto in ACCOUNT_VETOES)
             log.log(
-                logging.ERROR if alert else logging.WARNING,
+                alert if account_veto else logging.WARNING,
                 "%s %s: %s",
                 decision.order.side,
                 decision.order.instrument.ticker,
@@ -264,16 +324,10 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
             for d in decisions
         ],
     )
-    approved = [d.approved for d in decisions if d.approved is not None]
-    result = execute(
-        approved, broker, ledger, run_id=run_id, now=now, may_send=may_send, checkpoint=checkpoint
-    )
-    if result.stopped is None:
-        ledger.mark_signal_acted(signal_day)
-    return CycleReport(result.sent, result.stopped)
+    return decisions
 
 
-def _holdings(broker: Broker, universe: Mapping[Instrument, Decimal]) -> dict[Instrument, Decimal]:
+def _holdings(broker: BrokerReader, universe: Mapping[Instrument, Decimal]) -> dict[Instrument, Decimal]:
     holdings = {i: Decimal(0) for i in universe}
     seen: set[Instrument] = set()
     for position in broker.positions():

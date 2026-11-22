@@ -1,8 +1,12 @@
 """Job entry point: `python -m tradingbot.app <command>`.
 
-Phase 0 has one command, `smoke`: it proves the container starts, reads the flag
-registry and reports whether the `new-orders` kill switch allows trading. The trading
-run itself arrives with the strategy (Phase 1) and the Cloud Run job module (Phase 2).
+- `smoke`: the container starts, reads the flag registry and reports whether the
+  `new-orders` kill switch allows trading.
+- `run`: one daily cycle (`app/job.py`); `run --dry-run` stops before sending, on a
+  scratch copy of the ledger.
+- `setup --equity <GBP>`: the owner's one-off ledger setup (docs/runbooks/ledger-setup.md).
+
+Logs are JSON lines on stderr with a `severity` field, as Cloud Logging reads them.
 """
 
 from __future__ import annotations
@@ -16,6 +20,8 @@ from collections.abc import Mapping
 from typing import TextIO
 
 from tradingbot.app.flags import Flags, GcsSource, load_registry
+from tradingbot.app.job import EXIT_STOPPED, JobConfigError, build_job
+from tradingbot.config.load import ConfigFileError
 
 log = logging.getLogger(__name__)
 
@@ -45,8 +51,13 @@ def main(
     out: TextIO = sys.stdout,
 ) -> int:
     parser = argparse.ArgumentParser(prog="tradingbot")
-    parser.add_argument("command", choices=["smoke"])
-    parser.parse_args(argv)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("smoke")
+    run = commands.add_parser("run")
+    run.add_argument("--dry-run", action="store_true", help="stop before sending; touch nothing")
+    setup = commands.add_parser("setup")
+    setup.add_argument("--equity", required=True, help="the account's equity in GBP, as you see it")
+    args = parser.parse_args(argv)
 
     env = env if env is not None else os.environ
     try:
@@ -54,6 +65,15 @@ def main(
     except ConfigError as exc:
         log.error("refusing to start: %s", exc)
         return 1
+    if args.command != "smoke":
+        try:
+            job = build_job(env, flags)
+            if args.command == "setup":
+                return job.setup(args.equity)
+            return job.dry_run() if args.dry_run else job.run()
+        except (JobConfigError, ConfigFileError) as exc:
+            log.error("refusing to start: %s", exc)
+            return EXIT_STOPPED
     report = {
         "status": "ok",
         "version": version if version is not None else env.get("APP_VERSION", "dev"),
@@ -63,5 +83,22 @@ def main(
     return 0
 
 
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line; Cloud Logging takes `severity` and `message` from it."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry = {"severity": record.levelname, "message": record.getMessage(), "logger": record.name}
+        if record.exc_info:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry)
+
+
+def configure_logging() -> None:
+    handler = logging.StreamHandler(sys.stderr)  # stdout is the smoke report's
+    handler.setFormatter(JsonFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+
+
 if __name__ == "__main__":
+    configure_logging()
     sys.exit(main())

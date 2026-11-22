@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from tradingbot.brokers.port import (
     TERMINAL,
@@ -17,7 +18,7 @@ from tradingbot.brokers.port import (
     OrderStatus,
 )
 from tradingbot.domain.approval import ApprovedOrder
-from tradingbot.domain.market import Instrument, Position, Side
+from tradingbot.domain.market import Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
 
 
@@ -44,6 +45,7 @@ class FakeBroker:
         self.partial_fill_next: Decimal | None = None
         self.fail_next: BrokerError | None = None
         self.timeout_after_accepting_next = False
+        self.after_place: Callable[[], None] | None = None  # e.g. save the account (staging)
 
     def account(self) -> AccountSnapshot:
         value = sum((q * self.quotes[i].to_gbp().amount for i, q in self._held.items()), Decimal(0))
@@ -58,6 +60,13 @@ class FakeBroker:
         return self.quotes[instrument]
 
     def place(self, order: ApprovedOrder) -> str:
+        try:
+            return self._place(order)
+        finally:
+            if self.after_place is not None:
+                self.after_place()
+
+    def _place(self, order: ApprovedOrder) -> str:
         if not isinstance(order, ApprovedOrder):
             raise TypeError("the broker accepts only an ApprovedOrder")
         if self.fail_next is not None:
@@ -111,3 +120,45 @@ class FakeBroker:
 
     def recent_orders(self) -> Sequence[BrokerOrder]:
         return sorted(self._orders.values(), key=lambda o: o.created_at)
+
+    # --- persistence for local and staging runs on fakes (Phase 2 step 2b) -------------
+    def dump(self) -> dict[str, object]:
+        """The account's state as JSON-ready data (quotes are not state: they come from prices)."""
+        return {
+            "cash": str(self._cash),
+            "held": [[i.ticker, i.currency.value, str(q)] for i, q in self._held.items()],
+            "orders": [
+                {
+                    "id": o.order_id,
+                    "ticker": o.order.instrument.ticker,
+                    "currency": o.order.instrument.currency.value,
+                    "side": o.order.side.value,
+                    "quantity": str(o.order.quantity),
+                    "status": o.status.value,
+                    "filled": str(o.filled_quantity),
+                    "created_at": o.created_at.isoformat(),
+                }
+                for o in self._orders.values()
+            ],
+        }
+
+    @classmethod
+    def load(cls, state: Mapping[str, Any], quotes: Mapping[Instrument, Money]) -> FakeBroker:
+        """The inverse of `dump`. `Any`: parsed JSON from our own staging bucket."""
+        broker = cls(Money(Decimal(state["cash"]), Currency.GBP), quotes)
+        for ticker, currency, quantity in state["held"]:
+            broker._held[Instrument(ticker, Currency(currency))] = Decimal(quantity)
+        for raw in state["orders"]:
+            order = Order(
+                Instrument(raw["ticker"], Currency(raw["currency"])),
+                Side(raw["side"]),
+                Decimal(raw["quantity"]),
+            )
+            broker._orders[raw["id"]] = BrokerOrder(
+                raw["id"],
+                order,
+                OrderStatus(raw["status"]),
+                Decimal(raw["filled"]),
+                datetime.fromisoformat(raw["created_at"]),
+            )
+        return broker
