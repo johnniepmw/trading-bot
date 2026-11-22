@@ -6,7 +6,8 @@ bootstrap/                  once per app, owner-run: APIs, state bucket, Artifac
 modules/cloud-run-job/      one environment: the Cloud Run job (args `run`, no retries, 30 min
                             timeout), its daily schedule (created paused), ledger bucket
                             (versioned, soft delete, never destroyed), lock bucket, flags
-                            bucket (seeded once), IAM for the bootstrap's identities
+                            bucket (seeded once), pause bucket (any object stops new orders),
+                            an alert policy, IAM for the bootstrap's identities
 envs/staging, envs/prod     instances of the module; applied by CI on merge
 ```
 

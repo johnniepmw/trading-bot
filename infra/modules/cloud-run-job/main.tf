@@ -1,5 +1,5 @@
 # One environment of the bot as a scheduled Cloud Run job (ADR-0011, ADR-0013, ADR-0017):
-# the job, its buckets (ledger, lock, flags), its schedule (created paused) and IAM.
+# the job, its buckets (ledger, lock, flags, pause), its schedule (created paused), alerts and IAM.
 #
 # Identities come from the bootstrap; nothing here creates a service account. Secret
 # containers are created here without versions (the owner adds values with `make
