@@ -765,3 +765,13 @@ def test_a_clock_that_fails_at_the_end_still_returns_the_report(broker: FakeBrok
 
     report = cycle(broker, ledger, clock=clock)
     assert report.sent == 1  # the orders went out and the report comes back
+
+
+def test_a_drawdown_crossing_is_alerted(ledger: Ledger, caplog: pytest.LogCaptureFixture) -> None:
+    ledger.record_equity(NOW.date() - timedelta(days=1), gbp(960))  # 4% below the mark yesterday
+    poorer = FakeBroker(cash=gbp(940), quotes={UP: gbp(100), DOWN: Money(Decimal(5000), Currency.GBX)})
+    poorer.now = lambda: NOW
+    with caplog.at_level(logging.WARNING):
+        cycle(poorer, ledger, signal_day=None)
+    [crossing] = [r for r in caplog.records if getattr(r, "alert", None) == "drawdown"]
+    assert crossing.getMessage().startswith("drawdown crossed 5%")

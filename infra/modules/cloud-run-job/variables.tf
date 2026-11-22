@@ -90,3 +90,14 @@ variable "soft_delete_days" {
     error_message = "Cloud Storage allows soft delete of 7 to 90 days; this module doesn't allow turning it off."
   }
 }
+
+variable "alert_email" {
+  description = "The owner's email for alerts (from the bootstrap)."
+  type        = string
+}
+
+variable "push_channels" {
+  description = "Extra notification channel IDs for urgent alerts, e.g. the Google Cloud mobile app (created by the owner in the console; projects/<p>/notificationChannels/<id>)."
+  type        = list(string)
+  default     = []
+}

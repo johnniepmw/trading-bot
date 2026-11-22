@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import MappingProxyType
 
+from tradingbot.app.alerts import drawdown_crossings
 from tradingbot.brokers.port import Broker, BrokerReader
 from tradingbot.data.prices import PriceHistory, validate_history
 from tradingbot.domain.market import Bar, Instrument, price_money
@@ -272,6 +273,7 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
     ledger.update_high_water_mark(account.equity, now)
     ledger.record_equity(now.date(), account.equity)
     mark = ledger.high_water_mark()
+    _alert_drawdown(day_start, account.equity, mark)
     if signal_day is None or ledger.signal_acted(signal_day):
         return None
 
@@ -307,6 +309,7 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
                 decision.order.side,
                 decision.order.instrument.ticker,
                 decision.reason,
+                extra={"alert": "account_veto"} if account_veto and alert >= logging.ERROR else None,
             )
         elif decision.reason.startswith("shrunk"):
             log.warning("%s %s: %s", decision.order.side, decision.order.instrument.ticker, decision.reason)
@@ -325,6 +328,14 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
         ],
     )
     return decisions
+
+
+def _alert_drawdown(day_start: Money | None, equity: Money, mark: Money | None) -> None:
+    if mark is None:
+        return
+    previous = day_start.amount if day_start is not None else None
+    for level in drawdown_crossings(previous, equity.amount, mark=mark.amount):
+        log.warning("drawdown crossed %d%% below the high-water mark", level, extra={"alert": "drawdown"})
 
 
 def _holdings(broker: BrokerReader, universe: Mapping[Instrument, Decimal]) -> dict[Instrument, Decimal]:
