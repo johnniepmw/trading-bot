@@ -15,6 +15,11 @@ on:
       - "**/*.md"
       - "infra/**"
   workflow_dispatch:
+    inputs:
+      drill:
+        description: "Broken-deploy drill: after the normal staging deploy, deploy a broken copy to staging and check it is rolled back (no prod)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -79,9 +84,44 @@ jobs:
           IMAGE: ${{ needs.build.outputs.image }}
         run: bash scripts/cloudrun-job-deploy.sh staging "$IMAGE"
 
+  # AC13 drill (ADR-0019): a deploy whose check fails must leave staging on the good image.
+  drill:
+    needs: [build, staging]
+    if: inputs.drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.SA_DEPLOYER }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Deploy a broken copy to staging and expect the rollback
+        env:
+          GOOD: ${{ needs.build.outputs.image }}
+          AR_REPO: ${{ vars.AR_REPO }}
+        run: |
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          mkdir -p /tmp/drill
+          printf 'FROM %s\nENTRYPOINT ["false"]\n' "$GOOD" > /tmp/drill/Dockerfile
+          docker buildx build -t "${AR_REPO}/${APP_NAME}:drill-broken" --push --metadata-file /tmp/drill/meta.json /tmp/drill
+          broken="${AR_REPO}/${APP_NAME}@$(jq -r '."containerimage.digest"' /tmp/drill/meta.json)"
+          if bash scripts/cloudrun-job-deploy.sh staging "$broken"; then
+            echo "drill FAILED: the broken image was accepted" >&2; exit 1
+          fi
+          now="$(gcloud run jobs describe "${APP_NAME}-staging" --project "$GCP_PROJECT" --region "$GCP_REGION" \
+            --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          [ "$now" = "$GOOD" ] || { echo "drill FAILED: staging is on ${now##*@}, not ${GOOD##*@}" >&2; exit 1; }
+          echo "drill passed: the broken deploy failed its check and staging is back on ${GOOD##*@}"
+
   production:
     needs: [build, staging]
-    if: vars.DEPLOY_PROD == 'true'
+    if: vars.DEPLOY_PROD == 'true' && !inputs.drill
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
