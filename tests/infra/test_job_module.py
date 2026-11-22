@@ -145,3 +145,9 @@ def test_the_runtime_identity_has_no_other_access_to_the_pause_bucket() -> None:
     text = (MODULE / "main.tf").read_text()
     bindings = re.findall(r'resource "google_storage_bucket_iam_member" "(\w+)" \{\n  bucket = google_storage_bucket\.pause\.name\n  role   = "([^"]+)"\n  member = "serviceAccount:\$\{var\.(\w+)\}"', text)
     assert sorted(bindings) == [("deployer_pause", "roles/storage.objectUser", "deployer_sa"), ("runtime_pause", "roles/storage.objectViewer", "runtime_sa")]
+
+
+def test_prod_mounts_the_price_data_key() -> None:
+    # the EODHD adapter reads /secrets/eodhd-key/value (ADR-0018); staging runs on synthetic prices
+    assert re.search(r'secrets\s*=\s*\["eodhd-key"\]', PROD.read_text())
+    assert "eodhd-key" not in STAGING.read_text()
