@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS intents (
     broker_order_id TEXT UNIQUE,
     filled_quantity TEXT
 );
-CREATE TABLE IF NOT EXISTS day_starts (
+CREATE TABLE IF NOT EXISTS daily_equity (
     day TEXT PRIMARY KEY,
     amount TEXT NOT NULL
 );
@@ -98,7 +98,7 @@ class Ledger:
         # mode=rw: SQLite must not create the file if it vanishes between the check and here
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, isolation_level=None)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not {"intents", "marks", "day_starts"} <= tables:  # e.g. an empty or truncated download
+        if not {"intents", "marks", "daily_equity"} <= tables:  # e.g. an empty or truncated download
             conn.close()
             raise LedgerError(f"not a ledger (missing tables): {path}")
         return cls(conn)
@@ -205,17 +205,24 @@ class Ledger:
         rows = self._conn.execute("SELECT broker_order_id FROM intents WHERE broker_order_id IS NOT NULL")
         return {r[0] for r in rows}
 
-    # --- day start ---------------------------------------------------------------------
-    def day_start_equity(self, day: date, equity: Money) -> Money:
-        """Equity at the start of `day` (UTC): the first value recorded that day."""
+    # --- daily equity (for the daily-loss pause) ---------------------------------------
+    def record_equity(self, day: date, equity: Money) -> None:
+        """Record a run's checked equity for `day` (UTC); a later run that day replaces it."""
         if equity.currency is not Currency.GBP:
-            raise LedgerError("day-start equity is in GBP")
+            raise LedgerError("equity is in GBP")
         self._conn.execute(
-            "INSERT OR IGNORE INTO day_starts (day, amount) VALUES (?, ?)",
+            "INSERT INTO daily_equity (day, amount) VALUES (?, ?)"
+            " ON CONFLICT (day) DO UPDATE SET amount = excluded.amount",
             (day.isoformat(), str(equity.amount)),
         )
-        row = self._conn.execute("SELECT amount FROM day_starts WHERE day = ?", (day.isoformat(),)).fetchone()
-        return Money(Decimal(row[0]), Currency.GBP)
+
+    def previous_day_equity(self, day: date) -> Money | None:
+        """The day-start equity for `day`: the last equity recorded on an earlier day, as the
+        backtest uses the previous close. None if there is none (risk then blocks buys)."""
+        row = self._conn.execute(
+            "SELECT amount FROM daily_equity WHERE day < ? ORDER BY day DESC LIMIT 1", (day.isoformat(),)
+        ).fetchone()
+        return None if row is None else Money(Decimal(row[0]), Currency.GBP)
 
     # --- high-water mark --------------------------------------------------------------
     def seed_high_water_mark(self, equity: Money, at: datetime) -> None:
@@ -223,6 +230,7 @@ class Ledger:
         if self.high_water_mark() is not None:
             raise LedgerError("the high-water mark is already seeded")
         self._insert_mark(equity, at)
+        self.record_equity(at.date(), equity)
 
     def update_high_water_mark(self, equity: Money, at: datetime) -> None:
         """Record equity as the mark if it is a new peak. The mark only rises, and an update

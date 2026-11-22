@@ -149,8 +149,15 @@ def test_a_mark_in_pence_is_refused_even_when_lower(ledger: Ledger) -> None:
         ledger.update_high_water_mark(Money(Decimal(500), Currency.GBX), NOW)
 
 
-def test_day_start_equity_is_the_first_equity_seen_that_day(ledger: Ledger) -> None:
-    day = NOW.date()
-    assert ledger.day_start_equity(day, gbp("1000")) == gbp("1000")
-    assert ledger.day_start_equity(day, gbp("950")) == gbp("1000")  # later in the day: unchanged
-    assert ledger.day_start_equity(day.replace(day=24), gbp("950")) == gbp("950")
+def test_day_start_equity_is_the_last_equity_recorded_on_an_earlier_day(ledger: Ledger) -> None:
+    monday, tuesday = NOW.date(), NOW.date().replace(day=24)
+    assert ledger.previous_day_equity(monday) is None  # nothing earlier: unknown
+    ledger.record_equity(monday, gbp("1000"))
+    ledger.record_equity(monday, gbp("990"))  # a later run the same day replaces it
+    assert ledger.previous_day_equity(monday) is None  # today never counts
+    assert ledger.previous_day_equity(tuesday) == gbp("990")
+
+
+def test_seeding_the_mark_also_records_that_days_equity(ledger: Ledger) -> None:
+    ledger.seed_high_water_mark(gbp("1000"), NOW)
+    assert ledger.previous_day_equity(NOW.date().replace(day=24)) == gbp("1000")

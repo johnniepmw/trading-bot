@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,7 +18,7 @@ import pytest
 from tests.bars import weekdays
 from tradingbot.app.cycle import CycleConfig, run_cycle
 from tradingbot.brokers.fake.broker import FakeBroker
-from tradingbot.brokers.port import BrokerError
+from tradingbot.brokers.port import AccountSnapshot, BrokerError
 from tradingbot.domain.market import Bar, Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
 from tradingbot.ledger.store import IntentState, Ledger
@@ -69,7 +69,7 @@ def broker() -> FakeBroker:
 @pytest.fixture
 def ledger(tmp_path: Path) -> Iterator[Ledger]:
     opened = Ledger.create(tmp_path / "ledger.sqlite")
-    opened.seed_high_water_mark(gbp(1000), NOW)  # the owner's setup step
+    opened.seed_high_water_mark(gbp(1000), NOW - timedelta(days=1))  # the owner's setup step, the day before
     yield opened
     opened.close()
 
@@ -122,17 +122,16 @@ def test_a_day_without_a_signal_only_reconciles_and_marks(broker: FakeBroker, le
 
 
 def test_the_high_water_mark_and_day_start_are_kept(broker: FakeBroker, ledger: Ledger) -> None:
-    broker._cash = Decimal(1200)  # equity rose
+    broker._cash = Decimal(1050)  # equity rose 5%
     cycle(broker, ledger, signal_day=None)
-    assert ledger.high_water_mark() == gbp(1200)
-    assert ledger.day_start_equity(NOW.date(), gbp(1)) == gbp(1200)
+    assert ledger.high_water_mark() == gbp(1050)
+    assert ledger.previous_day_equity(NOW.date() + timedelta(days=1)) == gbp(1050)
 
 
 # --- drills: each one sends nothing and logs an ERROR --------------------------------
 def assert_stopped(report: object, broker: FakeBroker, caplog: pytest.LogCaptureFixture, why: str) -> None:
     assert report.sent == 0  # type: ignore[attr-defined]
     assert report.stopped is not None and why in report.stopped  # type: ignore[attr-defined]
-    assert broker.recent_orders() == [] or all(o.order_id for o in broker.recent_orders())
     assert any(why in m for m in errors(caplog)), errors(caplog)
 
 
@@ -145,11 +144,12 @@ def test_drill_kill_switch_off(broker: FakeBroker, ledger: Ledger, caplog: pytes
 def test_drill_missing_bar_on_the_signal_day(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
+    held_up(broker)  # held: dropping it from the targets would sell it
     history = FakeHistory()
-    history.bars[DOWN] = [b for b in history.bars[DOWN] if b.day != SIGNAL_DAY]
+    history.bars[UP] = [b for b in history.bars[UP] if b.day != SIGNAL_DAY]
     report = cycle(broker, ledger, history=history)
     assert_stopped(report, broker, caplog, "stale")
-    assert broker.recent_orders() == []  # never: drop DOWN from the targets and sell it
+    assert broker.recent_orders() == []
 
 
 def test_drill_hundredfold_price_jump(
@@ -253,18 +253,135 @@ def test_drill_partial_fill_blocks_until_it_finishes(
     blocked = cycle(broker, ledger, run_id="run-2")
     assert blocked.sent == 0 and "not reconciled" in (blocked.stopped or "")
     assert len(broker.recent_orders()) == 1
+    assert any("not reconciled" in m for m in errors(caplog))
 
 
-def test_drill_duplicate_run(broker: FakeBroker, ledger: Ledger) -> None:
+def test_drill_duplicate_run(broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture) -> None:
     cycle(broker, ledger)
     assert cycle(broker, ledger).stopped == "run run-1 already executed"
     assert len(broker.recent_orders()) == 1
+    assert any("already executed" in m for m in errors(caplog))
 
 
 def test_drill_daily_loss_pauses_buys(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
-    ledger.day_start_equity(NOW.date(), gbp(1030))  # equity fell 3% since the day started
-    report = cycle(broker, ledger)
+    ledger.record_equity(NOW.date() - timedelta(days=1), gbp(1030))  # yesterday's run saw £1030
+    report = cycle(broker, ledger)  # today £1000: down 2.9%
     assert report.sent == 0  # risk rejected the buy
     assert any("daily loss" in m for m in errors(caplog))
+
+
+def test_the_daily_loss_check_works_across_real_runs(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    cycle(broker, ledger, signal_day=None)  # day 1: £1000 recorded
+    broker._cash = Decimal(970)  # equity falls 3% overnight
+    report = cycle(broker, ledger, now=NOW + timedelta(days=1), run_id="run-2")
+    assert report.sent == 0
+    assert any("daily loss" in m for m in errors(caplog))
+
+
+def test_an_unreconciled_ledger_leaves_the_mark_and_day_start_alone(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    ledger.mark_unknown(ledger.record_intent("run-0", Order(UP, Side.BUY, Decimal(1)), NOW))
+    broker._cash = Decimal(1200)
+    cycle(broker, ledger, signal_day=None)
+    assert ledger.high_water_mark() == gbp(1000)
+    assert ledger.previous_day_equity(NOW.date() + timedelta(days=1)) == gbp(
+        1000
+    )  # today's reading not recorded
+
+
+def test_drill_short_history_for_a_held_fund_sells_nothing(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    held_up(broker)
+    history = FakeHistory()
+    history.bars[UP] = history.bars[UP][-120:]  # a paging hiccup: too few bars for the average
+    assert_stopped(cycle(broker, ledger, history=history), broker, caplog, "too short")
+    assert broker.recent_orders() == []
+
+
+@pytest.mark.parametrize(("ratio", "stops"), [("1.019", False), ("1.021", True), ("0.979", True)])
+def test_the_cross_check_tolerance_is_2_percent(
+    broker: FakeBroker, ledger: Ledger, ratio: str, stops: bool
+) -> None:
+    broker.quotes[UP] = Money(broker.quotes[UP].amount * Decimal(ratio), Currency.GBP)
+    report = cycle(broker, ledger)
+    assert ("cross-check" in (report.stopped or "")) is stops
+
+
+def test_a_quote_in_the_wrong_currency_fails_the_cross_check(broker: FakeBroker, ledger: Ledger) -> None:
+    broker.quotes[DOWN] = Money(broker.quotes[DOWN].amount / 100, Currency.GBP)  # pence fund quoted in pounds
+    assert "cross-check" in (cycle(broker, ledger).stopped or "")
+
+
+def test_the_volatility_cap_applies_in_the_cycle(broker: FakeBroker, ledger: Ledger) -> None:
+    history = FakeHistory()
+    noisy = [100 * (1.001**t) * (1.03 if t % 2 else 0.97) for t in range(len(DAYS))]  # uptrend, ~48% a year
+    history.bars[UP] = [Bar(UP, d, open=c, close=c) for d, c in zip(DAYS, noisy, strict=True)]
+    broker.quotes[UP] = Money(Decimal(repr(noisy[DAYS.index(SIGNAL_DAY)])), Currency.GBP)
+    cycle(broker, ledger, history=history)
+    [order] = broker.recent_orders()
+    assert order.order.quantity * broker.quotes[UP].amount < Decimal(150)  # well below the £250 sleeve
+
+
+def test_a_rotation_sells_first_and_buys_only_with_cash_held_before(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    history = FakeHistory()
+    n = len(DAYS)
+    falling = [100 + t * 0.2 if t < n - 40 else 100 + (n - 40) * 0.2 - (t - n + 40) * 2.0 for t in range(n)]
+    rising = [5000 - t * 2.0 if t < n - 40 else 5000 - (n - 40) * 2.0 + (t - n + 40) * 40.0 for t in range(n)]
+    for inst, cs in ((UP, falling), (DOWN, rising)):
+        history.bars[inst] = [Bar(inst, d, open=c, close=c) for d, c in zip(DAYS, cs, strict=True)]
+    k = DAYS.index(SIGNAL_DAY)
+    broker.quotes = {
+        UP: Money(Decimal(repr(falling[k])), Currency.GBP),
+        DOWN: Money(Decimal(repr(rising[k])), Currency.GBX),
+    }
+    broker._held[UP] = (Decimal(950) / broker.quotes[UP].amount).quantize(Decimal("0.0001"))
+    broker._cash = Decimal(50)  # equity about £1000; the sale's proceeds must not fund the buy
+    cycle(broker, ledger, history=history)
+    sides = [(o.order.instrument, o.order.side) for o in broker.recent_orders()]
+    assert sides == [(UP, Side.SELL), (DOWN, Side.BUY)]
+    buy = broker.recent_orders()[1].order
+    assert buy.quantity * broker.quotes[DOWN].to_gbp().amount <= Decimal(50)
+
+
+# --- security review round 1: the broker's equity is checked before it's trusted -----
+def held_up(broker: FakeBroker) -> None:
+    broker._held[UP] = Decimal(2)
+    broker._cash = Decimal(1000) - 2 * broker.quotes[UP].amount  # equity still £1000
+
+
+@pytest.mark.parametrize("reported", [Decimal(100_000), Decimal(1000) - Decimal(2) * Decimal(150)])
+def test_drill_broker_equity_that_doesnt_add_up(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture, reported: Decimal
+) -> None:
+    held_up(broker)
+    real = broker.account
+    broker.account = lambda: AccountSnapshot(real().cash, gbp(reported))  # type: ignore[method-assign]
+    assert_stopped(cycle(broker, ledger), broker, caplog, "equity check")
+    assert ledger.high_water_mark() == gbp(1000)
+    assert ledger.previous_day_equity(NOW.date() + timedelta(days=1)) == gbp(
+        1000
+    )  # today's reading not recorded
+
+
+def test_drill_implausible_new_peak(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    broker._cash = Decimal(1150)  # 15% above the mark in one go
+    assert_stopped(cycle(broker, ledger, signal_day=None), broker, caplog, "new peak")
+    assert ledger.high_water_mark() == gbp(1000)
+
+
+def test_drill_two_positions_for_one_fund(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    held_up(broker)
+    broker.positions = lambda: [Position(UP, Decimal(1)), Position(UP, Decimal(1))]  # type: ignore[method-assign]
+    assert_stopped(cycle(broker, ledger), broker, caplog, "twice")
