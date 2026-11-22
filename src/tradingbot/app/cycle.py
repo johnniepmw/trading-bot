@@ -95,8 +95,9 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
 ) -> CycleReport:
     """`clock` gives the current UTC time (read at the start and again at the end)."""
     recorded = False
-    now = clock()
+    now: datetime | None = None
     try:
+        now = clock()
         if now.tzinfo is UTC:  # a run with a wrong clock can't be recorded; _cycle stops it below
             _start_record(ledger, run_id, now, version)
             recorded = True
@@ -110,8 +111,8 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
         reason = f"{type(error).__name__}: {error}"
         log.exception("cycle stopped: %s", reason)
         report = CycleReport(0, reason)
-    if recorded:
-        _finish_record(ledger, history, config, run_id=run_id, now=clock(), report=report)
+    if recorded and now is not None:
+        _finish_record(ledger, history, config, run_id=run_id, started=now, clock=clock, report=report)
     return report
 
 
@@ -133,17 +134,20 @@ def _finish_record(  # noqa: PLR0913 - the run's outcome and what the preview ne
     config: CycleConfig,
     *,
     run_id: str,
-    now: datetime,
+    started: datetime,
+    clock: Callable[[], datetime],
     report: CycleReport,
 ) -> None:
     """Close the run record, then store the month-end preview. Neither can change an order:
-    the orders are already decided, and a failure here only logs."""
+    the orders are already decided, and a failure here (the clock included) only logs."""
     try:
-        ledger.finish_run(run_id, now, "completed" if report.stopped is None else "stopped", report.stopped)
+        ledger.finish_run(
+            run_id, clock(), "completed" if report.stopped is None else "stopped", report.stopped
+        )
     except Exception:
         log.exception("could not record the end of run %s", run_id)
     try:
-        ledger.record_preview(run_id, _preview(history, config, now.date()))
+        ledger.record_preview(run_id, _preview(history, config, started.date()))
     except Exception as error:  # noqa: BLE001 - the preview is informational only (monitoring AC3)
         log.warning("month-end preview failed: %s: %s", type(error).__name__, error)
 
@@ -373,13 +377,13 @@ def _positions(
     """The snapshot's rows. A value needs a usable quote; an empty holding is worth £0."""
     rows = []
     for instrument, quantity in holdings.items():
-        quote = quotes.get(instrument)
-        usable = quote is not None and quote.currency is instrument.currency and quote.amount > 0
+        raw = quotes.get(instrument)
+        quote = raw if raw is not None and raw.currency is instrument.currency and raw.amount > 0 else None
         if quantity == 0:
             value: Money | None = Money(Decimal(0), Currency.GBP)
-        elif usable and quote is not None:
+        elif quote is not None:
             value = Money(quantity * quote.to_gbp().amount, Currency.GBP)
         else:
-            value = None
+            value = None  # an unusable broker quote is not recorded as if it were a price
         rows.append(PositionRecord(instrument, quantity, quote, value))
     return rows

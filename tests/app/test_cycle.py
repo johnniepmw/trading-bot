@@ -707,3 +707,22 @@ def test_the_universe_cant_be_changed_after_the_check() -> None:
     config = CycleConfig(universe=universe)
     universe[Instrument("SSAC", Currency.GBP)] = Decimal(1)  # the caller's dict changes...
     assert list(config.universe) == [UP]  # ...the checked copy doesn't
+
+
+def test_ac3_an_unusable_broker_quote_is_not_recorded_as_a_price(broker: FakeBroker, ledger: Ledger) -> None:
+    held_up(broker)
+    real = broker.quote
+    broker.quote = lambda i: Money(Decimal(15000), Currency.GBX) if i == UP else real(i)  # type: ignore[method-assign]
+    cycle(broker, ledger, signal_day=None)
+    row = next(r for r in ledger.snapshot("run-1").positions if r.instrument == UP)
+    assert (row.quote, row.value_gbp) == (None, None)
+
+
+def test_a_clock_that_fails_at_the_end_still_returns_the_report(broker: FakeBroker, ledger: Ledger) -> None:
+    ticks = iter([NOW])
+
+    def clock() -> datetime:
+        return next(ticks)  # StopIteration on the second read
+
+    report = cycle(broker, ledger, clock=clock)
+    assert report.sent == 1  # the orders went out and the report comes back

@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS marks (
 
 # Monitoring's decision record (docs/exec-plans/active/2026-11-22-monitoring.md, step 1).
 # Expand only: created on `open` too, so a ledger from before gains them; rows never change
-# except a run's end, outcome and reason.
+# except a run's end, outcome and reason, and a snapshot's `equity_checked` flag.
 _RECORD_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
