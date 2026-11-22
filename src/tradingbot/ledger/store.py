@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
 CREATE TABLE IF NOT EXISTS snapshots (
     run_id TEXT PRIMARY KEY,
     at TEXT NOT NULL,
-    cash TEXT NOT NULL
+    cash TEXT NOT NULL,
+    equity_checked INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS snapshot_positions (
     run_id TEXT NOT NULL,
@@ -126,6 +127,7 @@ class RunRecord:
 
 @dataclass(frozen=True, slots=True)
 class SignalRecord:
+    run_id: str
     instrument: Instrument
     close: float
     sma: float
@@ -158,6 +160,7 @@ class Snapshot:
     at: datetime
     cash: Money
     positions: list[PositionRecord]
+    equity_checked: bool  # False: stored before (or without) the equity check passing
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,7 +425,7 @@ class Ledger:
     # --- the decision record (monitoring step 1) -----------------------------------------
     def start_run(self, run_id: str, at: datetime, version: str) -> None:
         self._conn.execute(
-            "INSERT OR IGNORE INTO runs (run_id, started_at, version) VALUES (?, ?, ?)",
+            "INSERT INTO runs (run_id, started_at, version) VALUES (?, ?, ?)",
             (run_id, _utc(at), version),
         )
 
@@ -432,8 +435,8 @@ class Ledger:
             (_utc(at), outcome, reason, run_id),
         )
 
-    def unfinished_runs(self, except_run: str) -> list[RunRecord]:
-        return [r for r in self.runs() if r.outcome is None and r.run_id != except_run]
+    def unfinished_runs(self) -> list[RunRecord]:
+        return [r for r in self.runs() if r.outcome is None]
 
     def mark_run_died(self, run_id: str) -> None:
         self._conn.execute(
@@ -476,14 +479,14 @@ class Ledger:
             )
 
     def signal_records(self, signal_day: date) -> list[SignalRecord]:
+        """Every run's records for the signal day, in order; `run_id` says which run wrote each."""
         rows = self._conn.execute(
-            "SELECT ticker, currency, close, sma, in_trend, weight_before, weight_after, scale"
-            " FROM signal_records"
-            " WHERE signal_day = ? ORDER BY rowid",
+            "SELECT run_id, ticker, currency, close, sma, in_trend, weight_before, weight_after, scale"
+            " FROM signal_records WHERE signal_day = ? ORDER BY rowid",
             (signal_day.isoformat(),),
         )
         return [
-            SignalRecord(Instrument(r[0], Currency(r[1])), r[2], r[3], bool(r[4]), r[5], r[6], r[7])
+            SignalRecord(r[0], Instrument(r[1], Currency(r[2])), r[3], r[4], bool(r[5]), r[6], r[7], r[8])
             for r in rows
         ]
 
@@ -525,12 +528,12 @@ class Ledger:
         ]
 
     def record_snapshot(
-        self, run_id: str, at: datetime, cash: Money, positions: list[PositionRecord]
+        self, run_id: str, at: datetime, cash: Money, positions: list[PositionRecord], *, equity_checked: bool
     ) -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO snapshots VALUES (?, ?, ?)", (run_id, _utc(at), str(cash.amount))
+            "INSERT INTO snapshots VALUES (?, ?, ?, ?)",
+            (run_id, _utc(at), str(cash.amount), int(equity_checked)),
         )
-        self._conn.execute("DELETE FROM snapshot_positions WHERE run_id = ?", (run_id,))
         for p in positions:
             self._conn.execute(
                 "INSERT INTO snapshot_positions VALUES (?, ?, ?, ?, ?, ?)",
@@ -544,8 +547,13 @@ class Ledger:
                 ),
             )
 
+    def mark_snapshot_checked(self, run_id: str) -> None:
+        self._conn.execute("UPDATE snapshots SET equity_checked = 1 WHERE run_id = ?", (run_id,))
+
     def snapshot(self, run_id: str) -> Snapshot:
-        head = self._conn.execute("SELECT at, cash FROM snapshots WHERE run_id = ?", (run_id,)).fetchone()
+        head = self._conn.execute(
+            "SELECT at, cash, equity_checked FROM snapshots WHERE run_id = ?", (run_id,)
+        ).fetchone()
         if head is None:
             raise LedgerError(f"no snapshot for {run_id}")
         rows = self._conn.execute(
@@ -562,7 +570,9 @@ class Ledger:
             )
             for r in rows
         ]
-        return Snapshot(datetime.fromisoformat(head[0]), Money(Decimal(head[1]), Currency.GBP), positions)
+        return Snapshot(
+            datetime.fromisoformat(head[0]), Money(Decimal(head[1]), Currency.GBP), positions, bool(head[2])
+        )
 
     def record_preview(self, run_id: str, rows: list[PreviewRecord]) -> None:
         for r in rows:

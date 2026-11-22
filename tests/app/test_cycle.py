@@ -17,12 +17,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.bars import weekdays
-from tradingbot.app.cycle import CycleConfig, run_cycle
+from tradingbot.app.cycle import CycleConfig, CycleReport, run_cycle
 from tradingbot.brokers.fake.broker import FakeBroker
 from tradingbot.brokers.port import AccountSnapshot, BrokerError
 from tradingbot.domain.market import Bar, Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
-from tradingbot.ledger.store import IntentState, Ledger
+from tradingbot.ledger.store import IntentState, Ledger, LedgerError
 from tradingbot.portfolio.weights import daily_returns, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
 from tradingbot.strategy.trend import month_end_days, signals
@@ -92,6 +92,9 @@ def cycle(broker: FakeBroker, ledger: Ledger, **kw: object):  # type: ignore[no-
         "may_send": lambda: True,
     }
     args.update(kw)
+    now = args.pop("now")
+    args.setdefault("clock", lambda: now)  # a fixed clock unless a test passes a moving one
+    args.setdefault("version", "test")
     return run_cycle(**args)  # type: ignore[arg-type]
 
 
@@ -269,14 +272,16 @@ def test_drill_duplicate_run(broker: FakeBroker, ledger: Ledger, caplog: pytest.
     broker.timeout_after_accepting_next = True
     cycle(broker, ledger)  # stops after sending: the month end is not marked acted
     again = cycle(broker, ledger)  # the same run retried
-    assert again.stopped == "run run-1 already executed"
+    assert again.stopped is not None and "already used" in again.stopped
     assert len(broker.recent_orders()) == 1
-    assert any("already executed" in m for m in errors(caplog))
+    assert any("already used" in m for m in errors(caplog))
 
 
 def test_a_completed_month_end_repeated_sends_nothing(broker: FakeBroker, ledger: Ledger) -> None:
     cycle(broker, ledger)
-    assert cycle(broker, ledger) == cycle(broker, ledger, run_id="run-9")
+    assert (
+        cycle(broker, ledger, run_id="run-2") == cycle(broker, ledger, run_id="run-9") == CycleReport(0, None)
+    )
     assert len(broker.recent_orders()) == 1
 
 
@@ -550,6 +555,7 @@ def test_ac1_a_run_that_died_is_reported_by_the_next_one(
 def test_ac2_signal_day_decisions_are_recorded(broker: FakeBroker, ledger: Ledger) -> None:
     cycle(broker, ledger)
     rows = {r.instrument: r for r in ledger.signal_records(SIGNAL_DAY)}
+    assert {r.run_id for r in rows.values()} == {"run-1"}
     history = FakeHistory()
     expected_in = signals(history.bars, SIGNAL_DAY)
     before = sleeve_weights(expected_in)
@@ -587,6 +593,8 @@ def test_ac3_every_run_stores_a_snapshot(broker: FakeBroker, ledger: Ledger) -> 
     assert rows[UP].quantity == Decimal(2) and rows[UP].quote == broker.quotes[UP]
     assert rows[UP].value_gbp == gbp(2 * broker.quotes[UP].amount)
     assert rows[DOWN].quantity == 0 and rows[DOWN].quote is None  # not held: not quoted on a quiet day
+    assert rows[DOWN].value_gbp == gbp(0)
+    assert snap.equity_checked
 
 
 def test_ac3_every_run_stores_a_month_end_preview(broker: FakeBroker, ledger: Ledger) -> None:
@@ -629,3 +637,73 @@ def test_ssac_is_a_benchmark_and_can_never_be_traded() -> None:
         CycleConfig(universe={UP: Decimal("0.0001"), Instrument("SSAC", Currency.GBP): Decimal("0.0001")})
     with pytest.raises(ValueError, match="SSAC"):
         CycleConfig(universe={Instrument("SSAC", Currency.GBX): Decimal("0.0001")})
+
+
+# --- monitoring step 1a, review round 1 ------------------------------------------------
+def test_ac1_the_end_time_comes_from_the_clock(broker: FakeBroker, ledger: Ledger) -> None:
+    ticks = iter([NOW, NOW + timedelta(minutes=20)])
+    cycle(broker, ledger, clock=lambda: next(ticks, NOW + timedelta(minutes=20)))
+    [record] = ledger.runs()
+    assert (record.started_at, record.ended_at) == (NOW, NOW + timedelta(minutes=20))
+
+
+def test_ac1_a_reused_run_id_reports_the_died_attempt_and_stops(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    ledger.start_run("run-1", NOW, "test")  # attempt 1 crashed
+    report = cycle(broker, ledger)  # a retry with the same id
+    assert report.sent == 0 and "already used" in (report.stopped or "")
+    assert any("run-1" in m and "never finished" in m for m in errors(caplog))
+    assert [r.outcome for r in ledger.runs()] == ["died"]
+    assert broker.recent_orders() == []
+
+
+def test_ac2_the_scale_factor_is_recorded(broker: FakeBroker, ledger: Ledger) -> None:
+    history = FakeHistory()
+    noisy = [100 * (1.001**t) * (1.03 if t % 2 else 0.97) for t in range(len(DAYS))]
+    history.bars[UP] = [Bar(UP, d, open=c, close=c) for d, c in zip(DAYS, noisy, strict=True)]
+    broker.quotes[UP] = Money(Decimal(repr(noisy[DAYS.index(SIGNAL_DAY)])), Currency.GBP)
+    cycle(broker, ledger, history=history)
+    row = next(r for r in ledger.signal_records(SIGNAL_DAY) if r.instrument == UP)
+    assert row.scale < 0.6 and row.scale == pytest.approx(row.weight_after / row.weight_before)
+
+
+def test_ac3_a_failed_equity_check_still_stores_an_unchecked_snapshot(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    held_up(broker)
+    real = broker.account
+    broker.account = lambda: AccountSnapshot(real().cash, gbp(100_000))  # type: ignore[method-assign]
+    cycle(broker, ledger, signal_day=None)
+    snap = ledger.snapshot("run-1")
+    assert not snap.equity_checked and snap.cash == real().cash
+
+
+def test_ac3_a_run_stopped_before_reading_the_account_has_no_snapshot(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    # recorded deviation: nothing trustworthy to store yet; the run record says why it stopped
+    ledger.mark_unknown(ledger.record_intent("run-0", Order(UP, Side.BUY, Decimal(1)), NOW))
+    cycle(broker, ledger, signal_day=None)
+    with pytest.raises(LedgerError, match="no snapshot"):
+        ledger.snapshot("run-1")
+    assert "not reconciled" in (ledger.runs()[-1].reason or "")
+
+
+def test_ac3_the_preview_records_weights(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger, signal_day=None)
+    weights = {r.instrument: r.weight for r in ledger.preview("run-1")}
+    assert weights == {UP: 0.25, DOWN: 0.0}
+
+
+@pytest.mark.parametrize("ticker", ["SSAC", "ssac", "SSAC.L", "SSACl_EQ"])
+def test_ssac_is_refused_however_its_ticker_is_written(ticker: str) -> None:
+    with pytest.raises(ValueError, match="benchmark"):
+        CycleConfig(universe={Instrument(ticker, Currency.GBP): Decimal("0.0001")})
+
+
+def test_the_universe_cant_be_changed_after_the_check() -> None:
+    universe = {UP: Decimal("0.0001")}
+    config = CycleConfig(universe=universe)
+    universe[Instrument("SSAC", Currency.GBP)] = Decimal(1)  # the caller's dict changes...
+    assert list(config.universe) == [UP]  # ...the checked copy doesn't

@@ -18,6 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from types import MappingProxyType
 
 from tradingbot.brokers.port import Broker
 from tradingbot.data.prices import PriceHistory, validate_history
@@ -49,13 +50,25 @@ class CycleStopError(Exception):
 BENCHMARK_ONLY = frozenset({"SSAC"})  # monitoring spec: compared against, never traded
 
 
+def base_ticker(ticker: str) -> str:
+    """The exchange code without data-source or broker decoration: "SSAC.L", "ssac" and a
+    Trading 212 style "SSACl_EQ" are all "SSAC"."""
+    code = ticker.split("_", maxsplit=1)[0].split(".", maxsplit=1)[0]
+    if len(code) > 1 and code[-1] == "l" and code[:-1].isupper():
+        code = code[:-1]  # Trading 212 marks London listings with a lower-case "l"
+    return code.upper()
+
+
 @dataclass(frozen=True)
 class CycleConfig:
     universe: Mapping[Instrument, Decimal]  # every instrument the strategy trades, with its quantity step
     limits: Limits = field(default_factory=Limits)
 
     def __post_init__(self) -> None:
-        benchmarks = sorted(i.ticker for i in self.universe if i.ticker in BENCHMARK_ONLY)
+        object.__setattr__(
+            self, "universe", MappingProxyType(dict(self.universe))
+        )  # can't change after the check
+        benchmarks = sorted(i.ticker for i in self.universe if base_ticker(i.ticker) in BENCHMARK_ONLY)
         if benchmarks:
             raise ValueError(
                 f"{', '.join(benchmarks)} is a benchmark only and can't be in the trading universe"
@@ -75,12 +88,14 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
     history: PriceHistory,
     config: CycleConfig,
     signal_day: date | None,
-    now: datetime,
+    clock: Callable[[], datetime],
     run_id: str,
     may_send: Callable[[], bool],
-    version: str = "dev",
+    version: str,
 ) -> CycleReport:
+    """`clock` gives the current UTC time (read at the start and again at the end)."""
     recorded = False
+    now = clock()
     try:
         if now.tzinfo is UTC:  # a run with a wrong clock can't be recorded; _cycle stops it below
             _start_record(ledger, run_id, now, version)
@@ -96,14 +111,19 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
         log.exception("cycle stopped: %s", reason)
         report = CycleReport(0, reason)
     if recorded:
-        _finish_record(ledger, history, config, run_id=run_id, now=now, report=report)
+        _finish_record(ledger, history, config, run_id=run_id, now=clock(), report=report)
     return report
 
 
 def _start_record(ledger: Ledger, run_id: str, now: datetime, version: str) -> None:
-    for unfinished in ledger.unfinished_runs(run_id):
+    """Report every earlier run that never finished, then record this one. A run ID that was
+    used before (a retry of the same execution) is refused, so no attempt's record or
+    decisions can be mixed with another's; the composition root gives each attempt its own ID."""
+    for unfinished in ledger.unfinished_runs():
         log.error("run %s started at %s never finished", unfinished.run_id, unfinished.started_at.isoformat())
         ledger.mark_run_died(unfinished.run_id)
+    if any(r.run_id == run_id for r in ledger.runs()):
+        raise CycleStopError(f"run id {run_id} already used: each attempt needs a new run id")
     ledger.start_run(run_id, now, version)
 
 
@@ -166,21 +186,9 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     holdings = _holdings(broker, config.universe)
     account = broker.account()
     held_quotes = {i: broker.quote(i) for i, q in holdings.items() if q > 0}
+    ledger.record_snapshot(run_id, now, account.cash, _positions(holdings, held_quotes), equity_checked=False)
     _check_equity(account.cash, account.equity, holdings, held_quotes)
-    ledger.record_snapshot(
-        run_id,
-        now,
-        account.cash,
-        [
-            PositionRecord(
-                i,
-                q,
-                held_quotes.get(i),
-                None if i not in held_quotes else Money(q * held_quotes[i].to_gbp().amount, Currency.GBP),
-            )
-            for i, q in holdings.items()
-        ],
-    )
+    ledger.mark_snapshot_checked(run_id)
     mark = ledger.high_water_mark()
     if mark is None:
         raise CycleStopError("no high-water mark: the owner must seed it (setup step)")
@@ -200,7 +208,9 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     in_trend = signals(bars, signal_day)
     before = sleeve_weights(in_trend)
     weights = vol_scaled(before, {i: daily_returns(b, signal_day) for i, b in bars.items()})
-    ledger.record_signals(run_id, signal_day, _signal_records(bars, signal_day, in_trend, before, weights))
+    ledger.record_signals(
+        run_id, signal_day, _signal_records(run_id, bars, signal_day, in_trend, before, weights)
+    )
     proposed = orders_for(
         weights, holdings=holdings, prices=quotes, equity=account.equity, steps=config.universe
     )
@@ -329,7 +339,8 @@ def _verify_signal_closes(ledger: Ledger, bars: Mapping[Instrument, Sequence[Bar
         )
 
 
-def _signal_records(
+def _signal_records(  # noqa: PLR0913, PLR0917 - one signal day's inputs and outputs
+    run_id: str,
     bars: Mapping[Instrument, Sequence[Bar]],
     signal_day: date,
     in_trend: Mapping[Instrument, bool],
@@ -343,6 +354,7 @@ def _signal_records(
         closes = [b.close for b in series if b.day <= signal_day][-SMA_DAYS:]
         rows.append(
             SignalRecord(
+                run_id,
                 instrument,
                 closes[-1],
                 sum(closes) / len(closes),
@@ -352,4 +364,22 @@ def _signal_records(
                 scale,
             )
         )
+    return rows
+
+
+def _positions(
+    holdings: Mapping[Instrument, Decimal], quotes: Mapping[Instrument, Money]
+) -> list[PositionRecord]:
+    """The snapshot's rows. A value needs a usable quote; an empty holding is worth £0."""
+    rows = []
+    for instrument, quantity in holdings.items():
+        quote = quotes.get(instrument)
+        usable = quote is not None and quote.currency is instrument.currency and quote.amount > 0
+        if quantity == 0:
+            value: Money | None = Money(Decimal(0), Currency.GBP)
+        elif usable and quote is not None:
+            value = Money(quantity * quote.to_gbp().amount, Currency.GBP)
+        else:
+            value = None
+        rows.append(PositionRecord(instrument, quantity, quote, value))
     return rows
