@@ -6,6 +6,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 [ -f bootstrap.tfvars ] || { echo "copy bootstrap.tfvars.example to bootstrap.tfvars and fill it in" >&2; exit 2; }
 
+# A new project has these APIs off, and OpenTofu needs some of them (Cloud Resource Manager,
+# Service Usage, IAM) before it can plan or enable the rest. Turning them on is idempotent.
+project="$(sed -n 's/^ *project_id *= *"\([^"]*\)".*/\1/p' bootstrap.tfvars)"
+[ -n "$project" ] || { echo "project_id missing from bootstrap.tfvars" >&2; exit 2; }
+gcloud services enable --project "$project" \
+  cloudresourcemanager.googleapis.com serviceusage.googleapis.com iam.googleapis.com \
+  iamcredentials.googleapis.com sts.googleapis.com storage.googleapis.com \
+  artifactregistry.googleapis.com run.googleapis.com secretmanager.googleapis.com monitoring.googleapis.com
+
 if [ -f backend.tf ]; then
   bucket="$(sed -n 's/.*bucket *= *"\([^"]*\)".*/\1/p' backend.tf)"
   tofu init -input=false -backend-config="bucket=$bucket"
