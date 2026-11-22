@@ -91,9 +91,12 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
     clock: Callable[[], datetime],
     run_id: str,
     may_send: Callable[[], bool],
+    checkpoint: Callable[[], None],
     version: str,
 ) -> CycleReport:
-    """`clock` gives the current UTC time (read at the start and again at the end)."""
+    """`clock` gives the current UTC time (read at the start and again at the end).
+    `checkpoint` saves the ledger remotely: around each order (in `execute`) and once at the
+    end of every run, whatever happened."""
     recorded = False
     now: datetime | None = None
     try:
@@ -101,7 +104,7 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
         if now.tzinfo is UTC:  # a run with a wrong clock can't be recorded; _cycle stops it below
             _start_record(ledger, run_id, now, version)
             recorded = True
-        report = _cycle(broker, ledger, history, config, signal_day, now, run_id, may_send)
+        report = _cycle(broker, ledger, history, config, signal_day, now, run_id, may_send, checkpoint)
         if report.stopped:
             log.error("cycle stopped: %s", report.stopped)
     except CycleStopError as stop:
@@ -113,6 +116,12 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
         report = CycleReport(0, reason)
     if recorded and now is not None:
         _finish_record(ledger, history, config, run_id=run_id, started=now, clock=clock, report=report)
+    try:  # every run saves at the end: the mark, equity, settlements and the run record (ADR-0017)
+        checkpoint()
+    except Exception as error:  # noqa: BLE001 - any failure to save is a stop with an alert
+        reason = f"ledger not saved: {type(error).__name__}: {error}"
+        log.error("cycle stopped: %s", reason)
+        report = CycleReport(report.sent, reason)
     return report
 
 
@@ -174,6 +183,7 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     now: datetime,
     run_id: str,
     may_send: Callable[[], bool],
+    checkpoint: Callable[[], None],
 ) -> CycleReport:
     if now.tzinfo is not UTC:
         raise CycleStopError(f"the clock must be UTC, got {now!r}")
@@ -255,7 +265,9 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
         ],
     )
     approved = [d.approved for d in decisions if d.approved is not None]
-    result = execute(approved, broker, ledger, run_id=run_id, now=now, may_send=may_send)
+    result = execute(
+        approved, broker, ledger, run_id=run_id, now=now, may_send=may_send, checkpoint=checkpoint
+    )
     if result.stopped is None:
         ledger.mark_signal_acted(signal_day)
     return CycleReport(result.sent, result.stopped)

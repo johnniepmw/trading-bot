@@ -95,6 +95,7 @@ def cycle(broker: FakeBroker, ledger: Ledger, **kw: object):  # type: ignore[no-
     now = args.pop("now")
     args.setdefault("clock", lambda: now)  # a fixed clock unless a test passes a moving one
     args.setdefault("version", "test")
+    args.setdefault("checkpoint", lambda: None)
     return run_cycle(**args)  # type: ignore[arg-type]
 
 
@@ -112,6 +113,44 @@ def test_a_month_end_buys_the_trending_fund_and_leaves_the_other_in_cash(
     assert (order.order.instrument, order.order.side) == (UP, Side.BUY)
     assert order.order.quantity * Decimal(repr(close_on(UP, SIGNAL_DAY))) <= Decimal(250)  # the 25% sleeve
     assert errors(caplog) == []
+
+
+def test_the_ledger_is_checkpointed_around_each_order(broker: FakeBroker, ledger: Ledger) -> None:
+    calls: list[int] = []
+    cycle(broker, ledger, checkpoint=lambda: calls.append(len(broker.recent_orders())))
+    assert calls == [0, 0, 1, 1]  # after reconcile, before the one order is sent, after it, at the end
+
+
+def test_a_day_with_no_signal_still_saves_the_ledger_at_the_end(broker: FakeBroker, ledger: Ledger) -> None:
+    seen: list[tuple[str | None, object]] = []
+    cycle(
+        broker,
+        ledger,
+        signal_day=None,
+        checkpoint=lambda: seen.append(
+            (ledger.runs()[-1].outcome, ledger.previous_day_equity(NOW.date() + timedelta(days=1)))
+        ),
+    )
+    assert seen == [
+        ("completed", gbp(1000))
+    ]  # the run record and today's equity (and any new peak) are uploaded
+
+
+def test_the_month_end_marked_acted_is_saved(broker: FakeBroker, ledger: Ledger) -> None:
+    seen: list[bool] = []
+    cycle(broker, ledger, checkpoint=lambda: seen.append(ledger.signal_acted(SIGNAL_DAY)))
+    assert seen[-1] is True
+
+
+def test_a_failed_final_save_stops_the_run_with_an_alert(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    def fail() -> None:
+        raise OSError("bucket unreachable")
+
+    report = cycle(broker, ledger, signal_day=None, checkpoint=fail)
+    assert report.stopped == "ledger not saved: OSError: bucket unreachable"
+    assert errors(caplog) == ["cycle stopped: ledger not saved: OSError: bucket unreachable"]
 
 
 def test_running_again_is_harmless(broker: FakeBroker, ledger: Ledger) -> None:

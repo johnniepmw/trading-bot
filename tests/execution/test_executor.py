@@ -48,6 +48,10 @@ def allowed() -> bool:
     return True
 
 
+def nothing() -> None:
+    """A checkpoint that saves nowhere (the app uploads the ledger here)."""
+
+
 def test_each_order_is_recorded_then_sent(broker: FakeBroker, ledger: Ledger) -> None:
     report = execute(
         [approved(Side.BUY, "1"), approved(Side.BUY, "1", SGLN)],
@@ -56,6 +60,7 @@ def test_each_order_is_recorded_then_sent(broker: FakeBroker, ledger: Ledger) ->
         run_id="run-1",
         now=NOW,
         may_send=allowed,
+        checkpoint=nothing,
     )
     assert report.sent == 2 and not report.stopped
     assert [i.state for i in ledger.open_intents()] == [IntentState.SENT, IntentState.SENT]
@@ -65,13 +70,19 @@ def test_each_order_is_recorded_then_sent(broker: FakeBroker, ledger: Ledger) ->
 def test_only_approved_orders_can_be_executed(broker: FakeBroker, ledger: Ledger) -> None:
     with pytest.raises(TypeError, match="ApprovedOrder"):
         execute(
-            [Order(VWRP, Side.BUY, Decimal(1))], broker, ledger, run_id="run-1", now=NOW, may_send=allowed
+            [Order(VWRP, Side.BUY, Decimal(1))],
+            broker,
+            ledger,
+            run_id="run-1",
+            now=NOW,
+            may_send=allowed,
+            checkpoint=nothing,
         )  # type: ignore[list-item]
     assert ledger.open_intents() == [] and broker.recent_orders() == []
 
 
 def test_the_kill_switch_is_checked_before_every_order(broker: FakeBroker, ledger: Ledger) -> None:
-    answers = iter([True, False])
+    answers = iter([True, True, False])  # order 1: before recording and before sending; order 2: off
     report = execute(
         [approved(Side.BUY, "1"), approved(Side.BUY, "1")],
         broker,
@@ -79,6 +90,7 @@ def test_the_kill_switch_is_checked_before_every_order(broker: FakeBroker, ledge
         run_id="run-1",
         now=NOW,
         may_send=lambda: next(answers),
+        checkpoint=nothing,
     )
     assert (report.sent, report.stopped) == (1, "kill switch off")
     assert len(broker.recent_orders()) == 1
@@ -94,6 +106,7 @@ def test_a_timeout_marks_the_outcome_unknown_and_stops(broker: FakeBroker, ledge
         run_id="run-1",
         now=NOW,
         may_send=allowed,
+        checkpoint=nothing,
     )
     assert (report.sent, report.stopped) == (0, "broker timeout: outcome unknown")
     assert [i.state for i in ledger.open_intents()] == [IntentState.UNKNOWN]
@@ -109,6 +122,7 @@ def test_a_broker_error_settles_that_intent_and_stops(broker: FakeBroker, ledger
         run_id="run-1",
         now=NOW,
         may_send=allowed,
+        checkpoint=nothing,
     )
     assert report.stopped == "broker error: 503"
     assert ledger.open_intents() == []
@@ -118,7 +132,15 @@ def test_a_broker_error_settles_that_intent_and_stops(broker: FakeBroker, ledger
 # --- reconcile: every run starts here ----------------------------------------------
 def test_reconcile_finds_an_order_that_timed_out_but_was_placed(broker: FakeBroker, ledger: Ledger) -> None:
     broker.timeout_after_accepting_next = True
-    execute([approved(Side.BUY, "1")], broker, ledger, run_id="run-1", now=NOW, may_send=allowed)
+    execute(
+        [approved(Side.BUY, "1")],
+        broker,
+        ledger,
+        run_id="run-1",
+        now=NOW,
+        may_send=allowed,
+        checkpoint=nothing,
+    )
     result = reconcile(broker, ledger)
     assert result.clean
     assert ledger.open_intents() == []  # matched to the broker's order and settled as filled
@@ -152,6 +174,7 @@ def test_sent_orders_are_settled_from_the_brokers_state(broker: FakeBroker, ledg
         run_id="run-1",
         now=NOW,
         may_send=allowed,
+        checkpoint=nothing,
     )  # 2nd rejected
     assert reconcile(broker, ledger).clean
     assert ledger.open_intents() == []
@@ -169,7 +192,7 @@ def test_one_broker_order_is_matched_to_at_most_one_intent(broker: FakeBroker, l
 
 # --- review round 1 ----------------------------------------------------------------
 def run_execute(orders: list[ApprovedOrder], broker: FakeBroker, ledger: Ledger) -> object:
-    return execute(orders, broker, ledger, run_id="run-1", now=NOW, may_send=allowed)
+    return execute(orders, broker, ledger, run_id="run-1", now=NOW, may_send=allowed, checkpoint=nothing)
 
 
 def test_execute_refuses_while_any_intent_is_open(broker: FakeBroker, ledger: Ledger) -> None:
@@ -303,9 +326,14 @@ def test_the_place_scan_catches_each_way_round_it(planted: str) -> None:
     assert uses(planted, {"place"})
 
 
-def test_no_daily_code_creates_a_ledger_or_seeds_the_mark() -> None:
+def test_no_daily_code_seeds_the_mark() -> None:
     # owner setup steps only: otherwise "no mark: seed it" invites re-seeding a lost history
-    assert modules_using({"seed_high_water_mark", "create"}) == []
+    assert modules_using({"seed_high_water_mark"}) == []
+
+
+def test_only_the_remote_ledgers_setup_path_creates_a_ledger() -> None:
+    # RemoteLedger.create refuses where a ledger or reference mark ever existed (ADR-0017)
+    assert modules_using({"create"}) == ["app/remote_ledger.py"]
 
 
 def test_an_unknown_broker_order_stops_execute_itself(broker: FakeBroker, ledger: Ledger) -> None:
@@ -325,3 +353,115 @@ def test_reconcile_reports_orders_that_ended_short_of_a_full_fill(broker: FakeBr
     result = reconcile(broker, ledger)
     assert result.clean
     assert len(result.shortfalls) == 1 and "CANCELLED" in result.shortfalls[0]
+
+
+# --- checkpoints: the app uploads the ledger at each one (Phase 2, ADR-0017) ------------
+class Checkpoints:
+    """Records what the ledger and the broker looked like at each checkpoint."""
+
+    def __init__(self, broker: FakeBroker, ledger: Ledger, fail_at: int | None = None) -> None:
+        self.seen: list[tuple[list[IntentState], int]] = []
+        self._broker, self._ledger, self._fail_at = broker, ledger, fail_at
+
+    def __call__(self) -> None:
+        states = [i.state for i in self._ledger.open_intents()] + [i.state for i in self._ledger.settled()]
+        self.seen.append((states, len(self._broker.recent_orders())))
+        if self._fail_at == len(self.seen):
+            raise OSError("upload failed")
+
+
+def test_the_intent_is_checkpointed_before_its_order_is_sent(broker: FakeBroker, ledger: Ledger) -> None:
+    saved = Checkpoints(broker, ledger)
+    execute(
+        [approved(Side.BUY, "1")], broker, ledger, run_id="run-1", now=NOW, may_send=allowed, checkpoint=saved
+    )
+    assert saved.seen == [
+        ([], 0),  # after reconcile
+        ([IntentState.INTENDED], 0),  # the intent is saved, nothing sent yet
+        ([IntentState.SENT], 1),  # sent, and its broker order ID saved
+    ]
+
+
+def test_a_failed_checkpoint_before_sending_sends_nothing(broker: FakeBroker, ledger: Ledger) -> None:
+    saved = Checkpoints(broker, ledger, fail_at=2)
+    with pytest.raises(OSError, match="upload failed"):
+        execute(
+            [approved(Side.BUY, "1")],
+            broker,
+            ledger,
+            run_id="run-1",
+            now=NOW,
+            may_send=allowed,
+            checkpoint=saved,
+        )
+    assert broker.recent_orders() == []
+
+
+def test_a_failed_checkpoint_after_sending_stops_before_the_next_order(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    saved = Checkpoints(broker, ledger, fail_at=3)
+    with pytest.raises(OSError, match="upload failed"):
+        execute(
+            [approved(Side.BUY, "1"), approved(Side.BUY, "1", SGLN)],
+            broker,
+            ledger,
+            run_id="run-1",
+            now=NOW,
+            may_send=allowed,
+            checkpoint=saved,
+        )
+    assert len(broker.recent_orders()) == 1
+
+
+def test_an_unknown_outcome_is_checkpointed(broker: FakeBroker, ledger: Ledger) -> None:
+    broker.timeout_after_accepting_next = True
+    saved = Checkpoints(broker, ledger)
+    execute(
+        [approved(Side.BUY, "1")], broker, ledger, run_id="run-1", now=NOW, may_send=allowed, checkpoint=saved
+    )
+    assert saved.seen[-1] == ([IntentState.UNKNOWN], 1)
+
+
+def test_an_unexpected_error_is_checkpointed_as_unknown(broker: FakeBroker, ledger: Ledger) -> None:
+    broker.fail_next = KeyError("boom")  # type: ignore[assignment] - anything unexpected
+    saved = Checkpoints(broker, ledger)
+    with pytest.raises(KeyError):
+        execute(
+            [approved(Side.BUY, "1")],
+            broker,
+            ledger,
+            run_id="run-1",
+            now=NOW,
+            may_send=allowed,
+            checkpoint=saved,
+        )
+    assert saved.seen[-1] == ([IntentState.UNKNOWN], 0)
+
+
+def test_a_refused_order_is_checkpointed_as_not_sent(broker: FakeBroker, ledger: Ledger) -> None:
+    broker.fail_next = BrokerError("503")
+    saved = Checkpoints(broker, ledger)
+    execute(
+        [approved(Side.BUY, "1")], broker, ledger, run_id="run-1", now=NOW, may_send=allowed, checkpoint=saved
+    )
+    assert saved.seen[-1] == ([IntentState.NOT_SENT], 0)
+
+
+def test_the_kill_switch_is_read_again_after_the_pre_send_checkpoint(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    answers = iter([True, False])  # turned off while the intent was being saved
+    saved = Checkpoints(broker, ledger)
+    report = execute(
+        [approved(Side.BUY, "1")],
+        broker,
+        ledger,
+        run_id="run-1",
+        now=NOW,
+        may_send=lambda: next(answers),
+        checkpoint=saved,
+    )
+    assert (report.sent, report.stopped) == (0, "kill switch off")
+    assert broker.recent_orders() == []
+    assert saved.seen[-1] == ([IntentState.NOT_SENT], 0)
