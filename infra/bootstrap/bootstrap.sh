@@ -13,7 +13,8 @@ project="$(sed -n 's/^ *project_id *= *"\([^"]*\)".*/\1/p' bootstrap.tfvars)"
 gcloud services enable --project "$project" \
   cloudresourcemanager.googleapis.com serviceusage.googleapis.com iam.googleapis.com \
   iamcredentials.googleapis.com sts.googleapis.com storage.googleapis.com \
-  artifactregistry.googleapis.com run.googleapis.com secretmanager.googleapis.com monitoring.googleapis.com
+  artifactregistry.googleapis.com run.googleapis.com secretmanager.googleapis.com monitoring.googleapis.com \
+  cloudscheduler.googleapis.com logging.googleapis.com
 
 if [ -f backend.tf ]; then
   bucket="$(sed -n 's/.*bucket *= *"\([^"]*\)".*/\1/p' backend.tf)"

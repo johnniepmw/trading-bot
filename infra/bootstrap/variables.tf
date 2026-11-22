@@ -22,6 +22,16 @@ variable "github_repository" {
   type        = string
 }
 
+variable "github_repository_id" {
+  description = "Numeric ID of the repository (gh api repos/<owner>/<repo> --jq .id); matched instead of the name."
+  type        = string
+}
+
+variable "github_owner_id" {
+  description = "Numeric ID of the repository's owner (gh api repos/<owner>/<repo> --jq .owner.id)."
+  type        = string
+}
+
 variable "alert_email" {
   description = "Owner email for uptime alerts (passed to environments)."
   type        = string

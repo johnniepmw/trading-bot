@@ -10,8 +10,10 @@ locals {
   apis = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
+    "logging.googleapis.com",
     "monitoring.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
@@ -19,7 +21,7 @@ locals {
     "storage.googleapis.com",
     "sts.googleapis.com",
   ]
-  pool_principal_repo = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
+  pool_principal_repo = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository_id/${var.github_repository_id}"
   pool_principal_main = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.ref/refs/heads/main"
 }
 
@@ -100,12 +102,14 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_provider_id = "github-oidc"
   display_name                       = "GitHub OIDC"
   attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.repository" = "assertion.repository"
-    "attribute.ref"        = "assertion.ref"
+    "google.subject"          = "assertion.sub"
+    "attribute.repository"    = "assertion.repository"
+    "attribute.repository_id" = "assertion.repository_id"
+    "attribute.ref"           = "assertion.ref"
   }
-  # Only this repository can use the pool at all.
-  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+  # Only this repository can use the pool at all, matched by its permanent numeric IDs: a
+  # name could be re-registered by someone else if the repository were renamed or deleted.
+  attribute_condition = "assertion.repository_id == \"${var.github_repository_id}\" && assertion.repository_owner_id == \"${var.github_owner_id}\""
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
@@ -149,6 +153,20 @@ resource "google_project_iam_member" "deployer" {
   member  = "serviceAccount:${google_service_account.ci["ci-deployer"].email}"
 }
 
+# The `ops` workflow may pause the bot's schedule (stop new runs), never resume it or change it.
+resource "google_project_iam_custom_role" "scheduler_pauser" {
+  project     = var.project_id
+  role_id     = "schedulerPauser"
+  title       = "Pause Cloud Scheduler jobs"
+  permissions = ["cloudscheduler.jobs.get", "cloudscheduler.jobs.list", "cloudscheduler.jobs.pause"]
+}
+
+resource "google_project_iam_member" "deployer_pause" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.scheduler_pauser.id
+  member  = "serviceAccount:${google_service_account.ci["ci-deployer"].email}"
+}
+
 resource "google_project_iam_member" "infra_plan" {
   for_each = toset(["roles/viewer", "roles/iam.securityReviewer"])
   project  = var.project_id
@@ -162,13 +180,66 @@ resource "google_project_iam_member" "infra_apply" {
     "roles/run.admin",
     "roles/iam.serviceAccountAdmin",
     "roles/iam.serviceAccountUser",
-    "roles/secretmanager.admin",
     "roles/storage.admin",
     "roles/monitoring.editor",
+    "roles/cloudscheduler.admin",
+    "roles/logging.configWriter",
   ])
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.ci["ci-infra-apply"].email}"
+}
+
+# Secret Manager for every secret except the owner-only `prod-operator` (ADR-0009: no CI path
+# may switch on live trading or change capital): CI can't add versions to it, read its
+# policy or grant itself access to it.
+resource "google_project_iam_member" "infra_apply_secrets" {
+  project = var.project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:${google_service_account.ci["ci-infra-apply"].email}"
+  condition {
+    title       = "not-the-operator-secret"
+    description = "Every secret except prod-operator (owner only, ADR-0009)"
+    expression  = "!resource.name.startsWith(\"projects/${data.google_project.this.number}/secrets/prod-operator\")"
+  }
+}
+
+# ---------- owner-only: the live switch (ADR-0009) -----------------------------------------
+# Created here, by the owner, so that no CI identity ever has write access to it. It starts
+# as "__unset__" (paper trading); only the owner adds versions (make secret-set NAME=operator
+# ENV=prod). The prod job's runtime identity is created here too so it can be the one reader.
+resource "google_service_account" "prod_runtime" {
+  project      = var.project_id
+  account_id   = "${var.app_name}-prod-job"
+  display_name = "${var.app_name} prod job runtime"
+  depends_on   = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret" "operator" {
+  project   = var.project_id
+  secret_id = "prod-operator"
+  replication {
+    auto {}
+  }
+  lifecycle {
+    prevent_destroy = true
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "operator_placeholder" {
+  secret      = google_secret_manager_secret.operator.id
+  secret_data = "__unset__"
+  lifecycle {
+    ignore_changes = all # the owner's own versions supersede it; never rewritten
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "operator_reader" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.operator.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.prod_runtime.email}"
 }
 
 resource "google_storage_bucket_iam_member" "state_read" {
