@@ -55,15 +55,19 @@ variable "timeout_seconds" {
 }
 
 variable "secrets" {
-  description = "Secrets the job reads, as mount name => secret ID, mounted at /secrets/<name>/value; this module grants the job access. The secrets themselves exist already (`make secret-set`)."
-  type        = map(string)
-  default     = {}
+  description = "Secret names the job reads. This module creates each container (<env>-<name>, no version: the owner adds the value with `make secret-set` before the job needs it), grants the job access and mounts it at /secrets/<name>/value."
+  type        = list(string)
+  default     = []
 }
 
 variable "owner_secrets" {
-  description = "Owner-only secrets (the live switch), mounted the same way; access is granted by the bootstrap, because CI can't change their permissions (ADR-0009)."
+  description = "Owner-only secrets (the live switch) as mount name => secret ID, mounted the same way; created and access-granted by the bootstrap, because CI can't change them (ADR-0009)."
   type        = map(string)
   default     = {}
+  validation {
+    condition     = alltrue([for name in keys(var.owner_secrets) : !contains(var.secrets, name)])
+    error_message = "a secret name can't be both CI-managed and owner-only: the mount would be ambiguous."
+  }
 }
 
 variable "plan_sa" {
@@ -81,4 +85,8 @@ variable "soft_delete_days" {
   description = "How long deleted or overwritten ledger and lock objects stay recoverable."
   type        = number
   default     = 30
+  validation {
+    condition     = var.soft_delete_days >= 7 && var.soft_delete_days <= 90
+    error_message = "Cloud Storage allows soft delete of 7 to 90 days; this module doesn't allow turning it off."
+  }
 }

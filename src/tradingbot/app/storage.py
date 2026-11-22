@@ -159,7 +159,11 @@ class GcsObjectStore:
             raise _error(status, f"delete {name}")
 
     def has_any_version(self, bucket: str, name: str) -> bool:
-        query = urllib.parse.urlencode({"prefix": name, "versions": "true", "fields": "items(name)"})
+        """Live, noncurrent or soft-deleted: any trace that the object existed (ADR-0017)."""
+        return self._listed(bucket, name, versions="true") or self._listed(bucket, name, softDeleted="true")
+
+    def _listed(self, bucket: str, name: str, **flags: str) -> bool:
+        query = urllib.parse.urlencode({"prefix": name, **flags, "fields": "items(name)"})
         status, body = self._call("GET", f"{_API}{urllib.parse.quote(bucket, safe='')}/o?{query}")
         if status != 200:  # noqa: PLR2004
             raise _error(status, f"list {name}")

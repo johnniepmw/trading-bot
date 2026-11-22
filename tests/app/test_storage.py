@@ -136,12 +136,13 @@ def test_a_noncurrent_version_counts_as_a_version() -> None:
 
 
 def test_objects_that_only_share_the_prefix_dont_count() -> None:
-    store, _ = gcs((200, json.dumps({"items": [{"name": "ledger.sqlite.bak"}]}).encode()))
+    bak = json.dumps({"items": [{"name": "ledger.sqlite.bak"}]}).encode()
+    store, _ = gcs((200, bak), (200, bak))
     assert not store.has_any_version("b", "ledger.sqlite")
 
 
 def test_an_empty_listing_has_no_versions() -> None:
-    store, _ = gcs((200, b"{}"))
+    store, _ = gcs((200, b"{}"), (200, b"{}"))
     assert not store.has_any_version("b", "ledger.sqlite")
 
 
@@ -198,3 +199,15 @@ def test_the_transport_maps_network_failures_to_transient(monkeypatch: pytest.Mo
     monkeypatch.setattr(storage._OPENER, "open", fail)
     with pytest.raises(TransientStorageError, match="connection refused"):
         storage.urllib_transport(1.0)("GET", "https://storage.googleapis.com/x?token=no", {}, None)
+
+
+def test_a_soft_deleted_version_counts_as_a_version() -> None:
+    store, sent = gcs((200, b"{}"), (200, json.dumps({"items": [{"name": "ledger.sqlite"}]}).encode()))
+    assert store.has_any_version("b", "ledger.sqlite")
+    assert "softDeleted=true" in sent.calls[1][1]
+
+
+def test_no_live_noncurrent_or_soft_deleted_version_means_none() -> None:
+    store, sent = gcs((200, b"{}"), (200, b"{}"))
+    assert not store.has_any_version("b", "ledger.sqlite")
+    assert len(sent.calls) == 2

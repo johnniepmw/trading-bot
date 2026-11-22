@@ -2,11 +2,12 @@
 # the job, its buckets (ledger, lock, flags), its schedule (created paused) and IAM.
 #
 # Identities come from the bootstrap; nothing here creates a service account. Secret
-# containers and their versions are created outside OpenTofu (the bootstrap or
-# `make secret-set`), so CI's plan identity never needs to read a secret value.
+# containers are created here without versions (the owner adds values with `make
+# secret-set`), so OpenTofu state never holds a secret value and CI's plan identity never
+# needs to read one. The owner-only live switch is created by the bootstrap.
 #
-# Ownership split for the job (ADR-0004, amended for the job in Phase 2): OpenTofu owns its
-# shape, including the per-environment wiring env vars; the deploy pipeline owns the image.
+# Ownership split for the job: OpenTofu owns its shape, including the per-environment wiring
+# env vars; the deploy pipeline changes only the image (step 6; ADR-0011's amendment there).
 
 locals {
   job_name      = "${var.app_name}-${var.env}"
@@ -14,7 +15,19 @@ locals {
   lock_bucket   = "${var.project_id}-locks-${var.env}"
   flags_bucket  = "${var.project_id}-flags-${var.env}"
   soft_delete   = var.soft_delete_days * 86400
-  mounts        = merge(var.secrets, var.owner_secrets)
+  secret_ids    = { for name in var.secrets : name => "${var.env}-${name}" }
+  mounts        = merge({ for name, secret in google_secret_manager_secret.this : name => secret.secret_id }, var.owner_secrets)
+}
+
+# ---------- secrets: containers only (no version: the owner adds values) ---------------------
+resource "google_secret_manager_secret" "this" {
+  for_each  = local.secret_ids
+  project   = var.project_id
+  secret_id = each.value
+  replication {
+    auto {}
+  }
+  labels = { app = var.app_name, env = var.env }
 }
 
 # ---------- buckets ----------------------------------------------------------------------
@@ -79,17 +92,18 @@ resource "google_storage_bucket_object" "flags_seed" {
 }
 
 # ---------- IAM: the runtime identity -------------------------------------------------------
-# objectAdmin: the job overwrites the ledger (an overwrite needs delete permission) and
-# creates and deletes the lock. Deleted versions stay recoverable (soft delete).
+# objectUser: the job overwrites the ledger (an overwrite needs delete permission) and
+# creates and deletes the lock; no object or managed-folder IAM. Deleted versions stay
+# recoverable (soft delete), and setup counts soft-deleted ones as "a ledger existed".
 resource "google_storage_bucket_iam_member" "runtime_ledger" {
   bucket = google_storage_bucket.ledger.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${var.runtime_sa}"
 }
 
 resource "google_storage_bucket_iam_member" "runtime_locks" {
   bucket = google_storage_bucket.locks.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${var.runtime_sa}"
 }
 
@@ -100,9 +114,9 @@ resource "google_storage_bucket_iam_member" "runtime_flags" {
 }
 
 resource "google_secret_manager_secret_iam_member" "runtime_secrets" {
-  for_each  = var.secrets
+  for_each  = google_secret_manager_secret.this
   project   = var.project_id
-  secret_id = each.value
+  secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${var.runtime_sa}"
 }

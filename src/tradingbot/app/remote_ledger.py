@@ -261,8 +261,8 @@ class RemoteLedger:
             raise SetupRefusedError(
                 "a ledger existed before (see its versions): restore it, don't start afresh"
             )
-        if self._retry("mark info", lambda: self._store.info(self._lock_bucket, MARK_OBJECT)) is not None:
-            raise SetupRefusedError("a reference mark exists: a ledger existed before")
+        if self._retry("mark versions", lambda: self._store.has_any_version(self._lock_bucket, MARK_OBJECT)):
+            raise SetupRefusedError("a reference mark exists or existed: a ledger existed before")
         self._ledger, self._generation = Ledger.create(self._path), 0
         return self._ledger
 

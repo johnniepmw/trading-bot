@@ -6,9 +6,10 @@
   Local development uses `.env.local` (gitignored); `.env.example` lists names only.
 - **Who sets them**: the owner, with `make secret-set NAME=<name> ENV=<env>`, which reads
   the value from the terminal. Secret values never pass through chat, the agent, the repo,
-  CI logs or OpenTofu state. OpenTofu creates the secret with a non-secret `__unset__`
-  placeholder so the service can start; the real value is added out of band, and apps
-  treat `__unset__` as missing and fail closed.
+  CI logs or OpenTofu state. The job module creates the secret container with no version
+  (OpenTofu never holds a value); the owner adds the value before the job needs it. The live
+  switch `prod-operator` is created by the bootstrap with an `__unset__` placeholder, which
+  the app treats as missing (paper).
 - **How apps read them**: mounted as files under `/secrets/<name>/value` by Cloud Run,
   not environment variables (env vars leak into crash dumps and child processes).
 - **CI credentials**: none stored for GCP. GitHub Actions authenticates with Workload

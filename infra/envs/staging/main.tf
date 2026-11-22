@@ -39,7 +39,7 @@ module "job" {
   scheduler_sa = local.b.sa_runtime["scheduler"]
   deployer_sa  = local.b.sa_deployer
   plan_sa      = local.b.sa_infra_plan
-  secrets      = {} # staging runs on fakes: no keys
+  secrets      = [] # staging runs on fakes: no keys
 }
 
 output "job_name" {

@@ -97,3 +97,13 @@ def test_staging_has_no_live_switch() -> None:
 def test_no_service_account_is_created_outside_the_bootstrap() -> None:
     sources = "\n".join(p.read_text() for p in (ROOT / "infra").rglob("*.tf") if "bootstrap" not in p.parts)
     assert 'resource "google_service_account"' not in sources
+
+
+def test_opentofu_never_writes_a_secret_value() -> None:
+    sources = "\n".join(p.read_text() for p in (ROOT / "infra").rglob("*.tf") if "bootstrap" not in p.parts)
+    assert "google_secret_manager_secret_version" not in sources  # state holds no value; CI reads none
+
+
+def test_the_job_has_no_object_or_folder_iam_powers() -> None:
+    text = (MODULE / "main.tf").read_text()
+    assert 'role   = "roles/storage.objectAdmin"\n  member = "serviceAccount:${var.runtime_sa}"' not in text
