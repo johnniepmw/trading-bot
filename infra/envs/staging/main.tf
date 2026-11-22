@@ -28,26 +28,36 @@ locals {
 
 provider "google" {}
 
-module "service" {
-  source = "../../modules/cloud-run-service"
+module "job" {
+  source = "../../modules/cloud-run-job"
 
-  project_id          = local.b.project_id
-  region              = local.b.region
-  app_name            = local.b.app_name
-  env                 = "staging"
-  public              = true
-  min_instances       = 0
-  max_instances       = 2
-  secrets             = [] # e.g. ["broker-api-key"]; set values with make secret-set
-  deletion_protection = false
-  deployer_sa         = local.b.sa_deployer
-  alert_email         = local.b.alert_email
+  project_id   = local.b.project_id
+  region       = local.b.region
+  app_name     = local.b.app_name
+  env          = "staging"
+  runtime_sa   = local.b.sa_runtime["staging-job"]
+  scheduler_sa = local.b.sa_runtime["scheduler"]
+  deployer_sa  = local.b.sa_deployer
+  plan_sa      = local.b.sa_infra_plan
+  secrets      = {} # staging runs on fakes: no keys
 }
 
-output "service_url" {
-  value = module.service.url
+output "job_name" {
+  value = module.job.job_name
+}
+
+output "scheduler_job" {
+  value = module.job.scheduler_job
+}
+
+output "ledger_bucket" {
+  value = module.job.ledger_bucket
+}
+
+output "lock_bucket" {
+  value = module.job.lock_bucket
 }
 
 output "flags_bucket" {
-  value = module.service.flags_bucket
+  value = module.job.flags_bucket
 }
