@@ -35,7 +35,9 @@ gilts `IGLT`, global bonds GBP-hedged `VAGP`, index-linked gilts `INXG`, gold `S
 Several launched only in 2017–2019, which is too short for the validation below, so each
 asset needs a longer **proxy** series (an older fund tracking the same index, or an index
 total-return series converted to GBP) spliced under the ETF's own history; the proxy map
-and any splice date are recorded with the data. The list is data, not code.
+and any splice date are recorded with the data. The list is data, not code: `research/universe.toml`,
+with the data-source symbols and proxies. SSAC (iShares MSCI ACWI) is there as a benchmark
+only and is never traded.
 
 ## Data split (stated honestly)
 - **Development**: from the start of the proxy history to 2022-12-31.
