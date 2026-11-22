@@ -77,6 +77,9 @@ Each should have a test; the ones marked (Phase 0) already do.
   unreadable, missing or malformed remote source, a missing `FLAGS_BUCKET` outside
   local/test, mean off or no start, and an env `on` is ignored in a deployed environment
   (`tests/app/test_flags.py`, `tests/app/test_main.py`).
+- **Pause requests**: any object in the pause bucket stops new orders, checked wherever the
+  kill switch is; an unreadable bucket counts as paused; only the owner clears requests
+  (`tests/app/test_pause.py`).
 - **Live trading is owner-only**: the live switch and capital allocation come from the
   `operator` secret; missing or invalid means paper trading (ADR-0009).
 - **Risk ceilings are constants in code** (`risk/limits.py`): no leverage (buys never

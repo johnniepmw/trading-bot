@@ -218,8 +218,14 @@ def test_a_bucket_with_any_object_has_objects() -> None:
     assert store.has_objects("pause")
     assert (
         sent.calls[0][1]
-        == "https://storage.googleapis.com/storage/v1/b/pause/o?maxResults=1&fields=items%28name%29"
+        == "https://storage.googleapis.com/storage/v1/b/pause/o?maxResults=1&fields=items%28name%29%2CnextPageToken"
     )
+
+
+def test_an_empty_page_with_more_to_come_counts_as_objects() -> None:
+    store, sent = gcs((200, json.dumps({"nextPageToken": "t"}).encode()))
+    assert store.has_objects("pause")  # can't tell yet: fail closed
+    assert "nextPageToken" in sent.calls[0][1]
 
 
 def test_an_empty_bucket_has_no_objects() -> None:

@@ -4,6 +4,7 @@ Wiring only. The config file (`config/bot.toml`) holds everything but per-enviro
 wiring, which comes from env vars:
 - `APP_ENV`: local | test | staging | prod.
 - `LEDGER_BUCKET`, `LOCK_BUCKET`: where the ledger, its lock and the reference mark live.
+- `PAUSE_BUCKET`: pause requests; any object there stops new orders (step 7b).
 - `LOCAL_STORE_DIR`: local and test only, a directory standing in for the buckets.
 - `CLOUD_RUN_EXECUTION` (set by Cloud Run), `APP_VERSION`, `FLAGS_BUCKET` (see flags).
 
@@ -276,7 +277,7 @@ class Job:
         pause = PauseRequests(self.store, self.wiring.pause_bucket)
         if pause.present():
             log.warning(
-                "paused: a pause request exists; no new orders until the owner clears it",
+                "paused: a pause request exists, or the pause location can't be read; no new orders",
                 extra={"alert": "paused"},
             )
         report = run_cycle(

@@ -161,12 +161,15 @@ class GcsObjectStore:
 
     def has_objects(self, bucket: str) -> bool:
         """Whether the bucket holds any live object (pause requests)."""
-        query = urllib.parse.urlencode({"maxResults": 1, "fields": "items(name)"})
+        query = urllib.parse.urlencode({"maxResults": 1, "fields": "items(name),nextPageToken"})
         status, body = self._call("GET", f"{_API}{urllib.parse.quote(bucket, safe='')}/o?{query}")
         if status != 200:  # noqa: PLR2004
             raise _error(status, "list objects", missing_is_precondition=False)
         try:
-            return bool(json.loads(body).get("items"))
+            page = json.loads(body)
+            return bool(
+                page.get("items") or page.get("nextPageToken")
+            )  # an empty page with more: fail closed
         except (ValueError, AttributeError) as error:
             raise StorageError("list objects: unexpected response") from error
 

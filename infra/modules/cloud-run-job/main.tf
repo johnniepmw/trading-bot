@@ -140,7 +140,8 @@ resource "google_storage_bucket_iam_member" "runtime_pause" {
   member = "serviceAccount:${var.runtime_sa}"
 }
 
-# The owner's `ops` action lists and clears requests (and may add one).
+# The owner's `ops clear-pause` lists and clears requests (objectUser is the smallest predefined
+# role with list and delete). Owner-only is enforced by the workflow, not by IAM.
 resource "google_storage_bucket_iam_member" "deployer_pause" {
   bucket = google_storage_bucket.pause.name
   role   = "roles/storage.objectUser"

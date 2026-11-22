@@ -50,7 +50,8 @@ def test_a_cleared_request_no_longer_pauses(store: FakeStore) -> None:
 def test_an_unreadable_location_pauses_with_an_alert(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.ERROR):
         assert PauseRequests(Unreadable(lambda: RUN_DAY), "pause").present() is True
-    assert "pause location unreadable" in caplog.text
+    [line] = [r for r in caplog.records if "pause location unreadable" in r.getMessage()]
+    assert getattr(line, "alert", None) == "pause_unreadable"
 
 
 def test_no_location_in_local_runs_means_not_paused() -> None:

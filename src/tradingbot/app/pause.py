@@ -27,5 +27,9 @@ class PauseRequests:
         try:
             return self._store.has_objects(self._bucket)
         except Exception as error:  # noqa: BLE001 - unreadable means paused (fail closed)
-            log.error("pause location unreadable (%s): no new orders", type(error).__name__)
+            log.error(
+                "pause location unreadable (%s): no new orders",
+                type(error).__name__,
+                extra={"alert": "pause_unreadable"},
+            )
             return True

@@ -1,7 +1,7 @@
 """Job entry point: `python -m tradingbot.app <command>`.
 
-- `smoke`: the container starts, reads the flag registry and reports whether the
-  `new-orders` kill switch allows trading.
+- `smoke`: the container starts, reads the flag registry and the pause location, and
+  reports `paused` and whether new orders are allowed (the kill switch and no pause).
 - `run`: one daily cycle (`app/job.py`); `run --dry-run` stops before sending, on a
   scratch copy of the ledger.
 - `setup --equity <GBP>`: the owner's one-off ledger setup (docs/runbooks/ledger-setup.md).

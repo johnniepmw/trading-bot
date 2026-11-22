@@ -72,9 +72,8 @@ def test_deployed_job_with_a_bucket_builds_a_gcs_backed_kill_switch(monkeypatch:
     out = io.StringIO()
     # No network in unit tests: the bucket read fails, so the kill switch reports off.
     monkeypatch.setattr("tradingbot.app.flags.urllib.request.urlopen", _unreachable)
-    monkeypatch.setattr("tradingbot.app.storage._OPENER.open", _unreachable)
-    code = main(
-        ["smoke"], env={"FLAGS_BUCKET": "b", "PAUSE_BUCKET": "p", "APP_ENV": "prod"}, version="v", out=out
-    )
+    env = {"FLAGS_BUCKET": "b", "PAUSE_BUCKET": "p", "APP_ENV": "prod"}
+    no_pause = PauseRequests(None, None)  # the kill switch alone decides here
+    code = main(["smoke"], env=env, version="v", out=out, pause=no_pause)
     assert code == 0
     assert json.loads(out.getvalue())["new_orders"] is False
