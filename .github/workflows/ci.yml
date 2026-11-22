@@ -66,6 +66,9 @@ jobs:
         run: |
           if [ ! -f Dockerfile ]; then echo "No Dockerfile yet; skipping."; exit 0; fi
           docker build --build-arg GIT_SHA="${GITHUB_SHA::12}" -t app:ci .
+          # the container's real command line, as Cloud Run starts it (no network, no cloud)
+          docker run --rm --network none -e APP_ENV=local app:ci
+          docker run --rm --network none -e APP_ENV=local app:ci smoke
           trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress app:ci
 
   required:

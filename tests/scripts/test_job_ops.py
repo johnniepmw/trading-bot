@@ -18,7 +18,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 BASH = shutil.which("bash") or "/bin/bash"
-REPO = "europe-west2-docker.pkg.dev/p/trading-bot"
+REPO = "europe-west2-docker.pkg.dev/p/trading-bot"  # <region>-docker.pkg.dev/<project>/<app>
 OLD = f"{REPO}/trading-bot@sha256:{'a' * 64}"
 NEW = f"{REPO}/trading-bot@sha256:{'b' * 64}"
 
@@ -33,7 +33,11 @@ def read(name, default=""):
 with open(path("calls.log"), "a") as log:
     log.write(" ".join(a) + "\n")
 cmd = " ".join(a[:3])
-if cmd == "run jobs executions":
+if cmd == "run jobs executions" and a[3] == "cancel":
+    pass
+elif cmd == "run jobs executions":
+    if os.path.exists(path("list_fails")):
+        sys.exit(1)
     print(read("running"))
 elif cmd == "scheduler jobs describe":
     print(read("scheduler", "PAUSED\t"))
@@ -44,7 +48,11 @@ elif cmd == "run jobs update":
 elif cmd == "run jobs execute":
     results = read("executions", "ok").split()
     open(path("executions"), "w").write(" ".join(results[1:]) or "ok")
+    if results[0] == "hang":
+        import time; time.sleep(30)
     sys.exit(0 if results[0] == "ok" else 1)
+elif cmd == "artifacts docker tags" and os.path.exists(path("tag_fails")):
+    sys.exit(1)
 elif cmd == "artifacts docker images":
     print(read("previous_digest"))
 elif cmd == "storage objects describe":
@@ -73,7 +81,7 @@ def fake(tmp_path: Path) -> Path:
     return d
 
 
-def run(fake: Path, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+def run(fake: Path, script: str, *args: str, **extra: str) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{fake.parent / 'bin'}:{os.environ['PATH']}",
         "FAKE_DIR": str(fake),
@@ -82,6 +90,8 @@ def run(fake: Path, script: str, *args: str) -> subprocess.CompletedProcess[str]
         "APP_NAME": "trading-bot",
         "AR_REPO": REPO,
         "GITHUB_ACTOR": "owner",
+        "CHECK_TIMEOUT": "2",
+        **extra,
     }
     return subprocess.run(
         [BASH, str(ROOT / "scripts" / script), *args],
@@ -199,7 +209,9 @@ def test_rollback_without_a_recorded_image_changes_nothing(fake: Path) -> None:
 
 def test_rollback_to_a_named_digest(fake: Path) -> None:
     (fake / "image").write_text(NEW)
-    assert run(fake, "cloudrun-job-rollback.sh", "staging", OLD).returncode == 0
+    assert (
+        run(fake, "cloudrun-job-rollback.sh", "staging", OLD, NAMED_ROLLBACK_ALLOWED="true").returncode == 0
+    )
     assert (fake / "image").read_text() == OLD
 
 
@@ -234,3 +246,68 @@ def test_a_malformed_object_is_left_alone(fake: Path) -> None:
     (fake / "flags").write_text('{"overrides": "on"}')
     assert run(fake, "flag-override.sh", "prod", "kill", "new-orders").returncode == 1
     assert not (fake / "written").exists()
+
+
+# --- from step 6's security review ----------------------------------------------------------
+def test_a_hung_check_execution_is_cancelled_and_rolled_back(fake: Path) -> None:
+    (fake / "executions").write_text("hang")
+    (fake / "running").write_text("trading-bot-staging-hung1")  # what the hung check leaves behind
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode != 0
+    assert (fake / "image").read_text() == OLD
+    assert (
+        "run jobs executions cancel trading-bot-staging-hung1 --region europe-west2 --project p --quiet"
+        in calls(fake)
+    )
+
+
+def test_the_registry_comes_from_the_project_not_a_variable(fake: Path) -> None:
+    foreign = "docker.io/x/trading-bot@sha256:" + "d" * 64
+    assert run(fake, "cloudrun-job-deploy.sh", "staging", foreign, AR_REPO="docker.io/x").returncode == 2
+    assert (fake / "image").read_text() == OLD
+
+
+def test_a_short_digest_is_refused(fake: Path) -> None:
+    assert run(fake, "cloudrun-job-deploy.sh", "staging", f"{REPO}/trading-bot@sha256:abc").returncode == 2
+
+
+@pytest.mark.parametrize("state", ["UPDATE_FAILED", "", "ENABLING"])
+def test_a_scheduler_that_isnt_plainly_paused_needs_a_known_next_run(fake: Path, state: str) -> None:
+    (fake / "scheduler").write_text(f"{state}\t")
+    assert run(fake, "cloudrun-job-deploy.sh", "prod", NEW).returncode != 0
+    assert (fake / "image").read_text() == OLD
+
+
+def test_a_failed_read_of_running_executions_refuses_the_deploy(fake: Path) -> None:
+    (fake / "list_fails").write_text("")
+    assert run(fake, "cloudrun-job-deploy.sh", "prod", NEW).returncode != 0
+    assert (fake / "image").read_text() == OLD
+
+
+def test_redeploying_the_same_image_keeps_the_rollback_target(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    assert run(fake, "cloudrun-job-deploy.sh", "staging", NEW).returncode == 0
+    assert not [c for c in calls(fake) if "tags add" in c]
+
+
+def test_a_failed_tag_after_a_good_check_is_only_a_warning(fake: Path) -> None:
+    (fake / "tag_fails").write_text("")
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode == 0
+    assert (fake / "image").read_text() == NEW
+    assert "warning" in result.stderr
+
+
+def test_a_rollback_whose_smoke_fails_goes_back(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    (fake / "previous_digest").write_text("sha256:" + "a" * 64)
+    (fake / "executions").write_text("fail")
+    assert run(fake, "cloudrun-job-rollback.sh", "prod").returncode == 1
+    assert (fake / "image").read_text() == NEW
+
+
+def test_a_named_rollback_digest_needs_the_owner(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    result = run(fake, "cloudrun-job-rollback.sh", "prod", OLD, NAMED_ROLLBACK_ALLOWED="false")
+    assert result.returncode == 2
+    assert (fake / "image").read_text() == NEW

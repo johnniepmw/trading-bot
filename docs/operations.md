@@ -26,8 +26,9 @@ Deploys are serialised (one at a time). Re-running the workflow redeploys the sa
 - **Rollback** (seconds, no rebuild): `ops` workflow → `action=rollback, env=prod`.
   Puts the job back on the image it ran before the last deploy and runs a `smoke`
   execution.
-- **Pause** the schedule: `ops` workflow → `action=pause`. No new runs; a running one
-  finishes. Only the owner resumes it. Agents may trigger it during an
+- **Pause** the schedule: `ops` workflow → `action=pause` (the owner; agents in staging,
+  or rollback and kill in prod). No new runs; a running one finishes. Only the owner
+  resumes it. Agents may trigger it during an
   incident; they tell the owner straight away. From a phone: GitHub app → Actions → ops →
   Run workflow.
 - **Kill switch** (seconds, no deploy): `ops` workflow → `action=kill, flag=<name>`.

@@ -107,3 +107,10 @@ def test_opentofu_never_writes_a_secret_value() -> None:
 def test_the_job_has_no_object_or_folder_iam_powers() -> None:
     text = (MODULE / "main.tf").read_text()
     assert 'role   = "roles/storage.objectAdmin"\n  member = "serviceAccount:${var.runtime_sa}"' not in text
+
+
+def test_the_image_takes_its_command_from_the_jobs_args() -> None:
+    # Cloud Run's args replace CMD: with no ENTRYPOINT, `run` would be the program itself
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert 'ENTRYPOINT ["python", "-m", "tradingbot.app"]' in dockerfile
+    assert 'CMD ["smoke"]' in dockerfile

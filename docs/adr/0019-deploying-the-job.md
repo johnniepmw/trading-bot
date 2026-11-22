@@ -35,9 +35,17 @@ Option 2.
     and broker. That execution has a scratch ledger, takes no lock and can't send (AC6).
   - On failure it goes back to the previous image and opens an incident issue with no
     account data.
+- **The check execution has a time limit** (15 minutes). Any way out of the script other
+  than a passed check cancels unfinished executions and restores the previous image:
+  failure, timeout, or the workflow being cancelled.
+- **Deploys accept only digests from this project's registry**, derived from the project,
+  region and app name, never from a separate variable.
+- **The image has a fixed entrypoint** (`python -m tradingbot.app`), so the job's args
+  choose the command.
 - **The deploy reads execution status only**, never logs or outputs.
 - **The replaced image is tagged `previous-<env>`** in Artifact Registry; `ops rollback`
-  returns to it, or to a named digest, and runs a `smoke` execution.
+  returns to it and runs a `smoke` execution, going back if that fails. Naming an older
+  digest skips the deploy's other checks, so only the owner may.
 - **`ops pause`** pauses the schedule (the deployer's custom role allows pause only). Only
   the owner resumes it.
 - **Clearing a stale lock** is an owner `gcloud storage rm` of `run.lock`, done in person

@@ -30,7 +30,7 @@ on:
         default: "false"
         required: false
       image:
-        description: For rollback only (optional image@sha256:...; default = the image before the last deploy)
+        description: For rollback only, owner only (optional image@sha256:...; default = the image before the last deploy)
         type: string
         required: false
 
@@ -58,7 +58,8 @@ jobs:
       FLAG: ${{ inputs.flag }}
       VALUE: ${{ inputs.value }}
       IMAGE: ${{ inputs.image }}
-      AR_REPO: ${{ vars.AR_REPO }}
+      # a named digest skips the deploy's checks: the owner's call only
+      NAMED_ROLLBACK_ALLOWED: ${{ github.actor == github.repository_owner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0

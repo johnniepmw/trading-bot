@@ -29,4 +29,6 @@ ARG GIT_SHA=dev
 ENV APP_VERSION=${GIT_SHA}
 
 USER app
-CMD ["python", "-m", "tradingbot.app", "smoke"]
+# Cloud Run job args (`run`, `run --dry-run`, `setup ...`) replace CMD, never the entrypoint.
+ENTRYPOINT ["python", "-m", "tradingbot.app"]
+CMD ["smoke"]
