@@ -54,6 +54,9 @@ configured owner address. The questions come from the owner's dashboard brainsto
 - Glance in the email, detail on the dashboard; £ and % both until capital grows (owner, 2026-11-22).
 - New subpackages (for example a pure `report` module that builds the glance and view-models) are added to import-linter contracts 1 and 3a (ARCHITECTURE.md).
 
+- From agent-review on PR #23 (2026-11-22), carried into the steps: a pure `report` module also gets a contract like `backtest`'s contract 6 (no `os`, files, `app`, `execution` or brokers); each pause request gets a unique object name, so a second press isn't refused by create-only access (step 3); the remembered drawdown-alert level resets at each new high-water mark, so a later fall from the new peak alerts again (step 2).
+- Sequencing (owner, 2026-11-22): step 1 (AC1–AC3) may start before Phase 1 step 8 finishes; AC4's Trading 212 fields wait for the API check. Phase 2's plan schedules step 1 first, steps 2–3 with the job module, steps 4–5 before paper trading.
+
 ## Open questions
 - How the daily email is sent. Cloud Monitoring emails alert notifications but can't carry a formatted summary. Default if unanswered: a dedicated Gmail account for the bot sends to the owner over SMTP, with an app password the owner sets via `make secret-set`. It needs no new third party, and only that mailbox is exposed if the password leaks. Alternatives: a transactional email service (a third party sees account data), or no email (a push notification plus the dashboard). Step 5 waits for this; steps 1–4 don't.
 
