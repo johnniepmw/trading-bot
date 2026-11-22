@@ -147,3 +147,34 @@ def test_a_mark_in_pence_is_refused_even_when_lower(ledger: Ledger) -> None:
     ledger.seed_high_water_mark(gbp("1000"), NOW)
     with pytest.raises(LedgerError, match="GBP"):
         ledger.update_high_water_mark(Money(Decimal(500), Currency.GBX), NOW)
+
+
+def test_day_start_equity_is_the_last_equity_recorded_on_an_earlier_day(ledger: Ledger) -> None:
+    monday, tuesday = NOW.date(), NOW.date().replace(day=24)
+    assert ledger.previous_day_equity(monday) is None  # nothing earlier: unknown
+    ledger.record_equity(monday, gbp("1000"))
+    ledger.record_equity(monday, gbp("990"))  # a later run the same day replaces it
+    assert ledger.previous_day_equity(monday) is None  # today never counts
+    assert ledger.previous_day_equity(tuesday) == gbp("990")
+
+
+def test_seeding_the_mark_also_records_that_days_equity(ledger: Ledger) -> None:
+    ledger.seed_high_water_mark(gbp("1000"), NOW)
+    assert ledger.previous_day_equity(NOW.date().replace(day=24)) == gbp("1000")
+
+
+def test_verified_closes_and_acted_signals_are_kept(ledger: Ledger) -> None:
+    day = NOW.date()
+    closes = {VWRP: gbp("101.5"), SGLN: Money(Decimal(4000), Currency.GBX)}
+    assert ledger.verified_closes(day) == {}
+    ledger.store_verified_closes(day, closes)
+    assert ledger.verified_closes(day) == closes
+    assert not ledger.signal_acted(day)
+    ledger.mark_signal_acted(day)
+    assert ledger.signal_acted(day)
+
+
+def test_a_day_start_older_than_the_limit_is_unknown(ledger: Ledger) -> None:
+    ledger.record_equity(NOW.date().replace(day=10), gbp("1000"))
+    assert ledger.previous_day_equity(NOW.date(), max_age_days=5) is None
+    assert ledger.previous_day_equity(NOW.date(), max_age_days=20) == gbp("1000")

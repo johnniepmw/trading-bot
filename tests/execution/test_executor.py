@@ -316,3 +316,12 @@ def test_an_unknown_broker_order_stops_execute_itself(broker: FakeBroker, ledger
     report = run_execute([approved(Side.BUY, "1")], broker, ledger)
     assert report.sent == 0 and report.stopped is not None and "no intent knows" in report.stopped
     assert len(broker.recent_orders()) == 1
+
+
+def test_reconcile_reports_orders_that_ended_short_of_a_full_fill(broker: FakeBroker, ledger: Ledger) -> None:
+    broker.market_open = False
+    run_execute([approved(Side.BUY, "1")], broker, ledger)
+    broker.cancel(broker.recent_orders()[0].order_id)
+    result = reconcile(broker, ledger)
+    assert result.clean
+    assert len(result.shortfalls) == 1 and "CANCELLED" in result.shortfalls[0]
