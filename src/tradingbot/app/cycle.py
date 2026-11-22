@@ -22,9 +22,9 @@ from decimal import Decimal
 from tradingbot.brokers.port import Broker
 from tradingbot.data.prices import PriceHistory, validate_history
 from tradingbot.domain.market import Bar, Instrument, price_money
-from tradingbot.domain.money import Money
+from tradingbot.domain.money import Currency, Money
 from tradingbot.execution.executor import execute, reconcile
-from tradingbot.ledger.store import Ledger
+from tradingbot.ledger.store import DecisionRecord, Ledger, PositionRecord, PreviewRecord, SignalRecord
 from tradingbot.portfolio.weights import daily_returns, orders_for, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
 from tradingbot.risk.review import AccountState, review
@@ -46,10 +46,20 @@ class CycleStopError(Exception):
     """A check failed: no new orders this run."""
 
 
+BENCHMARK_ONLY = frozenset({"SSAC"})  # monitoring spec: compared against, never traded
+
+
 @dataclass(frozen=True)
 class CycleConfig:
     universe: Mapping[Instrument, Decimal]  # every instrument the strategy trades, with its quantity step
     limits: Limits = field(default_factory=Limits)
+
+    def __post_init__(self) -> None:
+        benchmarks = sorted(i.ticker for i in self.universe if i.ticker in BENCHMARK_ONLY)
+        if benchmarks:
+            raise ValueError(
+                f"{', '.join(benchmarks)} is a benchmark only and can't be in the trading universe"
+            )
 
 
 @dataclass(frozen=True)
@@ -68,19 +78,67 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
     now: datetime,
     run_id: str,
     may_send: Callable[[], bool],
+    version: str = "dev",
 ) -> CycleReport:
+    recorded = False
     try:
+        if now.tzinfo is UTC:  # a run with a wrong clock can't be recorded; _cycle stops it below
+            _start_record(ledger, run_id, now, version)
+            recorded = True
         report = _cycle(broker, ledger, history, config, signal_day, now, run_id, may_send)
+        if report.stopped:
+            log.error("cycle stopped: %s", report.stopped)
     except CycleStopError as stop:
         log.error("cycle stopped: %s", stop)
-        return CycleReport(0, str(stop))
+        report = CycleReport(0, str(stop))
     except Exception as error:  # fail closed: any error means no new orders, plus an alert
         reason = f"{type(error).__name__}: {error}"
         log.exception("cycle stopped: %s", reason)
-        return CycleReport(0, reason)
-    if report.stopped:
-        log.error("cycle stopped: %s", report.stopped)
+        report = CycleReport(0, reason)
+    if recorded:
+        _finish_record(ledger, history, config, run_id=run_id, now=now, report=report)
     return report
+
+
+def _start_record(ledger: Ledger, run_id: str, now: datetime, version: str) -> None:
+    for unfinished in ledger.unfinished_runs(run_id):
+        log.error("run %s started at %s never finished", unfinished.run_id, unfinished.started_at.isoformat())
+        ledger.mark_run_died(unfinished.run_id)
+    ledger.start_run(run_id, now, version)
+
+
+def _finish_record(  # noqa: PLR0913 - the run's outcome and what the preview needs
+    ledger: Ledger,
+    history: PriceHistory,
+    config: CycleConfig,
+    *,
+    run_id: str,
+    now: datetime,
+    report: CycleReport,
+) -> None:
+    """Close the run record, then store the month-end preview. Neither can change an order:
+    the orders are already decided, and a failure here only logs."""
+    try:
+        ledger.finish_run(run_id, now, "completed" if report.stopped is None else "stopped", report.stopped)
+    except Exception:
+        log.exception("could not record the end of run %s", run_id)
+    try:
+        ledger.record_preview(run_id, _preview(history, config, now.date()))
+    except Exception as error:  # noqa: BLE001 - the preview is informational only (monitoring AC3)
+        log.warning("month-end preview failed: %s: %s", type(error).__name__, error)
+
+
+def _preview(history: PriceHistory, config: CycleConfig, today: date) -> list[PreviewRecord]:
+    """What the month-end rule would do on the latest closes. Never used for orders."""
+    start = today - timedelta(days=HISTORY_CALENDAR_DAYS)
+    bars = {
+        i: validate_history(i, history.daily_bars(i, start, today - timedelta(days=1)))
+        for i in config.universe
+    }
+    as_of = min(series[-1].day for series in bars.values())
+    in_trend = signals(bars, as_of)
+    weights = vol_scaled(sleeve_weights(in_trend), {i: daily_returns(b, as_of) for i, b in bars.items()})
+    return [PreviewRecord(as_of, i, in_trend[i], weights[i]) for i in config.universe]
 
 
 def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
@@ -109,6 +167,20 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     account = broker.account()
     held_quotes = {i: broker.quote(i) for i, q in holdings.items() if q > 0}
     _check_equity(account.cash, account.equity, holdings, held_quotes)
+    ledger.record_snapshot(
+        run_id,
+        now,
+        account.cash,
+        [
+            PositionRecord(
+                i,
+                q,
+                held_quotes.get(i),
+                None if i not in held_quotes else Money(q * held_quotes[i].to_gbp().amount, Currency.GBP),
+            )
+            for i, q in holdings.items()
+        ],
+    )
     mark = ledger.high_water_mark()
     if mark is None:
         raise CycleStopError("no high-water mark: the owner must seed it (setup step)")
@@ -125,8 +197,10 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     quotes = {i: broker.quote(i) for i in config.universe}
     _cross_check(bars, quotes)
     _verify_signal_closes(ledger, bars, signal_day)
-    weights = sleeve_weights(signals(bars, signal_day))
-    weights = vol_scaled(weights, {i: daily_returns(b, signal_day) for i, b in bars.items()})
+    in_trend = signals(bars, signal_day)
+    before = sleeve_weights(in_trend)
+    weights = vol_scaled(before, {i: daily_returns(b, signal_day) for i, b in bars.items()})
+    ledger.record_signals(run_id, signal_day, _signal_records(bars, signal_day, in_trend, before, weights))
     proposed = orders_for(
         weights, holdings=holdings, prices=quotes, equity=account.equity, steps=config.universe
     )
@@ -150,6 +224,22 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
                 decision.order.instrument.ticker,
                 decision.reason,
             )
+        elif decision.reason.startswith("shrunk"):
+            log.warning("%s %s: %s", decision.order.side, decision.order.instrument.ticker, decision.reason)
+    ledger.record_decisions(
+        run_id,
+        [
+            DecisionRecord(
+                d.order.instrument,
+                d.order.side,
+                d.order.quantity,
+                None if d.approved is None else d.approved.order.quantity,
+                d.reason,
+                quotes.get(d.order.instrument),
+            )
+            for d in decisions
+        ],
+    )
     approved = [d.approved for d in decisions if d.approved is not None]
     result = execute(approved, broker, ledger, run_id=run_id, now=now, may_send=may_send)
     if result.stopped is None:
@@ -237,3 +327,29 @@ def _verify_signal_closes(ledger: Ledger, bars: Mapping[Instrument, Sequence[Bar
             f"signal-day closes for {signal_day} not verified against the broker, or changed since:"
             " month end skipped until the next one"
         )
+
+
+def _signal_records(
+    bars: Mapping[Instrument, Sequence[Bar]],
+    signal_day: date,
+    in_trend: Mapping[Instrument, bool],
+    before: Mapping[Instrument, float],
+    after: Mapping[Instrument, float],
+) -> list[SignalRecord]:
+    held = [i for i, w in before.items() if w > 0]
+    scale = after[held[0]] / before[held[0]] if held else 1.0
+    rows = []
+    for instrument, series in bars.items():
+        closes = [b.close for b in series if b.day <= signal_day][-SMA_DAYS:]
+        rows.append(
+            SignalRecord(
+                instrument,
+                closes[-1],
+                sum(closes) / len(closes),
+                in_trend[instrument],
+                before[instrument],
+                after[instrument],
+                scale,
+            )
+        )
+    return rows

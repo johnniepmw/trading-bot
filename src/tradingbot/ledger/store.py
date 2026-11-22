@@ -54,6 +54,120 @@ CREATE TABLE IF NOT EXISTS marks (
 """
 
 
+# Monitoring's decision record (docs/exec-plans/active/2026-11-22-monitoring.md, step 1).
+# Expand only: created on `open` too, so a ledger from before gains them; rows never change
+# except a run's end, outcome and reason.
+_RECORD_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    outcome TEXT,
+    reason TEXT,
+    version TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS signal_records (
+    run_id TEXT NOT NULL,
+    signal_day TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    close REAL NOT NULL,
+    sma REAL NOT NULL,
+    in_trend INTEGER NOT NULL,
+    weight_before REAL NOT NULL,
+    weight_after REAL NOT NULL,
+    scale REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS risk_decisions (
+    run_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    ticker TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    side TEXT NOT NULL,
+    proposed TEXT NOT NULL,
+    approved TEXT,
+    reason TEXT NOT NULL,
+    quote TEXT,
+    quote_currency TEXT
+);
+CREATE TABLE IF NOT EXISTS snapshots (
+    run_id TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    cash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS snapshot_positions (
+    run_id TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    quote TEXT,
+    value_gbp TEXT
+);
+CREATE TABLE IF NOT EXISTS previews (
+    run_id TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    in_trend INTEGER NOT NULL,
+    weight REAL NOT NULL
+);
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class RunRecord:
+    run_id: str
+    started_at: datetime
+    ended_at: datetime | None
+    outcome: str | None  # "completed", "stopped", or "died" (never finished; reported by a later run)
+    reason: str | None
+    version: str
+
+
+@dataclass(frozen=True, slots=True)
+class SignalRecord:
+    instrument: Instrument
+    close: float
+    sma: float
+    in_trend: bool
+    weight_before: float
+    weight_after: float
+    scale: float
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionRecord:
+    instrument: Instrument
+    side: Side
+    proposed_quantity: Decimal
+    approved_quantity: Decimal | None
+    reason: str
+    quote: Money | None
+
+
+@dataclass(frozen=True, slots=True)
+class PositionRecord:
+    instrument: Instrument
+    quantity: Decimal
+    quote: Money | None
+    value_gbp: Money | None
+
+
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    at: datetime
+    cash: Money
+    positions: list[PositionRecord]
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewRecord:
+    as_of: date
+    instrument: Instrument
+    in_trend: bool
+    weight: float
+
+
 class LedgerError(Exception):
     """The ledger can't be trusted or was used wrongly: no new orders."""
 
@@ -114,6 +228,7 @@ class Ledger:
         ):  # e.g. an empty or truncated download
             conn.close()
             raise LedgerError(f"not a ledger (missing tables): {path}")
+        conn.executescript(_RECORD_SCHEMA)
         return cls(conn)
 
     @classmethod
@@ -123,6 +238,7 @@ class Ledger:
             raise LedgerError(f"ledger already exists: {path}")
         conn = sqlite3.connect(path, isolation_level=None)  # autocommit: each write is durable at once
         conn.executescript(_SCHEMA)
+        conn.executescript(_RECORD_SCHEMA)
         return cls(conn)
 
     def close(self) -> None:
@@ -302,3 +418,172 @@ class Ledger:
         if amounts[-1] < max(amounts):
             raise LedgerError(f"high-water mark {amounts[-1]} is lower than an earlier {max(amounts)}")
         return Money(amounts[-1], Currency.GBP)
+
+    # --- the decision record (monitoring step 1) -----------------------------------------
+    def start_run(self, run_id: str, at: datetime, version: str) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO runs (run_id, started_at, version) VALUES (?, ?, ?)",
+            (run_id, _utc(at), version),
+        )
+
+    def finish_run(self, run_id: str, at: datetime, outcome: str, reason: str | None) -> None:
+        self._conn.execute(
+            "UPDATE runs SET ended_at = ?, outcome = ?, reason = ? WHERE run_id = ?",
+            (_utc(at), outcome, reason, run_id),
+        )
+
+    def unfinished_runs(self, except_run: str) -> list[RunRecord]:
+        return [r for r in self.runs() if r.outcome is None and r.run_id != except_run]
+
+    def mark_run_died(self, run_id: str) -> None:
+        self._conn.execute(
+            "UPDATE runs SET outcome = 'died', reason = 'never finished' WHERE run_id = ?", (run_id,)
+        )
+
+    def runs(self) -> list[RunRecord]:
+        rows = self._conn.execute(
+            "SELECT run_id, started_at, ended_at, outcome, reason, version FROM runs"
+            " ORDER BY started_at, rowid"
+        )
+        return [
+            RunRecord(
+                r[0],
+                datetime.fromisoformat(r[1]),
+                None if r[2] is None else datetime.fromisoformat(r[2]),
+                r[3],
+                r[4],
+                r[5],
+            )
+            for r in rows
+        ]
+
+    def record_signals(self, run_id: str, signal_day: date, rows: list[SignalRecord]) -> None:
+        for r in rows:
+            self._conn.execute(
+                "INSERT INTO signal_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    signal_day.isoformat(),
+                    r.instrument.ticker,
+                    r.instrument.currency.value,
+                    r.close,
+                    r.sma,
+                    int(r.in_trend),
+                    r.weight_before,
+                    r.weight_after,
+                    r.scale,
+                ),
+            )
+
+    def signal_records(self, signal_day: date) -> list[SignalRecord]:
+        rows = self._conn.execute(
+            "SELECT ticker, currency, close, sma, in_trend, weight_before, weight_after, scale"
+            " FROM signal_records"
+            " WHERE signal_day = ? ORDER BY rowid",
+            (signal_day.isoformat(),),
+        )
+        return [
+            SignalRecord(Instrument(r[0], Currency(r[1])), r[2], r[3], bool(r[4]), r[5], r[6], r[7])
+            for r in rows
+        ]
+
+    def record_decisions(self, run_id: str, rows: list[DecisionRecord]) -> None:
+        for seq, r in enumerate(rows):
+            self._conn.execute(
+                "INSERT INTO risk_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    seq,
+                    r.instrument.ticker,
+                    r.instrument.currency.value,
+                    r.side.value,
+                    str(r.proposed_quantity),
+                    None if r.approved_quantity is None else str(r.approved_quantity),
+                    r.reason,
+                    None if r.quote is None else str(r.quote.amount),
+                    None if r.quote is None else r.quote.currency.value,
+                ),
+            )
+
+    def decisions(self, run_id: str) -> list[DecisionRecord]:
+        rows = self._conn.execute(
+            "SELECT ticker, currency, side, proposed, approved, reason, quote, quote_currency"
+            " FROM risk_decisions"
+            " WHERE run_id = ? ORDER BY seq",
+            (run_id,),
+        )
+        return [
+            DecisionRecord(
+                Instrument(r[0], Currency(r[1])),
+                Side(r[2]),
+                Decimal(r[3]),
+                None if r[4] is None else Decimal(r[4]),
+                r[5],
+                None if r[6] is None else Money(Decimal(r[6]), Currency(r[7])),
+            )
+            for r in rows
+        ]
+
+    def record_snapshot(
+        self, run_id: str, at: datetime, cash: Money, positions: list[PositionRecord]
+    ) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO snapshots VALUES (?, ?, ?)", (run_id, _utc(at), str(cash.amount))
+        )
+        self._conn.execute("DELETE FROM snapshot_positions WHERE run_id = ?", (run_id,))
+        for p in positions:
+            self._conn.execute(
+                "INSERT INTO snapshot_positions VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    p.instrument.ticker,
+                    p.instrument.currency.value,
+                    str(p.quantity),
+                    None if p.quote is None else str(p.quote.amount),
+                    None if p.value_gbp is None else str(p.value_gbp.amount),
+                ),
+            )
+
+    def snapshot(self, run_id: str) -> Snapshot:
+        head = self._conn.execute("SELECT at, cash FROM snapshots WHERE run_id = ?", (run_id,)).fetchone()
+        if head is None:
+            raise LedgerError(f"no snapshot for {run_id}")
+        rows = self._conn.execute(
+            "SELECT ticker, currency, quantity, quote, value_gbp FROM snapshot_positions"
+            " WHERE run_id = ? ORDER BY rowid",
+            (run_id,),
+        )
+        positions = [
+            PositionRecord(
+                Instrument(r[0], Currency(r[1])),
+                Decimal(r[2]),
+                None if r[3] is None else Money(Decimal(r[3]), Currency(r[1])),
+                None if r[4] is None else Money(Decimal(r[4]), Currency.GBP),
+            )
+            for r in rows
+        ]
+        return Snapshot(datetime.fromisoformat(head[0]), Money(Decimal(head[1]), Currency.GBP), positions)
+
+    def record_preview(self, run_id: str, rows: list[PreviewRecord]) -> None:
+        for r in rows:
+            self._conn.execute(
+                "INSERT INTO previews VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    r.as_of.isoformat(),
+                    r.instrument.ticker,
+                    r.instrument.currency.value,
+                    int(r.in_trend),
+                    r.weight,
+                ),
+            )
+
+    def preview(self, run_id: str) -> list[PreviewRecord]:
+        rows = self._conn.execute(
+            "SELECT as_of, ticker, currency, in_trend, weight FROM previews WHERE run_id = ? ORDER BY rowid",
+            (run_id,),
+        )
+        return [
+            PreviewRecord(date.fromisoformat(r[0]), Instrument(r[1], Currency(r[2])), bool(r[3]), r[4])
+            for r in rows
+        ]
