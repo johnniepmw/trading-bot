@@ -238,7 +238,10 @@ class RemoteLedger:
         stored = ledger.high_water_mark()
         if self._mark is None:  # only setup creates it; recreating it is an owner step
             ledger.close()
-            log.error("reference mark missing: the run stops; restore it (ledger restore runbook)")
+            log.log(
+                logging.WARNING if self._scratch else logging.ERROR,  # a dry run alerts nothing
+                "reference mark missing: the run stops; restore it (ledger restore runbook)",
+            )
             raise RestoredLedgerError("reference mark missing: a run never re-creates it from the ledger")
         if stored is None or stored < self._mark:
             ledger.close()

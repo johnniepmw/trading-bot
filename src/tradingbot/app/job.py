@@ -127,8 +127,11 @@ def last_close_day(today: date) -> date:
 class FakeAccount:
     """The fake broker's account, saved in the ledger bucket so runs share it (fakes only)."""
 
-    def __init__(self, store: ObjectStore, bucket: str, config: BotConfig, today: date) -> None:
-        self._store, self._bucket = store, bucket
+    def __init__(
+        self, store: ObjectStore, bucket: str, config: BotConfig, clock: Callable[[], datetime]
+    ) -> None:
+        self._store, self._bucket, self._clock = store, bucket, clock
+        today = clock().date()
         close_day = last_close_day(today)
         self._quotes = {i: price_money(i, synthetic_close(i, close_day)) for i in config.universe}
         self._generation = 0
@@ -136,10 +139,13 @@ class FakeAccount:
     def load(self) -> FakeBroker:
         found = self._store.info(self._bucket, FAKE_ACCOUNT_OBJECT)
         if found is None:
-            return FakeBroker(FAKE_STARTING_CASH, self._quotes)
-        self._generation = found.generation
-        state = json.loads(self._store.read(self._bucket, FAKE_ACCOUNT_OBJECT, found.generation))
-        return FakeBroker.load(state, self._quotes)
+            broker = FakeBroker(FAKE_STARTING_CASH, self._quotes)
+        else:
+            self._generation = found.generation
+            state = json.loads(self._store.read(self._bucket, FAKE_ACCOUNT_OBJECT, found.generation))
+            broker = FakeBroker.load(state, self._quotes)
+        broker.now = self._clock  # the job's clock: reconcile compares order and intent times
+        return broker
 
     def save(self, broker: FakeBroker) -> None:
         body = json.dumps(broker.dump()).encode()
@@ -174,7 +180,39 @@ class Job:
             clock=self.clock,
         )
 
+    # Every stop ends in one log line: ERROR "cycle stopped" / "setup refused" (the alert) or
+    # WARNING "dry run stopped". JobConfigError still propagates: main logs "refusing to start".
     def run(self) -> int:
+        """One cycle under the lock. 0 completed, 1 stopped (alerted), 3 skipped."""
+        try:
+            return self._run()
+        except JobConfigError:
+            raise
+        except Exception as error:
+            log.exception("cycle stopped: %s: %s", type(error).__name__, error)
+            return EXIT_STOPPED
+
+    def dry_run(self) -> int:
+        """The cycle up to sending, on a scratch copy: no lock, no upload, no sending (AC6)."""
+        try:
+            return self._dry_run()
+        except JobConfigError:
+            raise
+        except Exception as error:  # noqa: BLE001 - reported, never an alert (the real run alerts)
+            log.warning("dry run stopped: %s: %s", type(error).__name__, error)
+            return EXIT_STOPPED
+
+    def setup(self, equity: str) -> int:
+        """The owner's ledger setup (AC9)."""
+        try:
+            return self._setup(equity)
+        except JobConfigError:
+            raise
+        except Exception as error:
+            log.exception("setup refused: %s: %s", type(error).__name__, error)
+            return EXIT_STOPPED
+
+    def _run(self) -> int:
         """One cycle under the lock. 0 completed, 1 stopped (alerted), 3 skipped."""
         warn_if_live_requested(self.config, self.wiring)
         check_prod_ready(self.wiring, self.config)
@@ -205,7 +243,7 @@ class Job:
     def _run_locked(self, remote: RemoteLedger, run_id: str, signal_day: date, now: datetime) -> int:
         try:
             ledger = remote.open()
-            account = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, now.date())
+            account = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, self.clock)
             broker = account.load()
         except (LedgerStorageError, OSError, ValueError) as error:
             log.error("cycle stopped: %s", error)
@@ -230,7 +268,7 @@ class Job:
             return EXIT_OK
         return EXIT_STOPPED
 
-    def dry_run(self) -> int:
+    def _dry_run(self) -> int:
         """The cycle up to sending, on a scratch copy: no lock, no upload, no sending (AC6)."""
         check_prod_ready(self.wiring, self.config)
         now = self.clock()
@@ -239,8 +277,8 @@ class Job:
             try:
                 calendar = self._calendar()
                 signal_day = calendar.signal_day(now.date())
+                reader = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, self.clock).load()
                 ledger = self._remote(Path(scratch)).open_scratch()
-                reader = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, now.date()).load()
             except (CalendarError, LedgerStorageError, OSError, ValueError) as error:
                 log.warning("dry run stopped: %s", error)
                 return EXIT_STOPPED
@@ -258,13 +296,13 @@ class Job:
                 ledger.close()
         return EXIT_OK if report.stopped is None else EXIT_STOPPED
 
-    def setup(self, equity: str) -> int:
+    def _setup(self, equity: str) -> int:
         """The owner's ledger setup (AC9): create the ledger, seed the high-water mark from the
         broker's equity once the owner's own figure agrees, take the lock throughout."""
         check_prod_ready(self.wiring, self.config)
         try:
             stated = Money(Decimal(equity), Currency.GBP)
-        except InvalidOperation:
+        except (InvalidOperation, ValueError):  # Money refuses NaN and infinity
             log.error("setup refused: --equity must be an amount in GBP")
             return EXIT_STOPPED
         now = self.clock()
@@ -282,7 +320,7 @@ class Job:
                 remote.release()
 
     def _setup_locked(self, remote: RemoteLedger, stated: Money, now: datetime) -> int:
-        account = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, now.date())
+        account = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, self.clock)
         try:
             broker = account.load()
             actual = broker.account().equity

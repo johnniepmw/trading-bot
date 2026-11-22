@@ -26,6 +26,7 @@ from tradingbot.app.job import (
 from tradingbot.app.local_store import LocalObjectStore
 from tradingbot.app.remote_ledger import LEDGER_OBJECT, LOCK_OBJECT
 from tradingbot.config.load import load_config
+from tradingbot.ledger.store import IntentState, Ledger
 
 SETUP_DAY = datetime(2026, 11, 30, 7, 15, tzinfo=UTC)  # a Monday
 RUN_DAY = datetime(2026, 12, 1, 7, 15, tzinfo=UTC)  # the first run after November's month end
@@ -191,6 +192,15 @@ def test_a_date_past_the_calendar_stops_the_run(set_up: Path) -> None:
     assert job_at(set_up, datetime(2028, 1, 4, 7, 15, tzinfo=UTC)).run() == EXIT_STOPPED
 
 
+def saved_ledger(tmp_path: Path) -> Ledger:
+    s = store(tmp_path)
+    info = s.info("ledger", LEDGER_OBJECT)
+    assert info is not None
+    path = tmp_path / "check.sqlite"
+    path.write_bytes(s.read("ledger", LEDGER_OBJECT, info.generation))
+    return Ledger.open(path)
+
+
 class Crash(BaseException):
     """The process dies mid-send."""
 
@@ -216,18 +226,25 @@ def test_drill_a_crash_mid_send_then_a_fresh_run_sends_nothing_twice(
     monkeypatch.setattr(RemoteLedger, "checkpoint", original)
     assert len(fake_orders(set_up)) == 1  # order 1 reached the broker; the remote ledger says intended
 
+    first_order = fake_orders(set_up)[0]["id"]
+
     assert job_at(set_up, RUN_DAY).run() == EXIT_OK  # a fresh run with a new run ID
     tickers = [o["ticker"] for o in fake_orders(set_up)]
     assert len(tickers) > 1  # the rest of the month end was sent
     assert len(tickers) == len(set(tickers))  # and nothing twice
+    ledger = saved_ledger(set_up)
+    [matched] = [i for i in ledger.settled() if i.broker_order_id == first_order]
+    assert matched.state is IntentState.FILLED  # reconcile linked the saved intent to its broker order
+    # (a real crash would also leave the lock held until `ops unlock`; `release` runs here)
 
 
 # --- dry run (AC6) ----------------------------------------------------------------------
 def test_a_dry_run_reports_and_touches_nothing(set_up: Path, caplog: pytest.LogCaptureFixture) -> None:
-    before = sorted(p.name for p in (set_up / "store").rglob("*"))
+    before = {p: p.read_bytes() for p in (set_up / "store").rglob("*") if p.is_file()}
     with caplog.at_level(logging.INFO):
         assert job_at(set_up, RUN_DAY).dry_run() == EXIT_OK
-    assert sorted(p.name for p in (set_up / "store").rglob("*")) == before  # no upload, no lock
+    after = {p: p.read_bytes() for p in (set_up / "store").rglob("*") if p.is_file()}
+    assert after == before  # no upload, no lock, nothing rewritten
     assert fake_orders(set_up) == []
     assert "order(s) would be sent" in caplog.text
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -317,3 +334,51 @@ def test_a_dry_run_reports_account_vetoes_without_alerting(
         job_at(tmp_path, RUN_DAY).dry_run()
     assert "no day-start equity" in caplog.text  # a run would alert on this
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+class BrokenStore(LocalObjectStore):
+    """A bucket the job's identity can't use (HTTP 403)."""
+
+    def info(self, bucket: str, name: str) -> None:  # type: ignore[override]
+        from tradingbot.app.storage import StorageError  # noqa: PLC0415
+
+        raise StorageError(f"info {name}: HTTP 403")
+
+
+def broken_job(tmp_path: Path, when: datetime) -> Job:
+    from dataclasses import replace  # noqa: PLC0415
+
+    return replace(job_at(tmp_path, when), store=BrokenStore(tmp_path / "store"))
+
+
+def test_a_storage_failure_stops_the_run_with_an_alert(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.ERROR):
+        assert broken_job(tmp_path, RUN_DAY).run() == EXIT_STOPPED
+    assert any(
+        r.getMessage().startswith("cycle stopped: ") and "403" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_a_storage_failure_stops_setup_with_an_alert(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.ERROR):
+        assert broken_job(tmp_path, SETUP_DAY).setup("1000") == EXIT_STOPPED
+    assert "setup refused" in caplog.text
+
+
+def test_a_storage_failure_stops_a_dry_run_with_its_own_line(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        assert broken_job(tmp_path, RUN_DAY).dry_run() == EXIT_STOPPED
+    assert "dry run stopped" in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.parametrize("equity", ["NaN", "Infinity", "-5"])
+def test_setup_refuses_an_equity_that_isnt_a_positive_amount(tmp_path: Path, equity: str) -> None:
+    assert job_at(tmp_path, SETUP_DAY).setup(equity) == EXIT_STOPPED
+    assert store(tmp_path).info("ledger", LEDGER_OBJECT) is None
