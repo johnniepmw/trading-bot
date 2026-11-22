@@ -37,6 +37,13 @@ scanning and push protection on the free plan. No GitHub Pro needed.
    before", wait two minutes and re-run), then creates the state bucket, Artifact Registry,
    Workload Identity Federation and the three CI identities, and migrates its own state
    into the bucket.
+   Before every bootstrap run, check that no service account holds Owner, Editor or a
+   Secret Manager role on the project (CI may act as the bot's runtime identities, so any
+   other identity with those roles would be a way around the owner-only `prod-operator`
+   secret, ADR-0009). This should print nothing:
+   `gcloud projects get-iam-policy PROJECT_ID --flatten=bindings --filter='bindings.members:serviceAccount AND (bindings.role:roles/owner OR bindings.role:roles/editor OR bindings.role:secretmanager)' --format='value(bindings.role, bindings.members)'`
+   If it lists a default account (`…-compute@developer.gserviceaccount.com` or
+   `…@appspot.gserviceaccount.com`), remove that binding in IAM before continuing.
 5. `make gh-vars` — writes the outputs into GitHub Actions variables. **This repo: don't
    run it until the Phase 2 job module lands.** Once the variables exist, the deploy
    workflow tries to deploy the bot as a service and fails on every merge to main

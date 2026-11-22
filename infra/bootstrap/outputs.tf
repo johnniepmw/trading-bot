@@ -39,9 +39,9 @@ output "sa_infra_apply" {
   value = google_service_account.ci["ci-infra-apply"].email
 }
 
-output "sa_prod_runtime" {
-  description = "The prod job's runtime identity (created here so it can read the owner-only operator secret)."
-  value       = google_service_account.prod_runtime.email
+output "sa_runtime" {
+  description = "Runtime identities created here (staging-job, prod-job, scheduler); environments use them, never create their own."
+  value       = { for k, sa in google_service_account.runtime : k => sa.email }
 }
 
 output "operator_secret" {
