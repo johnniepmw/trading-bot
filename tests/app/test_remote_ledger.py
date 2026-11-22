@@ -358,3 +358,24 @@ def test_only_setup_creates_the_reference_mark(ready: FakeStore, clock: Clock, t
     ledger.update_high_water_mark(gbp("1050"), NOW)
     with pytest.raises(LostRaceError):
         run.checkpoint()  # the mark's generation no longer matches: not silently re-created
+
+
+def test_a_scratch_copy_needs_no_lock_and_is_never_uploaded(
+    ready: FakeStore, clock: Clock, tmp_path: Path
+) -> None:
+    writes = ready.writes
+    dry = remote(ready, clock, tmp_path / "dry")
+    ledger = dry.open_scratch()
+    ledger.record_equity(NOW.date(), gbp("990"))
+    with pytest.raises(LedgerStorageError, match="never uploaded"):
+        dry.checkpoint()
+    assert ready.writes == writes
+    assert ready.data(LOCKS, LOCK_OBJECT) is None
+
+
+def test_a_scratch_copy_is_checked_against_the_reference_mark(
+    ready: FakeStore, clock: Clock, tmp_path: Path
+) -> None:
+    ready.put(LOCKS, MARK_OBJECT, b'{"amount": "5000", "currency": "GBP"}')
+    with pytest.raises(RestoredLedgerError):
+        remote(ready, clock, tmp_path / "dry").open_scratch()

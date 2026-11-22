@@ -326,14 +326,24 @@ def test_the_place_scan_catches_each_way_round_it(planted: str) -> None:
     assert uses(planted, {"place"})
 
 
-def test_no_daily_code_seeds_the_mark() -> None:
+def test_only_the_owners_setup_command_seeds_the_mark() -> None:
     # owner setup steps only: otherwise "no mark: seed it" invites re-seeding a lost history
-    assert modules_using({"seed_high_water_mark"}) == []
+    assert modules_using({"seed_high_water_mark"}) == ["app/job.py"]
+
+
+def test_the_setup_command_is_the_only_seeding_function() -> None:
+    tree = ast.parse((SRC / "app" / "job.py").read_text())
+    seeding = [
+        f.name
+        for f in ast.walk(tree)
+        if isinstance(f, ast.FunctionDef) and uses(ast.unparse(f), {"seed_high_water_mark", "create"})
+    ]
+    assert seeding == ["_setup_locked"]
 
 
 def test_only_the_remote_ledgers_setup_path_creates_a_ledger() -> None:
     # RemoteLedger.create refuses where a ledger or reference mark ever existed (ADR-0017)
-    assert modules_using({"create"}) == ["app/remote_ledger.py"]
+    assert modules_using({"create"}) == ["app/job.py", "app/remote_ledger.py"]  # job: setup only (above)
 
 
 def test_an_unknown_broker_order_stops_execute_itself(broker: FakeBroker, ledger: Ledger) -> None:

@@ -61,7 +61,9 @@ class BrokerOrder:
     created_at: datetime  # UTC, as the broker records it
 
 
-class Broker(Protocol):
+class BrokerReader(Protocol):
+    """Everything but sending: what a dry run gets, so it can't place an order (Phase 2 AC6)."""
+
     def account(self) -> AccountSnapshot: ...
 
     def positions(self) -> Sequence[Position]:
@@ -72,14 +74,16 @@ class Broker(Protocol):
         """The live price in the instrument's quote currency."""
         ...
 
-    def place(self, order: ApprovedOrder) -> str:
-        """Send a market order; return the broker's order ID. Raises BrokerTimeoutError when the
-        outcome is unknown, BrokerError when nothing was placed."""
-        ...
-
     def order(self, order_id: str) -> BrokerOrder: ...
 
     def recent_orders(self) -> Sequence[BrokerOrder]:
         """Every order since the oldest open ledger intent (at least the last 7 days),
         working ones included, oldest first. Reconcile relies on this being complete."""
+        ...
+
+
+class Broker(BrokerReader, Protocol):
+    def place(self, order: ApprovedOrder) -> str:
+        """Send a market order; return the broker's order ID. Raises BrokerTimeoutError when the
+        outcome is unknown, BrokerError when nothing was placed."""
         ...

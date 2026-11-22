@@ -1,8 +1,10 @@
 # Runbook: set up the ledger and seed the high-water mark (owner, once)
 
 **When**: once, before the bot's first run in an environment (staging, then prod). Never
-again for the same account. The command that does this arrives with Phase 2's job wiring;
-this page states the rules it follows.
+again for the same account. The command is `python -m tradingbot.app setup --equity <GBP>`,
+run as a one-off execution of the environment's job (its own identity and broker; the exact
+`gcloud` command arrives with the job in Phase 2 step 5). Prod can't run it until the
+Trading 212 adapter exists (step 4).
 
 **Why it is an owner step**: the high-water mark is the peak the 20% drawdown stop is
 measured from. If code could set it, a lost or damaged ledger could be "repaired" by
@@ -12,9 +14,11 @@ the first mark itself (`tests/execution/test_executor.py` checks no daily code c
 
 1. Confirm the account's current equity in the Trading 212 app (the paper or live account
    this environment uses).
-2. Run the setup command (Phase 2) with that equity. It creates the ledger file and records
-   the equity as the first high-water mark and as that day's equity. It refuses if a
-   ledger already exists.
+2. Run the setup command with that equity (`--equity 1000.00`). It takes the run lock,
+   checks your figure against the broker's equity (within 2%), creates the ledger, records
+   the broker's equity as the first high-water mark and as that day's equity, saves it, and
+   writes the reference mark (ADR-0017). It refuses if a ledger ever existed in the bucket
+   (any version) or a reference mark exists, and if your figure doesn't match.
 3. The next run starts from that mark. Day-start equity for the daily-loss pause is the
    previous day's recorded equity, so seed at least a day before the first run: a run on
    the seed's own day has no previous day and pauses buys (an ERROR "no day-start equity"

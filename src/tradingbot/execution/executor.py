@@ -24,6 +24,7 @@ from tradingbot.brokers.port import (
     Broker,
     BrokerError,
     BrokerOrder,
+    BrokerReader,
     BrokerTimeoutError,
     OrderStatus,
 )
@@ -125,7 +126,7 @@ def _settle(ledger: Ledger, intent: Intent, order: BrokerOrder, result: Reconcil
         result.problems.append(f"intent {intent.intent_id}: broker order still {order.status}")
 
 
-def reconcile(broker: Broker, ledger: Ledger) -> ReconcileResult:
+def reconcile(broker: BrokerReader, ledger: Ledger) -> ReconcileResult:
     """Settle every open intent from the broker's records. Problems block new orders."""
     result = ReconcileResult()
     linked = ledger.linked_order_ids()
