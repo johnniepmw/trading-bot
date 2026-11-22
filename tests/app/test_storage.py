@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -88,6 +89,22 @@ def test_write_failures_are_classified(status: int, error: type[StorageError]) -
     store, _ = gcs((status, b""))
     with pytest.raises(error):
         store.write("b", "ledger.sqlite", b"db", if_generation_match=5)
+
+
+def test_a_write_to_a_missing_bucket_is_not_a_lost_race() -> None:
+    store, _ = gcs((404, b""))
+    with pytest.raises(StorageError) as raised:
+        store.write("no-such-bucket", "run.lock", b"x", if_generation_match=0)
+    assert not isinstance(raised.value, TransientStorageError | PreconditionFailedError)
+
+
+def test_a_broken_response_is_transient(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*_: object, **__: object) -> None:
+        raise http.client.IncompleteRead(b"")
+
+    monkeypatch.setattr(storage._OPENER, "open", fail)
+    with pytest.raises(TransientStorageError):
+        storage.urllib_transport(1.0)("POST", "https://storage.googleapis.com/x", {}, b"")
 
 
 def test_a_403_is_not_retryable() -> None:

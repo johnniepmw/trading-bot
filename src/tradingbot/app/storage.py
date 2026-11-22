@@ -8,6 +8,7 @@ Redirects are refused, so the bearer token never leaves storage.googleapis.com.
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -70,7 +71,7 @@ def urllib_transport(timeout: float) -> Transport:
                 return response.status, response.read()
         except urllib.error.HTTPError as error:
             return error.code, error.read()
-        except (TimeoutError, urllib.error.URLError, ConnectionError) as error:
+        except (TimeoutError, urllib.error.URLError, ConnectionError, http.client.HTTPException) as error:
             raise TransientStorageError(f"{method} {url.split('?', maxsplit=1)[0]}: {error}") from error
 
     return send
@@ -87,10 +88,12 @@ def metadata_token(transport: Transport) -> str:
     return token
 
 
-def _error(status: int, what: str) -> StorageError:
+def _error(status: int, what: str, *, missing_is_precondition: bool = True) -> StorageError:
+    """404 means "that object or generation is gone" for reads and deletes; on a write it can
+    only mean a missing bucket, which is a misconfiguration, never a lost race."""
     if status in _RETRYABLE:
         return TransientStorageError(f"{what}: HTTP {status}")
-    if status in {404, 412}:
+    if status == 412 or (status == 404 and missing_is_precondition):  # noqa: PLR2004
         return PreconditionFailedError(f"{what}: HTTP {status}")
     return StorageError(f"{what}: HTTP {status}")
 
@@ -145,7 +148,7 @@ class GcsObjectStore:
         )
         status, body = self._call("POST", f"{_UPLOAD}{urllib.parse.quote(bucket, safe='')}/o?{query}", data)
         if status != 200:  # noqa: PLR2004
-            raise _error(status, f"write {name}")
+            raise _error(status, f"write {name}", missing_is_precondition=False)
         return _parse_info(body, f"write {name}")
 
     def delete(self, bucket: str, name: str, *, if_generation_match: int) -> None:

@@ -25,15 +25,19 @@ would quietly bring back an older, lower high-water mark and loosen the drawdown
 Option 2, in `app/remote_ledger.py` over the `ObjectStore` port in `app/storage.py`:
 - **Lock**: a run first creates `run.lock` in its own lock bucket with
   `ifGenerationMatch=0`, holding the execution name, run ID and holder; it deletes it last,
-  by generation, so it never removes someone else's. The lock bucket is separate so the
-  runtime identity's delete permission can't touch ledger versions. A lock younger than
+  by generation, so it never removes someone else's. The lock bucket is separate from the
+  ledger bucket (step 5 sets the IAM; overwriting an object may itself need delete
+  permission, which step 5 checks). A lock younger than
   `STALE_AFTER` (1 hour, measured from the object's `timeCreated`) stops the run with a
   warning, `run skipped: lock held by …` (a duplicate trigger, not an alert); an older one
   stops it with an error, `stale lock: …`, and only the owner clears it (`ops unlock`,
-  Phase 2 step 6). A failed release is logged as an error and never raised.
+  Phase 2 step 6), after confirming no execution is running. The job's timeout must stay
+  below `STALE_AFTER` (step 5 tests it): a hung run past its pre-send checkpoint could
+  otherwise send an order after a newer run had settled that intent as not sent. A failed release is logged as an error and never raised.
 - **Checkpoints**: `execute` takes a `checkpoint` callback and calls it after reconcile,
   after each intent is recorded (before its order is sent) and after each change of an
-  intent's state. Each checkpoint uploads the ledger with the generation this run last saw.
+  intent's state, and `run_cycle` calls it once more at the end of every run, whatever
+  happened (the mark, equity, settlements, the run record). Each checkpoint uploads the ledger with the generation this run last saw.
   Timeouts, connection errors, 408, 429 and 5xx are retried (3 attempts); a 412 after an
   attempt that may have landed is compared with the stored object's MD5, so our own landed
   upload is success and anything else a lost race. Any failure stops the run before the next

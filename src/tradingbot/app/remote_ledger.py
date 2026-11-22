@@ -174,12 +174,21 @@ class RemoteLedger:
     def release(self) -> None:
         """Close the local ledger and delete our lock (by generation, so never someone
         else's). Never raises: a failure is logged as an alert and the lock goes stale."""
-        if self._ledger is not None:
-            self._ledger.close()
-            self._ledger = None
+        try:
+            if self._ledger is not None:
+                ledger, self._ledger = self._ledger, None
+                ledger.close()
+        except Exception as error:  # noqa: BLE001 - still release the lock
+            log.error("ledger close failed: %s", error)
         lock, self._lock = self._lock, None
         if lock is None:
             return
+        try:
+            self._delete_lock(lock)
+        except Exception as error:  # noqa: BLE001 - never raises; the lock goes stale and alerts
+            log.error("lock release failed: %s", error)
+
+    def _delete_lock(self, lock: ObjectInfo) -> None:
         uncertain = False
 
         def attempt() -> None:
@@ -193,17 +202,9 @@ class RemoteLedger:
         try:
             self._retry("release lock", attempt)
         except PreconditionFailedError:
-            current = self._store_info_or_none(self._lock_bucket, LOCK_OBJECT)
-            if not (uncertain and current is None):  # gone after a lost response: released
-                log.error("lock release failed: the lock was replaced or removed by someone else")
-        except (LedgerStorageError, StorageError) as error:
-            log.error("lock release failed: %s", error)
-
-    def _store_info_or_none(self, bucket: str, name: str) -> ObjectInfo | None:
-        try:
-            return self._retry(f"info {name}", lambda: self._store.info(bucket, name))
-        except (LedgerStorageError, StorageError):
-            return None
+            gone = self._retry("lock info", lambda: self._store.info(self._lock_bucket, LOCK_OBJECT)) is None
+            if not (uncertain and gone):  # gone after a lost response: our delete landed
+                raise LedgerStorageError("the lock was replaced or removed by someone else") from None
 
     # --- the ledger (AC2, AC3) -------------------------------------------------------
     def _require_lock(self) -> None:

@@ -3,6 +3,7 @@
 Things noticed but deliberately left out of scope. One line each, newest first.
 Format: `- YYYY-MM-DD <area>: <problem> — <impact> — <suggested fix>`
 
+- 2026-11-22 flags: `app/flags.py` reads overrides with its own `urlopen` and metadata-token code, which follows redirects, while the ledger uses `app/storage.py` (redirects refused) — two GCS clients, and the flags one could forward its token on a redirect — move `GcsSource` onto `GcsObjectStore` and `urllib_transport`
 - 2026-11-21 agent-review (pre-existing, high): the required `agent-review` check is matched by name only, so a workflow on any branch with `checks: write` could create a passing `agent-review` check run on a PR head (the `risk-gate` status is now pinned to its own app; see docs/runbooks/risk-gate-app.md) — post the verdict through a dedicated app too and pin `integration_id` to it
 - 2026-11-21 risk-gate (pre-existing): `main()` reads `head.sha`, then the file list, and sets the status on the first SHA without re-checking the head, so a quick push of a harmless commit can earn success for a malicious one that is force-pushed back (its old CI and review results are still green) — re-fetch the PR after listing files and set no status if `head.sha` changed
 - 2026-11-21 dependabot: the tag check accepts any upstream tag, so a "bump" to an older release with a known vulnerability is still standard — require the new `vX.Y.Z` to be greater than the old one

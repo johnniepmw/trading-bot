@@ -94,7 +94,9 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
     checkpoint: Callable[[], None],
     version: str,
 ) -> CycleReport:
-    """`clock` gives the current UTC time (read at the start and again at the end)."""
+    """`clock` gives the current UTC time (read at the start and again at the end).
+    `checkpoint` saves the ledger remotely: around each order (in `execute`) and once at the
+    end of every run, whatever happened."""
     recorded = False
     now: datetime | None = None
     try:
@@ -114,6 +116,12 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
         report = CycleReport(0, reason)
     if recorded and now is not None:
         _finish_record(ledger, history, config, run_id=run_id, started=now, clock=clock, report=report)
+    try:  # every run saves at the end: the mark, equity, settlements and the run record (ADR-0017)
+        checkpoint()
+    except Exception as error:  # noqa: BLE001 - any failure to save is a stop with an alert
+        reason = f"ledger not saved: {type(error).__name__}: {error}"
+        log.error("cycle stopped: %s", reason)
+        report = CycleReport(report.sent, reason)
     return report
 
 
