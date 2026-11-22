@@ -6,6 +6,7 @@ Every drill ends with no new orders and an ERROR log line (fail closed, ARCHITEC
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -16,13 +17,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.bars import weekdays
-from tradingbot.app.cycle import CycleConfig, run_cycle
+from tradingbot.app.cycle import CycleConfig, CycleReport, run_cycle
 from tradingbot.brokers.fake.broker import FakeBroker
 from tradingbot.brokers.port import AccountSnapshot, BrokerError
 from tradingbot.domain.market import Bar, Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
-from tradingbot.ledger.store import IntentState, Ledger
-from tradingbot.strategy.trend import month_end_days
+from tradingbot.ledger.store import IntentState, Ledger, LedgerError
+from tradingbot.portfolio.weights import daily_returns, sleeve_weights, vol_scaled
+from tradingbot.risk.limits import Limits
+from tradingbot.strategy.trend import month_end_days, signals
 
 UP = Instrument("UP", Currency.GBP)  # trends up: held
 DOWN = Instrument("DOWN", Currency.GBX)  # trends down, quoted in pence: cash
@@ -89,6 +92,9 @@ def cycle(broker: FakeBroker, ledger: Ledger, **kw: object):  # type: ignore[no-
         "may_send": lambda: True,
     }
     args.update(kw)
+    now = args.pop("now")
+    args.setdefault("clock", lambda: now)  # a fixed clock unless a test passes a moving one
+    args.setdefault("version", "test")
     return run_cycle(**args)  # type: ignore[arg-type]
 
 
@@ -129,7 +135,13 @@ def test_the_high_water_mark_and_day_start_are_kept(broker: FakeBroker, ledger: 
 
 
 # --- drills: each one sends nothing and logs an ERROR --------------------------------
-def assert_stopped(report: object, broker: FakeBroker, caplog: pytest.LogCaptureFixture, why: str) -> None:
+def assert_stopped(
+    ledger: Ledger | None, report: object, broker: FakeBroker, caplog: pytest.LogCaptureFixture, why: str
+) -> None:
+    """No orders, an ERROR naming why, and (monitoring AC1) a run record stopped for that reason."""
+    if ledger is not None:
+        record = ledger.runs()[-1]
+        assert record.outcome == "stopped" and record.reason is not None and why in record.reason, record
     assert report.sent == 0  # type: ignore[attr-defined]
     assert report.stopped is not None and why in report.stopped  # type: ignore[attr-defined]
     assert any(why in m for m in errors(caplog)), errors(caplog)
@@ -137,7 +149,7 @@ def assert_stopped(report: object, broker: FakeBroker, caplog: pytest.LogCapture
 
 def test_drill_kill_switch_off(broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture) -> None:
     report = cycle(broker, ledger, may_send=lambda: False)
-    assert_stopped(report, broker, caplog, "kill switch")
+    assert_stopped(ledger, report, broker, caplog, "kill switch")
     assert broker.recent_orders() == []
 
 
@@ -148,7 +160,7 @@ def test_drill_missing_bar_on_the_signal_day(
     history = FakeHistory()
     history.bars[UP] = [b for b in history.bars[UP] if b.day != SIGNAL_DAY]
     report = cycle(broker, ledger, history=history)
-    assert_stopped(report, broker, caplog, "stale")
+    assert_stopped(ledger, report, broker, caplog, "stale")
     assert broker.recent_orders() == []
 
 
@@ -157,7 +169,7 @@ def test_drill_hundredfold_price_jump(
 ) -> None:
     history = FakeHistory()
     history.bars[UP][-60] = replace(history.bars[UP][-60], open=10_000.0, close=10_000.0)
-    assert_stopped(cycle(broker, ledger, history=history), broker, caplog, "jump")
+    assert_stopped(ledger, cycle(broker, ledger, history=history), broker, caplog, "jump")
     assert broker.recent_orders() == []
 
 
@@ -165,7 +177,7 @@ def test_drill_data_source_disagrees_with_the_broker(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
     broker.quotes[UP] = Money(broker.quotes[UP].amount * Decimal("1.05"), Currency.GBP)
-    assert_stopped(cycle(broker, ledger), broker, caplog, "cross-check")
+    assert_stopped(ledger, cycle(broker, ledger), broker, caplog, "cross-check")
     assert broker.recent_orders() == []
 
 
@@ -174,7 +186,7 @@ def test_drill_unmapped_broker_position(
 ) -> None:
     broker._held[Instrument("MYSTERY", Currency.GBP)] = Decimal(1)
     broker.quotes[Instrument("MYSTERY", Currency.GBP)] = gbp(10)
-    assert_stopped(cycle(broker, ledger), broker, caplog, "no instrument")
+    assert_stopped(ledger, cycle(broker, ledger), broker, caplog, "no instrument")
     assert broker.recent_orders() == []
 
 
@@ -182,7 +194,7 @@ def test_drill_mark_never_seeded(
     broker: FakeBroker, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     fresh = Ledger.create(tmp_path / "fresh.sqlite")
-    assert_stopped(cycle(broker, fresh), broker, caplog, "high-water mark")
+    assert_stopped(fresh, cycle(broker, fresh), broker, caplog, "high-water mark")
     fresh.close()
     assert broker.recent_orders() == []
 
@@ -191,7 +203,7 @@ def test_drill_mark_lower_than_recorded(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
     ledger._conn.execute("INSERT INTO marks (amount, at) VALUES ('700', ?)", (NOW.isoformat(),))
-    assert_stopped(cycle(broker, ledger), broker, caplog, "lower than")
+    assert_stopped(ledger, cycle(broker, ledger), broker, caplog, "lower than")
     assert broker.recent_orders() == []
 
 
@@ -199,7 +211,7 @@ def test_drill_unknown_order_from_an_earlier_run(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
     ledger.mark_unknown(ledger.record_intent("run-0", Order(UP, Side.BUY, Decimal(1)), NOW))
-    assert_stopped(cycle(broker, ledger), broker, caplog, "not reconciled")
+    assert_stopped(ledger, cycle(broker, ledger), broker, caplog, "not reconciled")
     assert broker.recent_orders() == []
 
 
@@ -213,7 +225,7 @@ def test_drill_unknown_order_from_an_earlier_run(
 def test_drill_clock_not_in_utc(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture, clock: datetime
 ) -> None:
-    assert_stopped(cycle(broker, ledger, now=clock), broker, caplog, "UTC")
+    assert_stopped(None, cycle(broker, ledger, now=clock), broker, caplog, "UTC")
     assert broker.recent_orders() == []
 
 
@@ -221,7 +233,7 @@ def test_drill_signal_day_in_the_future(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
     report = cycle(broker, ledger, signal_day=NOW.date())  # bars for "today" can't be complete yet
-    assert_stopped(report, broker, caplog, "signal day")
+    assert_stopped(ledger, report, broker, caplog, "signal day")
 
 
 def test_drill_broker_api_error(broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture) -> None:
@@ -229,7 +241,7 @@ def test_drill_broker_api_error(broker: FakeBroker, ledger: Ledger, caplog: pyte
         raise BrokerError("503 Service Unavailable")
 
     broker.positions = down  # type: ignore[method-assign]
-    assert_stopped(cycle(broker, ledger), broker, caplog, "503")
+    assert_stopped(ledger, cycle(broker, ledger), broker, caplog, "503")
 
 
 def test_drill_timeout_while_sending(
@@ -260,14 +272,16 @@ def test_drill_duplicate_run(broker: FakeBroker, ledger: Ledger, caplog: pytest.
     broker.timeout_after_accepting_next = True
     cycle(broker, ledger)  # stops after sending: the month end is not marked acted
     again = cycle(broker, ledger)  # the same run retried
-    assert again.stopped == "run run-1 already executed"
+    assert again.stopped is not None and "already used" in again.stopped
     assert len(broker.recent_orders()) == 1
-    assert any("already executed" in m for m in errors(caplog))
+    assert any("already used" in m for m in errors(caplog))
 
 
 def test_a_completed_month_end_repeated_sends_nothing(broker: FakeBroker, ledger: Ledger) -> None:
     cycle(broker, ledger)
-    assert cycle(broker, ledger) == cycle(broker, ledger, run_id="run-9")
+    assert (
+        cycle(broker, ledger, run_id="run-2") == cycle(broker, ledger, run_id="run-9") == CycleReport(0, None)
+    )
     assert len(broker.recent_orders()) == 1
 
 
@@ -308,7 +322,7 @@ def test_drill_short_history_for_a_held_fund_sells_nothing(
     held_up(broker)
     history = FakeHistory()
     history.bars[UP] = history.bars[UP][-120:]  # a paging hiccup: too few bars for the average
-    assert_stopped(cycle(broker, ledger, history=history), broker, caplog, "too short")
+    assert_stopped(ledger, cycle(broker, ledger, history=history), broker, caplog, "too short")
     assert broker.recent_orders() == []
 
 
@@ -372,7 +386,7 @@ def test_drill_broker_equity_that_doesnt_add_up(
     held_up(broker)
     real = broker.account
     broker.account = lambda: AccountSnapshot(real().cash, gbp(reported))  # type: ignore[method-assign]
-    assert_stopped(cycle(broker, ledger), broker, caplog, "equity check")
+    assert_stopped(ledger, cycle(broker, ledger), broker, caplog, "equity check")
     assert ledger.high_water_mark() == gbp(1000)
     assert ledger.previous_day_equity(NOW.date() + timedelta(days=1)) == gbp(
         1000
@@ -383,7 +397,7 @@ def test_drill_implausible_new_peak(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
     broker._cash = Decimal(1150)  # 15% above the mark in one go
-    assert_stopped(cycle(broker, ledger, signal_day=None), broker, caplog, "new peak")
+    assert_stopped(ledger, cycle(broker, ledger, signal_day=None), broker, caplog, "new peak")
     assert ledger.high_water_mark() == gbp(1000)
 
 
@@ -392,7 +406,7 @@ def test_drill_two_positions_for_one_fund(
 ) -> None:
     held_up(broker)
     broker.positions = lambda: [Position(UP, Decimal(1)), Position(UP, Decimal(1))]  # type: ignore[method-assign]
-    assert_stopped(cycle(broker, ledger), broker, caplog, "twice")
+    assert_stopped(ledger, cycle(broker, ledger), broker, caplog, "twice")
 
 
 # --- review round 2: one decision per month end, on verified closes ------------------
@@ -421,7 +435,7 @@ def test_drill_a_later_day_without_verified_closes_stops(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
     report = cycle(broker, ledger, now=NOW + 3 * DAY)  # the run after the month end never happened
-    assert_stopped(report, broker, caplog, "not verified")
+    assert_stopped(ledger, report, broker, caplog, "not verified")
     assert broker.recent_orders() == []
 
 
@@ -449,7 +463,7 @@ def test_drill_a_revised_month_end_close_stops(
     k = DAYS.index(SIGNAL_DAY)
     history.bars[UP][k] = replace(history.bars[UP][k], close=history.bars[UP][k].close * 1.01)
     report = cycle(broker, ledger, history=history, now=NOW + DAY, run_id="run-2")
-    assert_stopped(report, broker, caplog, "not verified")
+    assert_stopped(ledger, report, broker, caplog, "not verified")
 
 
 @pytest.mark.parametrize("bad", [Money(Decimal(0), Currency.GBP), Money(Decimal(15000), Currency.GBX)])
@@ -459,7 +473,7 @@ def test_drill_a_bad_quote_for_a_held_fund_fails_the_equity_check(
     held_up(broker)
     real = broker.quote
     broker.quote = lambda i: bad if i == UP else real(i)  # type: ignore[method-assign]
-    assert_stopped(cycle(broker, ledger, signal_day=None), broker, caplog, "equity check")
+    assert_stopped(ledger, cycle(broker, ledger, signal_day=None), broker, caplog, "equity check")
     assert ledger.previous_day_equity(NOW.date() + DAY) == gbp(1000)
 
 
@@ -499,7 +513,7 @@ def test_drill_a_signal_day_more_than_35_days_old_stops(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
     report = cycle(broker, ledger, now=NOW + 40 * DAY)  # a calendar bug reviving an old month end
-    assert_stopped(report, broker, caplog, "too old")
+    assert_stopped(ledger, report, broker, caplog, "too old")
 
 
 def test_an_accepted_order_that_ends_rejected_or_cancelled_alerts(
@@ -511,3 +525,204 @@ def test_an_accepted_order_that_ends_rejected_or_cancelled_alerts(
     caplog.clear()
     cycle(broker, ledger, signal_day=None, now=NOW + DAY, run_id="run-2")
     assert any("CANCELLED" in m for m in errors(caplog))
+
+
+# --- monitoring step 1: the decision record (docs/exec-plans/active/2026-11-22-monitoring.md) ---
+def test_ac1_a_completed_run_is_recorded_with_its_version(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger, version="abc123")
+    [record] = ledger.runs()
+    assert (record.run_id, record.outcome, record.reason, record.version) == (
+        "run-1",
+        "completed",
+        None,
+        "abc123",
+    )
+    assert record.started_at == NOW and record.ended_at == NOW
+
+
+def test_ac1_a_run_that_died_is_reported_by_the_next_one(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    ledger.start_run("run-0", NOW - DAY, "old")  # started, never finished
+    cycle(broker, ledger, signal_day=None)
+    assert any("run-0" in m and "never finished" in m for m in errors(caplog))
+    assert [r.outcome for r in ledger.runs()] == ["died", "completed"]
+    caplog.clear()
+    cycle(broker, ledger, signal_day=None, run_id="run-2")
+    assert errors(caplog) == []  # reported once
+
+
+def test_ac2_signal_day_decisions_are_recorded(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger)
+    rows = {r.instrument: r for r in ledger.signal_records(SIGNAL_DAY)}
+    assert {r.run_id for r in rows.values()} == {"run-1"}
+    history = FakeHistory()
+    expected_in = signals(history.bars, SIGNAL_DAY)
+    before = sleeve_weights(expected_in)
+    after = vol_scaled(before, {i: daily_returns(b, SIGNAL_DAY) for i, b in history.bars.items()})
+    for inst in (UP, DOWN):
+        closes_ = [b.close for b in history.bars[inst] if b.day <= SIGNAL_DAY][-210:]
+        assert rows[inst].close == closes_[-1] and rows[inst].sma == pytest.approx(sum(closes_) / 210)
+        assert rows[inst].in_trend is expected_in[inst]
+        assert (rows[inst].weight_before, rows[inst].weight_after) == (before[inst], after[inst])
+    [decision] = ledger.decisions("run-1")
+    assert (decision.instrument, decision.side, decision.reason) == (UP, Side.BUY, "passed")
+    assert decision.approved_quantity == decision.proposed_quantity and decision.quote == broker.quotes[UP]
+
+
+def test_ac2_shrinks_are_recorded_and_logged_at_warning(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    broker._cash = Decimal(1000)
+    cycle(
+        broker,
+        ledger,
+        config=CycleConfig(universe=CONFIG.universe, limits=Limits(position_fraction=Decimal("0.10"))),
+    )
+    [decision] = ledger.decisions("run-1")
+    assert decision.reason.startswith("shrunk") and decision.approved_quantity < decision.proposed_quantity
+    assert any(r.levelno == logging.WARNING and "shrunk" in r.getMessage() for r in caplog.records)
+
+
+def test_ac3_every_run_stores_a_snapshot(broker: FakeBroker, ledger: Ledger) -> None:
+    held_up(broker)
+    cycle(broker, ledger, signal_day=None)
+    snap = ledger.snapshot("run-1")
+    assert snap.cash == gbp(broker._cash)
+    rows = {r.instrument: r for r in snap.positions}
+    assert rows[UP].quantity == Decimal(2) and rows[UP].quote == broker.quotes[UP]
+    assert rows[UP].value_gbp == gbp(2 * broker.quotes[UP].amount)
+    assert rows[DOWN].quantity == 0 and rows[DOWN].quote is None  # not held: not quoted on a quiet day
+    assert rows[DOWN].value_gbp == gbp(0)
+    assert snap.equity_checked
+
+
+def test_ac3_every_run_stores_a_month_end_preview(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger, signal_day=None)
+    preview = ledger.preview("run-1")
+    latest = max(b.day for b in FakeHistory().bars[UP] if b.day < NOW.date())
+    assert {r.as_of for r in preview} == {latest}
+    assert {r.instrument: r.in_trend for r in preview} == {UP: True, DOWN: False}
+
+
+def test_ac3_a_failing_preview_warns_and_changes_nothing(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_: object, **__: object) -> None:
+        raise RuntimeError("preview broke")
+
+    monkeypatch.setattr("tradingbot.app.cycle._preview", boom)
+    report = cycle(broker, ledger)
+    assert (report.sent, report.stopped) == (1, None)  # the same orders as without the preview
+    assert ledger.runs()[-1].outcome == "completed"
+    assert any(r.levelno == logging.WARNING and "preview" in r.getMessage() for r in caplog.records)
+    assert errors(caplog) == []
+
+
+def test_ac1_a_ledger_from_step_7_gains_the_new_tables(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(path)
+    for table in ("intents", "marks", "daily_equity", "signal_closes", "acted_signals"):
+        conn.execute(f"CREATE TABLE {table} (x)")
+    conn.commit()
+    conn.close()
+    opened = Ledger.open(path)
+    assert opened.runs() == []
+    opened.close()
+
+
+def test_ssac_is_a_benchmark_and_can_never_be_traded() -> None:
+    # monitoring spec, Decisions: SSAC is benchmark-only, never in the trading universe
+    with pytest.raises(ValueError, match="SSAC"):
+        CycleConfig(universe={UP: Decimal("0.0001"), Instrument("SSAC", Currency.GBP): Decimal("0.0001")})
+    with pytest.raises(ValueError, match="SSAC"):
+        CycleConfig(universe={Instrument("SSAC", Currency.GBX): Decimal("0.0001")})
+
+
+# --- monitoring step 1a, review round 1 ------------------------------------------------
+def test_ac1_the_end_time_comes_from_the_clock(broker: FakeBroker, ledger: Ledger) -> None:
+    ticks = iter([NOW, NOW + timedelta(minutes=20)])
+    cycle(broker, ledger, clock=lambda: next(ticks, NOW + timedelta(minutes=20)))
+    [record] = ledger.runs()
+    assert (record.started_at, record.ended_at) == (NOW, NOW + timedelta(minutes=20))
+
+
+def test_ac1_a_reused_run_id_reports_the_died_attempt_and_stops(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    ledger.start_run("run-1", NOW, "test")  # attempt 1 crashed
+    report = cycle(broker, ledger)  # a retry with the same id
+    assert report.sent == 0 and "already used" in (report.stopped or "")
+    assert any("run-1" in m and "never finished" in m for m in errors(caplog))
+    assert [r.outcome for r in ledger.runs()] == ["died"]
+    assert broker.recent_orders() == []
+
+
+def test_ac2_the_scale_factor_is_recorded(broker: FakeBroker, ledger: Ledger) -> None:
+    history = FakeHistory()
+    noisy = [100 * (1.001**t) * (1.03 if t % 2 else 0.97) for t in range(len(DAYS))]
+    history.bars[UP] = [Bar(UP, d, open=c, close=c) for d, c in zip(DAYS, noisy, strict=True)]
+    broker.quotes[UP] = Money(Decimal(repr(noisy[DAYS.index(SIGNAL_DAY)])), Currency.GBP)
+    cycle(broker, ledger, history=history)
+    row = next(r for r in ledger.signal_records(SIGNAL_DAY) if r.instrument == UP)
+    assert row.scale < 0.6 and row.scale == pytest.approx(row.weight_after / row.weight_before)
+
+
+def test_ac3_a_failed_equity_check_still_stores_an_unchecked_snapshot(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    held_up(broker)
+    real = broker.account
+    broker.account = lambda: AccountSnapshot(real().cash, gbp(100_000))  # type: ignore[method-assign]
+    cycle(broker, ledger, signal_day=None)
+    snap = ledger.snapshot("run-1")
+    assert not snap.equity_checked and snap.cash == real().cash
+
+
+def test_ac3_a_run_stopped_before_reading_the_account_has_no_snapshot(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    # recorded deviation: nothing trustworthy to store yet; the run record says why it stopped
+    ledger.mark_unknown(ledger.record_intent("run-0", Order(UP, Side.BUY, Decimal(1)), NOW))
+    cycle(broker, ledger, signal_day=None)
+    with pytest.raises(LedgerError, match="no snapshot"):
+        ledger.snapshot("run-1")
+    assert "not reconciled" in (ledger.runs()[-1].reason or "")
+
+
+def test_ac3_the_preview_records_weights(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger, signal_day=None)
+    weights = {r.instrument: r.weight for r in ledger.preview("run-1")}
+    assert weights == {UP: 0.25, DOWN: 0.0}
+
+
+@pytest.mark.parametrize("ticker", ["SSAC", "ssac", "SSAC.L", "SSACl_EQ"])
+def test_ssac_is_refused_however_its_ticker_is_written(ticker: str) -> None:
+    with pytest.raises(ValueError, match="benchmark"):
+        CycleConfig(universe={Instrument(ticker, Currency.GBP): Decimal("0.0001")})
+
+
+def test_the_universe_cant_be_changed_after_the_check() -> None:
+    universe = {UP: Decimal("0.0001")}
+    config = CycleConfig(universe=universe)
+    universe[Instrument("SSAC", Currency.GBP)] = Decimal(1)  # the caller's dict changes...
+    assert list(config.universe) == [UP]  # ...the checked copy doesn't
+
+
+def test_ac3_an_unusable_broker_quote_is_not_recorded_as_a_price(broker: FakeBroker, ledger: Ledger) -> None:
+    held_up(broker)
+    real = broker.quote
+    broker.quote = lambda i: Money(Decimal(15000), Currency.GBX) if i == UP else real(i)  # type: ignore[method-assign]
+    cycle(broker, ledger, signal_day=None)
+    row = next(r for r in ledger.snapshot("run-1").positions if r.instrument == UP)
+    assert (row.quote, row.value_gbp) == (None, None)
+
+
+def test_a_clock_that_fails_at_the_end_still_returns_the_report(broker: FakeBroker, ledger: Ledger) -> None:
+    ticks = iter([NOW])
+
+    def clock() -> datetime:
+        return next(ticks)  # StopIteration on the second read
+
+    report = cycle(broker, ledger, clock=clock)
+    assert report.sent == 1  # the orders went out and the report comes back

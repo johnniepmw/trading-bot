@@ -10,7 +10,7 @@ import pytest
 
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency, Money
-from tradingbot.ledger.store import IntentState, Ledger, LedgerError
+from tradingbot.ledger.store import DecisionRecord, IntentState, Ledger, LedgerError
 
 VWRP = Instrument("VWRP", Currency.GBP)
 SGLN = Instrument("SGLN", Currency.GBX)
@@ -178,3 +178,19 @@ def test_a_day_start_older_than_the_limit_is_unknown(ledger: Ledger) -> None:
     ledger.record_equity(NOW.date().replace(day=10), gbp("1000"))
     assert ledger.previous_day_equity(NOW.date(), max_age_days=5) is None
     assert ledger.previous_day_equity(NOW.date(), max_age_days=20) == gbp("1000")
+
+
+def test_a_missing_snapshot_is_an_error(ledger: Ledger) -> None:
+    with pytest.raises(LedgerError, match="no snapshot"):
+        ledger.snapshot("nope")
+
+
+def test_a_rejected_decision_and_a_pence_quote_round_trip(ledger: Ledger) -> None:
+    rows = [
+        DecisionRecord(
+            SGLN, Side.BUY, Decimal(2), None, "rejected: no cash", Money(Decimal(4000), Currency.GBX)
+        ),
+        DecisionRecord(VWRP, Side.SELL, Decimal(1), Decimal(1), "passed", None),
+    ]
+    ledger.record_decisions("run-1", rows)
+    assert ledger.decisions("run-1") == rows
