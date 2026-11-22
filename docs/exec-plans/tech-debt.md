@@ -3,6 +3,7 @@
 Things noticed but deliberately left out of scope. One line each, newest first.
 Format: `- YYYY-MM-DD <area>: <problem> — <impact> — <suggested fix>`
 
+- 2026-11-22 make logs: `make logs` prints only `jsonPayload.message`, so `smoke`'s JSON report (which has no message) shows as a blank line — the owner needed a hand-written `gcloud logging read` in the pause drill — have `smoke` also log an INFO line with its fields, or print `jsonPayload` when there is no message
 - 2026-11-22 calendar: the bot stops on the first run past `until` (2027-12-31) with no warning beforehand — a surprise stop in January 2028 — warn (an alert line) when `until` is within 60 days, with step 7's alerts
 - 2026-11-22 config: `config/load.py` and `app/cycle.py` each hold `BENCHMARK_ONLY`; the config check matches tickers by upper case while `cycle.base_ticker` also strips broker decoration (the cycle still refuses either form) — move the set and `base_ticker` to `domain` and use it in both
 - 2026-11-22 flags: `app/flags.py` reads overrides with its own `urlopen` and metadata-token code, which follows redirects, while the ledger uses `app/storage.py` (redirects refused) — two GCS clients, and the flags one could forward its token on a redirect — move `GcsSource` onto `GcsObjectStore` and `urllib_transport`
