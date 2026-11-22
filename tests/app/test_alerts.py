@@ -34,6 +34,7 @@ def record(message: str, level: int = logging.ERROR, **extra: object) -> logging
         ("setup refused: a ledger existed before", "setup_refused"),
         ("refusing to start: APP_ENV must be one of ...", "refused_to_start"),
         ("lock release failed: 503", "lock_release"),
+        ("crashed: KeyError", "crash"),
         ("operator secret invalid: paper trading", "error"),
     ],
 )

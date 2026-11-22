@@ -775,3 +775,41 @@ def test_a_drawdown_crossing_is_alerted(ledger: Ledger, caplog: pytest.LogCaptur
         cycle(poorer, ledger, signal_day=None)
     [crossing] = [r for r in caplog.records if getattr(r, "alert", None) == "drawdown"]
     assert crossing.getMessage().startswith("drawdown crossed 5%")
+
+
+def test_a_dry_runs_drawdown_crossing_alerts_nothing(
+    ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    from tradingbot.app.alerts import alert_kind  # noqa: PLC0415
+    from tradingbot.app.cycle import dry_run_cycle  # noqa: PLC0415
+
+    ledger.record_equity(NOW.date() - timedelta(days=1), gbp(960))
+    poorer = FakeBroker(cash=gbp(940), quotes={UP: gbp(100), DOWN: Money(Decimal(5000), Currency.GBX)})
+    poorer.now = lambda: NOW
+    with caplog.at_level(logging.DEBUG):
+        dry_run_cycle(
+            broker=poorer,
+            ledger=ledger,
+            history=FakeHistory(),
+            config=CONFIG,
+            signal_day=None,
+            clock=lambda: NOW,
+            run_id="dry-1",
+        )
+    assert any("drawdown crossed 5%" in r.getMessage() for r in caplog.records)  # reported, as a warning
+    assert {alert_kind(r) for r in caplog.records} == {None}  # but pages nobody
+
+
+def test_a_crossing_after_days_without_runs_is_still_alerted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    quiet = Ledger.create(tmp_path / "quiet.sqlite")
+    quiet.seed_high_water_mark(gbp(1000), NOW - timedelta(days=9))  # an outage: nothing recorded since
+    poorer = FakeBroker(cash=gbp(940), quotes={UP: gbp(100), DOWN: Money(Decimal(5000), Currency.GBX)})
+    poorer.now = lambda: NOW
+    with caplog.at_level(logging.WARNING):
+        cycle(poorer, quiet, signal_day=None)
+    quiet.close()
+    assert [r.getMessage() for r in caplog.records if getattr(r, "alert", None) == "drawdown"] == [
+        "drawdown crossed 5% below the high-water mark"
+    ]

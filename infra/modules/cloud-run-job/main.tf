@@ -270,9 +270,11 @@ resource "google_monitoring_alert_policy" "bot_alert" {
   notification_channels = concat([google_monitoring_notification_channel.email.id], var.push_channels)
 
   conditions {
-    display_name = "A bot log line with an alert kind"
+    display_name = "A bot alert line, or the schedule failing to start the job"
     condition_matched_log {
-      filter           = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${local.job_name}\" AND jsonPayload.alert:*"
+      # the bot's own alert lines, or Cloud Scheduler failing to start the job (a missed run);
+      # one condition per environment, since alerting may be billed per condition
+      filter           = "(resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${local.job_name}\" AND jsonPayload.alert:*) OR (resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"${local.job_name}-daily\" AND severity>=ERROR)"
       label_extractors = { kind = "EXTRACT(jsonPayload.alert)" }
     }
   }
@@ -286,32 +288,6 @@ resource "google_monitoring_alert_policy" "bot_alert" {
 
   documentation {
     mime_type = "text/markdown"
-    content   = "The ${local.job_name} job logged an alert (kind in the incident's labels). Read it with `make logs ENV=${var.env}`; runbooks in docs/runbooks/. New orders stop on their own after any stop; nothing needs doing to stay safe."
-  }
-}
-
-resource "google_monitoring_alert_policy" "schedule_failed" {
-  project               = var.project_id
-  display_name          = "${local.job_name}: the schedule failed to start the job"
-  combiner              = "OR"
-  notification_channels = concat([google_monitoring_notification_channel.email.id], var.push_channels)
-
-  conditions {
-    display_name = "Cloud Scheduler reported an error"
-    condition_matched_log {
-      filter = "resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"${local.job_name}-daily\" AND severity>=ERROR"
-    }
-  }
-
-  alert_strategy {
-    notification_rate_limit {
-      period = "300s"
-    }
-    auto_close = "1800s"
-  }
-
-  documentation {
-    mime_type = "text/markdown"
-    content   = "Cloud Scheduler could not start ${local.job_name}: today's run is missing. Check the schedule and the job in the console."
+    content   = "${local.job_name}: alert kind `$${log.extracted_label.kind}` (empty: Cloud Scheduler couldn't start the job, so today's run is missing). Read it with `make logs ENV=${var.env}`; runbooks in docs/runbooks/. A stop already means no new orders; nothing needs doing to stay safe."
   }
 }
