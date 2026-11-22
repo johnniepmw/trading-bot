@@ -14,4 +14,4 @@ read -r -s -p "Value for $secret (input hidden): " value; echo
 [ -n "$value" ] || { echo "empty value, aborting" >&2; exit 1; }
 printf '%s' "$value" | gcloud secrets versions add "$secret" --project "$project" --data-file=-
 unset value
-echo "Added a new version of $secret. Redeploy (gh workflow run deploy.yml) so instances read it."
+echo "Added a new version of $secret. The job reads the latest version at its next execution."
