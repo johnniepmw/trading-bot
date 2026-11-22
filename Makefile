@@ -29,7 +29,7 @@ STACK_MUTATION   ?= @echo "mutation: skipped (no stack)"
 
 .PHONY: help setup fmt fmt-check lint typecheck test-unit test-integration test-one arch \
         check-fast check e2e e2e-setup dev image mutation docs-check flags-check \
-        secrets-scan repo-lint risk logs smoke kit-sync kit-check \
+        secrets-scan repo-lint risk logs kit-sync kit-check \
         github-setup gh-vars secret-set infra-bootstrap infra-plan infra-apply env-up env-down
 
 help: ## List targets
@@ -92,10 +92,8 @@ kit-check: ## Kit files in .claude/ match .claude/kit.lock (they change upstream
 	bash scripts/kit-sync.sh --verify
 
 # ---------- operations (read-only for agents) ---------------------------------------------
-logs: ## Recent service logs: make logs ENV=prod
-	gcloud run services logs read "$(APP)-$(ENV)" --region "$(REGION)" --project "$${GCP_PROJECT:-$$(gcloud config get-value project 2>/dev/null)}" --limit 100
-smoke: ## Smoke test a URL: make smoke URL=https://...
-	bash scripts/smoke.sh "$(URL)"
+logs: ## Recent job logs (Cloud Logging, never Actions): make logs ENV=prod
+	gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="$(APP)-$(ENV)"' --project "$${GCP_PROJECT:-$$(gcloud config get-value project 2>/dev/null)}" --limit 100 --format='value(timestamp,severity,jsonPayload.message)'
 
 # ---------- owner-only (the agent's guard hook blocks these) -------------------------------
 github-setup: ## Repo settings, ruleset, labels, Dependabot (needs admin)
