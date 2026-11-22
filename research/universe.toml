@@ -1,0 +1,75 @@
+# The strategy's universe and benchmark, with data-source symbols (docs/strategies/trend-long-or-cash.md).
+# Read by scripts/export_history.py. Market data only; no account data. A high-risk path:
+# it defines what can be traded and where the hold-out starts.
+#
+# Symbols are UNVERIFIED until the owner's `--list` run and Phase 0 API check: Yahoo uses
+# ".L" for the London Stock Exchange, Stooq ".uk". `distributing` says whether the series
+# pays dividends out (its adjusted close then rises faster than its close); it is checked
+# against the data. `proxies` are older funds on the same index, spliced under the fund's own
+# history (oldest first), chosen from `--list` output before any price data is examined.
+
+hold_out_start = "2023-01-01"
+
+[[fund]]
+ticker = "VWRP"   # global equity, FTSE All-World
+role = "trade"
+yahoo = "VWRP.L"
+stooq = "vwrp.uk"
+distributing = false
+proxies = [{ yahoo = "VWRL.L", stooq = "vwrl.uk", distributing = true }]   # same index, since 2012
+
+[[fund]]
+ticker = "VUKE"   # UK equity, FTSE 100
+role = "trade"
+yahoo = "VUKE.L"
+stooq = "vuke.uk"
+distributing = true
+proxies = []
+
+[[fund]]
+ticker = "EMIM"   # emerging markets, MSCI EM IMI
+role = "trade"
+yahoo = "EMIM.L"
+stooq = "emim.uk"
+distributing = false
+proxies = []
+
+[[fund]]
+ticker = "IGLT"   # UK gilts
+role = "trade"
+yahoo = "IGLT.L"
+stooq = "iglt.uk"
+distributing = true
+proxies = []
+
+[[fund]]
+ticker = "VAGP"   # global aggregate bonds, GBP hedged (2017): a proxy is to be chosen from `--list`
+role = "trade"
+yahoo = "VAGP.L"
+stooq = "vagp.uk"
+distributing = false
+proxies = []
+
+[[fund]]
+ticker = "INXG"   # UK index-linked gilts
+role = "trade"
+yahoo = "INXG.L"
+stooq = "inxg.uk"
+distributing = true
+proxies = []
+
+[[fund]]
+ticker = "SGLN"   # physical gold
+role = "trade"
+yahoo = "SGLN.L"
+stooq = "sgln.uk"
+distributing = false
+proxies = []
+
+[[fund]]
+ticker = "SSAC"   # MSCI ACWI: the owner's benchmark, never traded (monitoring spec)
+role = "benchmark"
+yahoo = "SSAC.L"
+stooq = "ssac.uk"
+distributing = false
+proxies = []

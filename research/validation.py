@@ -164,17 +164,17 @@ MAX_OPEN_CLOSE_GAP = 0.20
 
 
 def load_bars_csv(path: Path, instrument: Instrument) -> list[Bar]:
-    """Read `date,open,close` rows (adjusted prices, quote currency) and validate them."""
+    """Read `date,open,close[,currency]` rows (adjusted prices, quote currency) and validate
+    them. A `currency` other than the instrument's is refused (pounds vs pence is 100x)."""
     with path.open(newline="") as file:
-        bars = [
-            Bar(
-                instrument,
-                date.fromisoformat(row["date"]),
-                open=float(row["open"]),
-                close=float(row["close"]),
-            )
-            for row in csv.DictReader(file)
-        ]
+        rows = list(csv.DictReader(file))
+    for row in rows:
+        if row.get("currency", instrument.currency.value) != instrument.currency.value:
+            raise DataError(f"{path.name}: currency {row['currency']} is not {instrument.currency.value}")
+    bars = [
+        Bar(instrument, date.fromisoformat(row["date"]), open=float(row["open"]), close=float(row["close"]))
+        for row in rows
+    ]
     for bar in bars:
         if abs(bar.open / bar.close - 1) > MAX_OPEN_CLOSE_GAP:
             raise DataError(f"{instrument.ticker} {bar.day}: open and close not adjusted alike")

@@ -159,3 +159,13 @@ def test_csv_opens_must_be_adjusted_like_the_closes(tmp_path: Path) -> None:
     mixed.write_text("date,open,close\n2020-01-02,150,101\n")
     with pytest.raises(DataError, match="adjusted"):
         load_bars_csv(mixed, EQ)
+
+
+def test_csv_rows_in_another_currency_than_the_instrument_are_refused(tmp_path: Path) -> None:
+    pence = tmp_path / "gbx.csv"
+    pence.write_text("date,open,close,currency\n2020-01-02,10000,10100,GBX\n")
+    with pytest.raises(DataError, match="currency"):
+        load_bars_csv(pence, EQ)  # EQ is GBP
+    same = tmp_path / "gbp.csv"
+    same.write_text("date,open,close,currency\n2020-01-02,100,101,GBP\n")
+    assert [b.close for b in load_bars_csv(same, EQ)] == [101.0]
