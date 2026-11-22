@@ -63,9 +63,6 @@ elif cmd == "storage objects describe":
     print(read("generation", "7"))
 elif cmd.startswith("storage cat"):
     print(read("flags"))
-elif cmd.startswith("storage rm"):
-    if os.path.exists(path("pause_rm_error")):
-        sys.stderr.write(read("pause_rm_error")); sys.exit(1)
 elif cmd.startswith("storage cp"):
     open(path("written"), "w").write(sys.stdin.read())
 """
@@ -314,30 +311,3 @@ def test_a_named_rollback_digest_needs_the_owner(fake: Path) -> None:
     result = run(fake, "cloudrun-job-rollback.sh", "prod", OLD, NAMED_ROLLBACK_ALLOWED="false")
     assert result.returncode == 2
     assert (fake / "image").read_text() == NEW
-
-
-# --- clearing pause requests (owner only; step 7b) ------------------------------------------
-def test_the_owner_clears_every_pause_request(fake: Path) -> None:
-    result = run(fake, "pause-clear.sh", "prod", OWNER="true")
-    assert result.returncode == 0, result.stderr
-    assert "storage rm gs://p-pause-prod/** --project p --quiet" in calls(fake)
-
-
-def test_nobody_else_can_clear_a_pause(fake: Path) -> None:
-    result = run(fake, "pause-clear.sh", "prod", OWNER="false")
-    assert result.returncode == 2
-    assert calls(fake) == []
-
-
-def test_clearing_when_nothing_is_paused_is_fine(fake: Path) -> None:
-    (fake / "pause_rm_error").write_text(
-        "ERROR: (gcloud.storage.rm) The following URLs matched no objects or files:\n"
-    )
-    assert run(fake, "pause-clear.sh", "staging", OWNER="true").returncode == 0
-
-
-def test_a_failed_clear_is_reported(fake: Path) -> None:
-    (fake / "pause_rm_error").write_text("ERROR: (gcloud.storage.rm) HTTPError 403: denied\n")
-    result = run(fake, "pause-clear.sh", "staging", OWNER="true")
-    assert result.returncode == 1
-    assert "still paused" in result.stderr

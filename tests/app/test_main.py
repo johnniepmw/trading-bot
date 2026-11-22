@@ -8,22 +8,20 @@ import pytest
 
 from tradingbot.app.__main__ import main
 from tradingbot.app.flags import Flags, FlagSpec
-from tradingbot.app.pause import PauseRequests
 
 REGISTRY = {"new-orders": FlagSpec(type="kill-switch", default=True)}
 
 
 def run(argv: list[str], env: dict[str, str]) -> tuple[int, str]:
     out = io.StringIO()
-    flags = Flags(REGISTRY, env=env, trusted_env=True)
-    code = main(argv, flags=flags, version="abc123", out=out, pause=PauseRequests(None, None))
+    code = main(argv, flags=Flags(REGISTRY, env=env, trusted_env=True), version="abc123", out=out)
     return code, out.getvalue()
 
 
 def test_smoke_reports_ok_version_and_kill_switch_state() -> None:
     code, out = run(["smoke"], env={})
     assert code == 0
-    assert json.loads(out) == {"status": "ok", "version": "abc123", "new_orders": True, "paused": False}
+    assert json.loads(out) == {"status": "ok", "version": "abc123", "new_orders": True}
 
 
 def test_smoke_shows_the_kill_switch_when_it_is_off() -> None:
@@ -72,8 +70,6 @@ def test_deployed_job_with_a_bucket_builds_a_gcs_backed_kill_switch(monkeypatch:
     out = io.StringIO()
     # No network in unit tests: the bucket read fails, so the kill switch reports off.
     monkeypatch.setattr("tradingbot.app.flags.urllib.request.urlopen", _unreachable)
-    env = {"FLAGS_BUCKET": "b", "PAUSE_BUCKET": "p", "APP_ENV": "prod"}
-    no_pause = PauseRequests(None, None)  # the kill switch alone decides here
-    code = main(["smoke"], env=env, version="v", out=out, pause=no_pause)
+    code = main(["smoke"], env={"FLAGS_BUCKET": "b", "APP_ENV": "prod"}, version="v", out=out)
     assert code == 0
     assert json.loads(out.getvalue())["new_orders"] is False

@@ -15,12 +15,7 @@ pytestmark = pytest.mark.e2e
 
 
 def wiring(tmp_path: Path) -> dict[str, str]:
-    return {
-        "LEDGER_BUCKET": "ledger",
-        "LOCK_BUCKET": "locks",
-        "PAUSE_BUCKET": "pause",
-        "LOCAL_STORE_DIR": str(tmp_path / "store"),
-    }
+    return {"LEDGER_BUCKET": "ledger", "LOCK_BUCKET": "locks", "LOCAL_STORE_DIR": str(tmp_path / "store")}
 
 
 def log_lines(result: subprocess.CompletedProcess[str]) -> list[dict[str, str]]:
@@ -52,13 +47,7 @@ def test_a_missing_ledger_fails_closed(run_job: RunJob, tmp_path: Path) -> None:
 
 
 def test_prod_refuses_to_start_on_fakes(run_job: RunJob, tmp_path: Path) -> None:
-    env = {
-        "APP_ENV": "prod",
-        "LEDGER_BUCKET": "l",
-        "LOCK_BUCKET": "k",
-        "PAUSE_BUCKET": "p",
-        "FLAGS_BUCKET": "f",
-    }
+    env = {"APP_ENV": "prod", "LEDGER_BUCKET": "l", "LOCK_BUCKET": "k", "FLAGS_BUCKET": "f"}
     result = run_job("run", env=env)
     assert result.returncode == 1
     assert any("refusing to start" in line["message"] for line in log_lines(result))

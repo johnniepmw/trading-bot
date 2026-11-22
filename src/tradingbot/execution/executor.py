@@ -79,13 +79,13 @@ def execute(  # noqa: PLR0913, PLR0911 - the order path's explicit dependencies;
     sent = 0
     for order in orders:
         if not may_send():
-            return ExecutionReport(sent, "new orders off (kill switch or pause request)")
+            return ExecutionReport(sent, "kill switch off")
         intent = ledger.record_intent(run_id, order.order, now)
         checkpoint()  # the intent is saved remotely before the order can go out
         if not may_send():  # read again: the save can take a while
             ledger.settle(intent, IntentState.NOT_SENT)
             checkpoint()
-            return ExecutionReport(sent, "new orders off (kill switch or pause request)")
+            return ExecutionReport(sent, "kill switch off")
         try:
             order_id = broker.place(order)
         except BrokerTimeoutError:
