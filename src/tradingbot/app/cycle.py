@@ -1,0 +1,163 @@
+"""The daily cycle: reconcile, mark, decide, check, execute (ARCHITECTURE.md; ADR-0009).
+
+Wiring only, no trading logic: the decisions are `strategy`, `portfolio` and `risk`; the
+sending is `execution`. Every failure stops the cycle with no new orders and an ERROR log
+line (the alert). The cycle is safe to run every day and to repeat: once holdings are on
+target the rebalance band produces no orders, so a day stopped by a check only defers.
+
+`signal_day` is the latest completed month end (the caller's trading calendar, Phase 2), or
+None on days with no new targets to compute.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+
+from tradingbot.brokers.port import Broker
+from tradingbot.data.prices import PriceHistory, validate_history
+from tradingbot.domain.market import Bar, Instrument
+from tradingbot.domain.money import Money
+from tradingbot.execution.executor import execute, reconcile
+from tradingbot.ledger.store import Ledger
+from tradingbot.portfolio.weights import daily_returns, orders_for, sleeve_weights, vol_scaled
+from tradingbot.risk.limits import Limits
+from tradingbot.risk.review import AccountState, review
+from tradingbot.strategy.trend import signals
+
+log = logging.getLogger(__name__)
+
+QUOTE_TOLERANCE = Decimal("0.02")  # data-source close vs the broker's live price
+HISTORY_CALENDAR_DAYS = 450  # enough for 210 trading days plus the 60-day volatility window
+# risk vetoes that concern the whole account: these are alerts, not routine shrinks
+ACCOUNT_VETOES = ("no high-water mark", "no day-start equity", "drawdown stop", "daily loss limit")
+
+
+class CycleStopError(Exception):
+    """A check failed: no new orders this run."""
+
+
+@dataclass(frozen=True)
+class CycleConfig:
+    universe: Mapping[Instrument, Decimal]  # every instrument the strategy trades, with its quantity step
+    limits: Limits = field(default_factory=Limits)
+
+
+@dataclass(frozen=True)
+class CycleReport:
+    sent: int
+    stopped: str | None
+
+
+def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency explicitly
+    *,
+    broker: Broker,
+    ledger: Ledger,
+    history: PriceHistory,
+    config: CycleConfig,
+    signal_day: date | None,
+    now: datetime,
+    run_id: str,
+    may_send: Callable[[], bool],
+) -> CycleReport:
+    try:
+        report = _cycle(broker, ledger, history, config, signal_day, now, run_id, may_send)
+    except Exception as error:  # noqa: BLE001 - fail closed: any error means no new orders, plus an alert
+        log.error("cycle stopped: %s", error)
+        return CycleReport(0, str(error))
+    if report.stopped:
+        log.error("cycle stopped: %s", report.stopped)
+    return report
+
+
+def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
+    broker: Broker,
+    ledger: Ledger,
+    history: PriceHistory,
+    config: CycleConfig,
+    signal_day: date | None,
+    now: datetime,
+    run_id: str,
+    may_send: Callable[[], bool],
+) -> CycleReport:
+    if now.tzinfo is not UTC:
+        raise CycleStopError(f"the clock must be UTC, got {now!r}")
+    if signal_day is not None and signal_day >= now.date():
+        raise CycleStopError(f"signal day {signal_day} is not before today ({now.date()})")
+    reconciled = reconcile(broker, ledger)
+    if not reconciled.clean:
+        raise CycleStopError("not reconciled: " + "; ".join(reconciled.problems))
+
+    holdings = {i: Decimal(0) for i in config.universe}
+    for position in broker.positions():
+        if position.instrument not in holdings:
+            raise CycleStopError(f"broker position {position.instrument.ticker} maps to no instrument")
+        holdings[position.instrument] = position.quantity
+    account = broker.account()
+    ledger.update_high_water_mark(account.equity, now)
+    mark = ledger.high_water_mark()
+    day_start = ledger.day_start_equity(now.date(), account.equity)
+    if signal_day is None:
+        return CycleReport(0, None)
+
+    bars = _checked_history(history, config.universe, signal_day)
+    quotes = {i: broker.quote(i) for i in config.universe}
+    _cross_check(bars, quotes)
+    weights = sleeve_weights(signals(bars, signal_day))
+    weights = vol_scaled(weights, {i: daily_returns(b, signal_day) for i, b in bars.items()})
+    proposed = orders_for(
+        weights, holdings=holdings, prices=quotes, equity=account.equity, steps=config.universe
+    )
+    state = AccountState(
+        equity=account.equity,
+        cash=account.cash,
+        high_water_mark=mark,
+        day_start_equity=day_start,
+        holdings=holdings,
+        quotes=quotes,
+        quantity_steps=config.universe,
+    )
+    decisions = review(proposed, state, config.limits)
+    for decision in decisions:
+        if decision.approved is None:
+            alert = any(veto in decision.reason for veto in ACCOUNT_VETOES)
+            log.log(
+                logging.ERROR if alert else logging.WARNING,
+                "%s %s: %s",
+                decision.order.side,
+                decision.order.instrument.ticker,
+                decision.reason,
+            )
+    approved = [d.approved for d in decisions if d.approved is not None]
+    result = execute(approved, broker, ledger, run_id=run_id, now=now, may_send=may_send)
+    return CycleReport(result.sent, result.stopped)
+
+
+def _checked_history(
+    history: PriceHistory, universe: Mapping[Instrument, Decimal], signal_day: date
+) -> dict[Instrument, Sequence[Bar]]:
+    """Every instrument's validated bars up to the signal day, or a stop. All or nothing: a
+    fund with bad data is never just dropped (that would sell it)."""
+    start = signal_day - timedelta(days=HISTORY_CALENDAR_DAYS)
+    bars = {}
+    for instrument in universe:
+        series = validate_history(instrument, history.daily_bars(instrument, start, signal_day))
+        if not series or series[-1].day != signal_day:
+            raise CycleStopError(f"stale data: {instrument.ticker} has no bar for {signal_day}")
+        bars[instrument] = series
+    return bars
+
+
+def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instrument, Money]) -> None:
+    """The data source's signal-day close must be within QUOTE_TOLERANCE of the broker's
+    live price, so a wrong third-party price can't flip a signal."""
+    for instrument, series in bars.items():
+        close = Decimal(repr(series[-1].close))
+        quote = quotes[instrument]
+        if quote.currency is not instrument.currency or abs(quote.amount / close - 1) > QUOTE_TOLERANCE:
+            raise CycleStopError(
+                f"price cross-check failed for {instrument.ticker}: data {close}, broker {quote}"
+            )

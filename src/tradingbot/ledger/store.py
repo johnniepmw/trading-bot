@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS intents (
     state TEXT NOT NULL,
     broker_order_id TEXT UNIQUE,
     filled_quantity TEXT
+);
+CREATE TABLE IF NOT EXISTS day_starts (
+    day TEXT PRIMARY KEY,
+    amount TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS marks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +98,7 @@ class Ledger:
         # mode=rw: SQLite must not create the file if it vanishes between the check and here
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, isolation_level=None)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not {"intents", "marks"} <= tables:  # e.g. an empty or truncated download
+        if not {"intents", "marks", "day_starts"} <= tables:  # e.g. an empty or truncated download
             conn.close()
             raise LedgerError(f"not a ledger (missing tables): {path}")
         return cls(conn)
@@ -200,6 +204,18 @@ class Ledger:
     def linked_order_ids(self) -> set[str]:
         rows = self._conn.execute("SELECT broker_order_id FROM intents WHERE broker_order_id IS NOT NULL")
         return {r[0] for r in rows}
+
+    # --- day start ---------------------------------------------------------------------
+    def day_start_equity(self, day: date, equity: Money) -> Money:
+        """Equity at the start of `day` (UTC): the first value recorded that day."""
+        if equity.currency is not Currency.GBP:
+            raise LedgerError("day-start equity is in GBP")
+        self._conn.execute(
+            "INSERT OR IGNORE INTO day_starts (day, amount) VALUES (?, ?)",
+            (day.isoformat(), str(equity.amount)),
+        )
+        row = self._conn.execute("SELECT amount FROM day_starts WHERE day = ?", (day.isoformat(),)).fetchone()
+        return Money(Decimal(row[0]), Currency.GBP)
 
     # --- high-water mark --------------------------------------------------------------
     def seed_high_water_mark(self, equity: Money, at: datetime) -> None:
