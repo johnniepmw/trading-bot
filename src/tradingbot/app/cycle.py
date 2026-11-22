@@ -23,7 +23,7 @@ from types import MappingProxyType
 from tradingbot.app.alerts import drawdown_crossings
 from tradingbot.brokers.port import Broker, BrokerReader
 from tradingbot.data.prices import PriceHistory, validate_history
-from tradingbot.domain.market import Bar, Instrument, price_money
+from tradingbot.domain.market import BENCHMARK_ONLY, Bar, Instrument, base_ticker, price_money
 from tradingbot.domain.money import Currency, Money
 from tradingbot.execution.executor import execute, reconcile
 from tradingbot.ledger.store import DecisionRecord, Ledger, PositionRecord, PreviewRecord, SignalRecord
@@ -46,18 +46,6 @@ ACCOUNT_VETOES = ("no high-water mark", "no day-start equity", "drawdown stop", 
 
 class CycleStopError(Exception):
     """A check failed: no new orders this run."""
-
-
-BENCHMARK_ONLY = frozenset({"SSAC"})  # monitoring spec: compared against, never traded
-
-
-def base_ticker(ticker: str) -> str:
-    """The exchange code without data-source or broker decoration: "SSAC.L", "ssac" and a
-    Trading 212 style "SSACl_EQ" are all "SSAC"."""
-    code = ticker.split("_", maxsplit=1)[0].split(".", maxsplit=1)[0]
-    if len(code) > 1 and code[-1] == "l" and code[:-1].isupper():
-        code = code[:-1]  # Trading 212 marks London listings with a lower-case "l"
-    return code.upper()
 
 
 @dataclass(frozen=True)

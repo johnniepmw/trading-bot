@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -232,29 +231,41 @@ class _Resp:
         return json.dumps(self._payload).encode()
 
 
-def _patch_urlopen(monkeypatch: pytest.MonkeyPatch, storage: Callable[[], _Resp]) -> None:
-    def fake(req: Any, timeout: float = 0) -> _Resp:
-        if "metadata.google.internal" in req.full_url:
-            return _Resp({"access_token": "t"})
-        return storage()
+class _Transport:
+    """Recorded responses for the storage transport: the metadata token, then the object."""
 
-    monkeypatch.setattr("tradingbot.app.flags.urllib.request.urlopen", fake)
+    def __init__(self, *objects: tuple[int, bytes]) -> None:
+        self.objects = list(objects)
+        self.urls: list[str] = []
+
+    def __call__(
+        self, method: str, url: str, headers: Mapping[str, str], body: bytes | None
+    ) -> tuple[int, bytes]:
+        self.urls.append(url)
+        if "metadata.google.internal" in url:
+            return 200, b'{"access_token": "t"}'
+        return self.objects.pop(0)
 
 
-def test_gcs_source_reads_the_overrides_object(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_urlopen(monkeypatch, lambda: _Resp({"overrides": {"new-orders": False}}))
-    assert GcsSource("b").fetch_overrides() == {"new-orders": False}
+def test_gcs_source_reads_the_overrides_object() -> None:
+    sent = _Transport((200, json.dumps({"overrides": {"new-orders": False}}).encode()))
+    assert GcsSource("b", transport=sent).fetch_overrides() == {"new-orders": False}
+    assert sent.urls[-1] == "https://storage.googleapis.com/storage/v1/b/b/o/flags.json?alt=media"
 
 
-def test_gcs_source_treats_a_missing_object_as_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    def missing() -> _Resp:
-        raise urllib.error.HTTPError("u", 404, "Not Found", None, None)  # type: ignore[arg-type]
-
-    _patch_urlopen(monkeypatch, missing)
-    with pytest.raises(urllib.error.HTTPError):
-        GcsSource("b").fetch_overrides()
-    flags = Flags(REGISTRY, env={}, source=GcsSource("b"))
+@pytest.mark.parametrize("status", [404, 403, 302, 503])
+def test_gcs_source_treats_anything_but_the_object_as_a_failure(status: int) -> None:
+    # a missing object, a refusal, a redirect (never followed: the token stays with Google)
+    with pytest.raises(ValueError, match=str(status)):
+        GcsSource("b", transport=_Transport((status, b""))).fetch_overrides()
+    flags = Flags(REGISTRY, env={}, source=GcsSource("b", transport=_Transport((status, b""))))
     assert flags.is_enabled(KILL) is False
+
+
+def test_gcs_source_uses_the_redirect_refusing_transport_by_default() -> None:
+    from tradingbot.app import storage  # noqa: PLC0415
+
+    assert GcsSource("b")._send.__qualname__ == storage.urllib_transport(1.0).__qualname__
 
 
 # Review round 2 (security)

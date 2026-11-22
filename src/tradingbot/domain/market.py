@@ -95,3 +95,19 @@ class Position:
     def __post_init__(self) -> None:
         if _decimal("position quantity", self.quantity) < 0:
             raise ValueError(f"position quantity must not be negative, got {self.quantity}")
+
+
+BENCHMARK_ONLY = frozenset({"SSAC"})  # monitoring spec: compared against, never traded
+
+
+def base_ticker(ticker: str) -> str:
+    """The exchange code without data-source or broker decoration: "SSAC.L", "ssac" and a
+    Trading 212 style "SSACl_EQ" are all "SSAC"."""
+    code = ticker.split("_", maxsplit=1)[0].split(".", maxsplit=1)[0]
+    if len(code) > 1 and code[-1] == "l" and code[:-1].isupper():
+        code = code[:-1]  # Trading 212 marks London listings with a lower-case "l"
+    return code.upper()
+
+
+def is_benchmark_only(ticker: str) -> bool:
+    return base_ticker(ticker) in BENCHMARK_ONLY

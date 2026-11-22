@@ -15,12 +15,11 @@ from pathlib import Path
 from types import MappingProxyType
 
 from tradingbot.config.types import BotConfig, LimitsConfig
-from tradingbot.domain.market import Instrument
+from tradingbot.domain.market import Instrument, is_benchmark_only
 from tradingbot.domain.money import Currency
 from tradingbot.risk.limits import Limits
 
 BUNDLED = Path(__file__).with_name("bot.toml")
-BENCHMARK_ONLY = frozenset({"SSAC"})  # monitoring spec: compared against, never traded
 _TOP = {"instruments_verified", "schedule_time", "operator_secret_path", "limits", "calendar", "instrument"}
 
 
@@ -76,7 +75,7 @@ def _universe(raw: object) -> Mapping[Instrument, Decimal]:
         ticker = entry["ticker"]
         if not isinstance(ticker, str) or not ticker.isalnum():
             raise ConfigFileError(f"ticker must be letters and digits, got {ticker!r}")
-        if ticker.upper() in BENCHMARK_ONLY:
+        if is_benchmark_only(ticker):
             raise ConfigFileError(f"{ticker} is a benchmark only and can't be in the trading universe")
         if any(i.ticker.upper() == ticker.upper() for i in universe):
             raise ConfigFileError(f"{ticker} is listed twice")
