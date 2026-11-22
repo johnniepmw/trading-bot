@@ -60,7 +60,7 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
         return None  # urllib then raises HTTPError with the 3xx status
 
 
-_OPENER = urllib.request.build_opener(_RefuseRedirects())
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RefuseRedirects())  # no env proxies
 
 
 def urllib_transport(timeout: float) -> Transport:

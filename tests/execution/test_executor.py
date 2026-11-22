@@ -82,7 +82,7 @@ def test_only_approved_orders_can_be_executed(broker: FakeBroker, ledger: Ledger
 
 
 def test_the_kill_switch_is_checked_before_every_order(broker: FakeBroker, ledger: Ledger) -> None:
-    answers = iter([True, False])
+    answers = iter([True, True, False])  # order 1: before recording and before sending; order 2: off
     report = execute(
         [approved(Side.BUY, "1"), approved(Side.BUY, "1")],
         broker,
@@ -445,4 +445,23 @@ def test_a_refused_order_is_checkpointed_as_not_sent(broker: FakeBroker, ledger:
     execute(
         [approved(Side.BUY, "1")], broker, ledger, run_id="run-1", now=NOW, may_send=allowed, checkpoint=saved
     )
+    assert saved.seen[-1] == ([IntentState.NOT_SENT], 0)
+
+
+def test_the_kill_switch_is_read_again_after_the_pre_send_checkpoint(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    answers = iter([True, False])  # turned off while the intent was being saved
+    saved = Checkpoints(broker, ledger)
+    report = execute(
+        [approved(Side.BUY, "1")],
+        broker,
+        ledger,
+        run_id="run-1",
+        now=NOW,
+        may_send=lambda: next(answers),
+        checkpoint=saved,
+    )
+    assert (report.sent, report.stopped) == (0, "kill switch off")
+    assert broker.recent_orders() == []
     assert saved.seen[-1] == ([IntentState.NOT_SENT], 0)

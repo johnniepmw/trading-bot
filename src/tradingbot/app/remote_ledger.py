@@ -227,7 +227,11 @@ class RemoteLedger:
             raise LedgerStorageError(f"not a ledger: {error}") from error
         self._read_mark()
         stored = ledger.high_water_mark()
-        if self._mark is not None and (stored is None or stored < self._mark):
+        if self._mark is None:  # only setup creates it; recreating it is an owner step
+            ledger.close()
+            log.error("reference mark missing: the run stops; restore it (ledger restore runbook)")
+            raise RestoredLedgerError("reference mark missing: a run never re-creates it from the ledger")
+        if stored is None or stored < self._mark:
             ledger.close()
             raise RestoredLedgerError(
                 f"the ledger's high-water mark ({stored.amount if stored else 'none'}) is below the reference"

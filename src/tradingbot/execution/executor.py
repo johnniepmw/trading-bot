@@ -4,9 +4,9 @@
 that is clean (no open intent, no working broker order the ledger doesn't know), and it
 refuses a run ID that already recorded orders, so a retry can't send a batch twice.
 Before each order it asks `may_send` (the app wires the `new-orders` kill switch here,
-read fresh each time), records the intent, then sends. Any outcome that isn't certain
-leaves the intent UNKNOWN and stops the run: it is never resent. `reconcile` runs at the
-start of every run.
+read fresh each time), records the intent, asks again (saving it can take a while), then
+sends. Any outcome that isn't certain leaves the intent UNKNOWN and stops the run: it is
+never resent. `reconcile` runs at the start of every run.
 
 `checkpoint` saves the ledger remotely (ADR-0017): after reconcile, after each intent is
 recorded (before its order is sent) and after each intent changes state. If it raises, the
@@ -56,7 +56,7 @@ class ReconcileResult:
         return not self.problems
 
 
-def execute(  # noqa: PLR0913 - the order path's explicit dependencies
+def execute(  # noqa: PLR0913, PLR0911 - the order path's explicit dependencies; one return per way it stops
     orders: Sequence[ApprovedOrder],
     broker: Broker,
     ledger: Ledger,
@@ -81,6 +81,10 @@ def execute(  # noqa: PLR0913 - the order path's explicit dependencies
             return ExecutionReport(sent, "kill switch off")
         intent = ledger.record_intent(run_id, order.order, now)
         checkpoint()  # the intent is saved remotely before the order can go out
+        if not may_send():  # read again: the save can take a while
+            ledger.settle(intent, IntentState.NOT_SENT)
+            checkpoint()
+            return ExecutionReport(sent, "kill switch off")
         try:
             order_id = broker.place(order)
         except BrokerTimeoutError:

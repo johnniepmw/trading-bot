@@ -337,3 +337,24 @@ def test_setup_loses_to_a_ledger_created_meanwhile(store: FakeStore, clock: Cloc
     store.put(LEDGERS, LEDGER_OBJECT, b"rival")
     with pytest.raises(LostRaceError):
         setup.checkpoint()
+
+
+def test_a_deleted_reference_mark_stops_the_run(
+    ready: FakeStore, clock: Clock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    ready.remove(LOCKS, MARK_OBJECT)  # e.g. deleted to get past a restored-ledger stop
+    run = remote(ready, clock, tmp_path / "run")
+    run.acquire(HOLDER)
+    with pytest.raises(RestoredLedgerError, match="reference mark missing"):
+        run.open()
+    assert ready.data(LOCKS, MARK_OBJECT) is None  # and a run never re-creates it
+
+
+def test_only_setup_creates_the_reference_mark(ready: FakeStore, clock: Clock, tmp_path: Path) -> None:
+    run = remote(ready, clock, tmp_path / "run")
+    run.acquire(HOLDER)
+    ledger = run.open()
+    ready.remove(LOCKS, MARK_OBJECT)  # deleted while the run is going
+    ledger.update_high_water_mark(gbp("1050"), NOW)
+    with pytest.raises(LostRaceError):
+        run.checkpoint()  # the mark's generation no longer matches: not silently re-created

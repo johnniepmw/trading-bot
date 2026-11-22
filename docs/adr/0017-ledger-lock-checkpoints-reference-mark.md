@@ -41,11 +41,13 @@ Option 2, in `app/remote_ledger.py` over the `ObjectStore` port in `app/storage.
   Timeouts, connection errors, 408, 429 and 5xx are retried (3 attempts); a 412 after an
   attempt that may have landed is compared with the stored object's MD5, so our own landed
   upload is success and anything else a lost race. Any failure stops the run before the next
-  order. (The plan named CRC32C; MD5 is equivalent here and in the standard library.)
+  order. The kill switch is read again after the pre-send checkpoint, since a slow save
+  can take a minute. (The plan named CRC32C; MD5 is equivalent here and in the standard library.)
 - **Reference mark**: `reference-mark.json` in the lock bucket holds the highest high-water
   mark ever saved. It is raised only after the ledger upload that carries the new mark
   succeeds. A downloaded ledger whose mark is below it was restored from an older version,
-  and the run stops. Ledger setup refuses when the ledger object has any version, live or
+  and the run stops. A missing reference mark also stops the run: only setup creates it,
+  and recreating a lost one is an owner step (the restore runbook, step 8), never a run's. Ledger setup refuses when the ledger object has any version, live or
   not, or a reference mark exists.
 - **Transport**: the Cloud Storage JSON API over HTTPS with the standard library from
   `app` (as `app/flags.py` does), the job identity's token from the metadata server, and
