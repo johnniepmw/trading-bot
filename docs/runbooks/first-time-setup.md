@@ -32,7 +32,9 @@ scanning and push protection on the free plan. No GitHub Pro needed.
 2. `gcloud auth login && gcloud auth application-default login`
 3. `cp infra/bootstrap/bootstrap.tfvars.example infra/bootstrap/bootstrap.tfvars`, fill in
    project ID, repo (`owner/name`), app name, alert email.
-4. `make infra-bootstrap` — enables APIs, creates the state bucket, Artifact Registry,
+4. `make infra-bootstrap` — turns on the APIs it needs with `gcloud` first (a new project
+   has them off; if a run still fails with "API has not been used in project … before",
+   wait two minutes and re-run: it resumes from its local state), then enables APIs, creates the state bucket, Artifact Registry,
    Workload Identity Federation and the three CI identities, and migrates its own state
    into the bucket.
 5. `make gh-vars` — writes the outputs into GitHub Actions variables. **This repo: don't

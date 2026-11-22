@@ -117,6 +117,7 @@ resource "google_service_account" "ci" {
   project      = var.project_id
   account_id   = each.value
   display_name = "GitHub Actions: ${each.value}"
+  depends_on   = [google_project_service.apis] # the IAM API must be on first (a new project's first run)
 }
 
 resource "google_service_account_iam_member" "wif_any_ref" {
