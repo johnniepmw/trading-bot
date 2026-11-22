@@ -49,6 +49,7 @@ jobs:
       - name: Build once and push
         id: push
         env:
+          AR_REPO: ${{ vars.AR_REPO }}
         run: |
           version="${GITHUB_SHA::12}"
           ref="${AR_REPO}/${APP_NAME}:${version}"
