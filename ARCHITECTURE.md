@@ -22,9 +22,9 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 | `src/tradingbot/risk` | veto, shrink or pass each order; hard ceilings as constants | as strategy; be bypassed |
 | `src/tradingbot/execution` | `execute`: only `ApprovedOrder`; refuses while any intent is open; kill switch read before each order; ledger first, then send; any uncertain outcome → UNKNOWN and stop. `reconcile` settles intents from the broker (time-bounded matching; partial fills stay open) and flags working broker orders no intent knows | import a concrete broker; resend an order whose outcome is unknown; be bypassed (`broker.place` is called only here, tested) |
 | `src/tradingbot/brokers` | `port.Broker` (account, positions, quote, market orders by `ApprovedOrder`, broker order IDs, recent orders); `fake/` (no more capable than Trading 212); `trading212/` after the API check | leak broker JSON past the adapter |
-| `src/tradingbot/ledger` | `store.Ledger` (SQLite): intents recorded before sending, their states and filled quantities; a high-water mark that is seeded once by the owner and only rises (a lower one is an error); the decision record for monitoring (runs, signals, risk decisions, snapshots, month-end previews); `open` refuses a missing file (`create` is explicit); GCS storage and lock in Phase 2 (ADR-0013) | allow two concurrent writers; start afresh when the file is missing |
+| `src/tradingbot/ledger` | `store.Ledger` (SQLite): intents recorded before sending, their states and filled quantities; a high-water mark that is seeded once by the owner and only rises (a lower one is an error); the decision record for monitoring (runs, signals, risk decisions, snapshots, month-end previews); `open` refuses a missing file (`create` is explicit); kept in GCS by `app/remote_ledger.py` (ADR-0013, ADR-0017) | allow two concurrent writers; start afresh when the file is missing |
 | `src/tradingbot/config` | typed config, validated at start-up | hold secret values in code |
-| `src/tradingbot/app` | entry points (`python -m tradingbot.app`), wiring, flags, alerts, kill switch; `cycle.run_cycle`: reconcile → map positions → high-water mark and day start → checked history → signals, weights, volatility cap → broker-price cross-check → orders → risk → execute; any failure = no orders + ERROR log | contain trading logic; call `broker.place` (only `execution` does) |
+| `src/tradingbot/app` | entry points (`python -m tradingbot.app`), wiring, flags, alerts, kill switch; `remote_ledger.RemoteLedger` (lock object, an upload at every checkpoint, reference mark; ADR-0017) over `storage.ObjectStore` (Cloud Storage JSON API, standard library, redirects refused); `cycle.run_cycle`: reconcile → map positions → high-water mark and day start → checked history → signals, weights, volatility cap → broker-price cross-check → orders → risk → execute; any failure = no orders + ERROR log | contain trading logic; call `broker.place` (only `execution` does) |
 | `docs/strategies` | one spec per strategy: hypothesis, parameters, validation, gate | change parameters after results without a trial-log entry |
 | `src/tradingbot/backtest` | day-by-day simulation sharing `strategy`, `portfolio` and `risk` with live code; own fill simulator (next open plus costs) | import `execution`, brokers or HTTP; be imported by the pure core |
 | `research/` | validation statistics (Sharpe, Deflated Sharpe, block bootstrap, rolling windows, 1/N benchmark, trial log, CSV loader); real data lives outside the repo (`research/data/` is gitignored) | be imported by `src` |
@@ -41,7 +41,7 @@ contracts in `.importlinter`):
 2. `strategy`, `portfolio` and `risk` import only `domain` and config types, never each
    other, and never brokers, data I/O, HTTP libraries or `os` (environment variables).
 3. Only `brokers` imports HTTP libraries to reach a broker; `app` may too for GCP
-   adapters (flag overrides from Cloud Storage) (3a). Only `app` imports `execution`, and
+   adapters (flag overrides and the ledger in Cloud Storage) (3a). Only `app` imports `execution`, and
    only `execution` and `app` import `brokers`, so every order goes through the path that
    applies risk (3c, 3d). Only `app` imports `brokers.trading212` or `brokers.fake` (3b).
 4. `research` is never imported by `src`. `backtest` is in contracts 1, 2a (the pure core
@@ -57,9 +57,9 @@ Contracts live in `.importlinter` (high risk; `make arch` names the file so no o
 file can shadow it). Contracts 3b–3d are allow-lists, so a new subpackage is covered
 automatically; it must still be added to contract 1's forbidden list and 3a's sources. Contract 2 checks indirect
 imports too: keep config *types* in an `os`-free module (for example `config/types.py`)
-and the loading that reads the environment elsewhere (`config/load.py`). GCP client
-libraries (`google`) aren't on the HTTP list yet; decide where the GCS ledger adapter
-may use them when it lands (ADR-0013, Phase 1–2).
+and the loading that reads the environment elsewhere (`config/load.py`). No GCP
+client library is used: `app` reaches Cloud Storage with the standard library (flags, and
+the ledger per ADR-0017), so `google` stays off the dependency list.
 
 ## Invariants
 Each should have a test; the ones marked (Phase 0) already do.
@@ -68,8 +68,9 @@ Each should have a test; the ones marked (Phase 0) already do.
 - **Time**: UTC only, with an injectable clock. Market hours come from the broker's
   schedule.
 - **Fail closed**: any unexpected error means no new orders, plus an alert.
-- **Idempotent runs**: intended orders are written to the ledger before they are sent;
-  every run starts by reconciling the ledger with the broker.
+- **Idempotent runs**: intended orders are written to the ledger, and the ledger saved
+  remotely, before they are sent; every run starts by reconciling the ledger with the
+  broker; one run at a time holds the ledger's lock (ADR-0017, `tests/app/`).
 - **Config**: typed and validated at start-up; invalid config means the bot refuses to
   start.
 - **Kill switch**: the `new-orders` flag off means no new orders, and it fails closed: an

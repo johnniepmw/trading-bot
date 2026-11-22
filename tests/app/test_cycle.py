@@ -95,6 +95,7 @@ def cycle(broker: FakeBroker, ledger: Ledger, **kw: object):  # type: ignore[no-
     now = args.pop("now")
     args.setdefault("clock", lambda: now)  # a fixed clock unless a test passes a moving one
     args.setdefault("version", "test")
+    args.setdefault("checkpoint", lambda: None)
     return run_cycle(**args)  # type: ignore[arg-type]
 
 
@@ -112,6 +113,12 @@ def test_a_month_end_buys_the_trending_fund_and_leaves_the_other_in_cash(
     assert (order.order.instrument, order.order.side) == (UP, Side.BUY)
     assert order.order.quantity * Decimal(repr(close_on(UP, SIGNAL_DAY))) <= Decimal(250)  # the 25% sleeve
     assert errors(caplog) == []
+
+
+def test_the_ledger_is_checkpointed_around_each_order(broker: FakeBroker, ledger: Ledger) -> None:
+    calls: list[int] = []
+    cycle(broker, ledger, checkpoint=lambda: calls.append(len(broker.recent_orders())))
+    assert calls == [0, 0, 1]  # after reconcile, before the one order is sent, after it
 
 
 def test_running_again_is_harmless(broker: FakeBroker, ledger: Ledger) -> None:

@@ -21,3 +21,4 @@ Accepted ADRs are never rewritten; a new ADR supersedes them.
 | [0014](0014-public-repository.md) | Public repository | accepted |
 | [0015](0015-long-or-cash-trend-first-strategy.md) | A long-or-cash ETF trend system as the first strategy | accepted |
 | [0016](0016-order-path-types-and-market-data.md) | Order-path types, the market-data boundary and numeric types | accepted |
+| [0017](0017-ledger-lock-checkpoints-reference-mark.md) | The ledger in GCS: a lock object, per-intent checkpoints and a reference mark | accepted |
