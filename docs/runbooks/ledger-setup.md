@@ -1,10 +1,13 @@
 # Runbook: set up the ledger and seed the high-water mark (owner, once)
 
 **When**: once, before the bot's first run in an environment (staging, then prod). Never
-again for the same account. The command is `python -m tradingbot.app setup --equity <GBP>`,
-run as a one-off execution of the environment's job (its own identity and broker; the exact
-`gcloud` command arrives with the job in Phase 2 step 5). Prod can't run it until the
-Trading 212 adapter exists (step 4).
+again for the same account. It runs as a one-off execution of the environment's job (its
+own identity and broker):
+```
+gcloud run jobs execute trading-bot-prod --region europe-west2 --args=setup,--equity,<GBP> --wait
+```
+(staging was set up this way on 2026-11-22 with its fake £1,000). Prod can't run it until
+the Trading 212 adapter exists (Phase 2 step 4).
 
 **Why it is an owner step**: the high-water mark is the peak the 20% drawdown stop is
 measured from. If code could set it, a lost or damaged ledger could be "repaired" by
@@ -27,10 +30,10 @@ the first mark itself (`tests/execution/test_executor.py` checks no daily code c
 **Deposits and big rises**: the bot refuses a new peak more than 10% above the mark in one
 step (it looks like a bad equity reading), so after a deposit of more than about 10%, or a
 long gap during a strong rise, every run stops with "implausible new peak". Raise the mark
-explicitly with the Phase 2 owner command after checking the account; the bot never does
-it itself. A withdrawal looks like a drawdown: plan it with the agent first.
+explicitly after checking the account; the bot never does it itself. That owner command
+isn't built yet (tech debt): tell the agent before a large deposit. A withdrawal looks like a drawdown: plan it with the agent first.
 
-**If the ledger is lost or damaged later**: the bot stops (no orders) and alerts. Do not
+**If the ledger is lost or damaged later** (ledger-restore.md): the bot stops (no orders) and alerts. Do not
 re-run setup. Restore the latest version from the versioned bucket (ADR-0013) and check its
 high-water mark against your own records before restarting; if in doubt, tell the agent
 and keep the kill switch off.
