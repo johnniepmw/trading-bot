@@ -206,8 +206,8 @@ def test_drill_unknown_order_from_an_earlier_run(
 @pytest.mark.parametrize(
     "clock",
     [
-        datetime(2025, 12, 2, 9, 0),
-        datetime(2025, 12, 2, 9, 0, tzinfo=ZoneInfo("Europe/London")),
+        NOW.replace(tzinfo=None),
+        NOW.astimezone(ZoneInfo("Europe/London")),  # same instant, zero offset in winter
     ],
 )
 def test_drill_clock_not_in_utc(
@@ -257,10 +257,18 @@ def test_drill_partial_fill_blocks_until_it_finishes(
 
 
 def test_drill_duplicate_run(broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture) -> None:
-    cycle(broker, ledger)
-    assert cycle(broker, ledger).stopped == "run run-1 already executed"
+    broker.timeout_after_accepting_next = True
+    cycle(broker, ledger)  # stops after sending: the month end is not marked acted
+    again = cycle(broker, ledger)  # the same run retried
+    assert again.stopped == "run run-1 already executed"
     assert len(broker.recent_orders()) == 1
     assert any("already executed" in m for m in errors(caplog))
+
+
+def test_a_completed_month_end_repeated_sends_nothing(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger)
+    assert cycle(broker, ledger) == cycle(broker, ledger, run_id="run-9")
+    assert len(broker.recent_orders()) == 1
 
 
 def test_drill_daily_loss_pauses_buys(
@@ -275,9 +283,9 @@ def test_drill_daily_loss_pauses_buys(
 def test_the_daily_loss_check_works_across_real_runs(
     broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
 ) -> None:
-    cycle(broker, ledger, signal_day=None)  # day 1: £1000 recorded
+    cycle(broker, ledger, signal_day=None, now=NOW - timedelta(days=1), run_id="run-0")  # £1000 recorded
     broker._cash = Decimal(970)  # equity falls 3% overnight
-    report = cycle(broker, ledger, now=NOW + timedelta(days=1), run_id="run-2")
+    report = cycle(broker, ledger, run_id="run-2")  # the first run after the month end
     assert report.sent == 0
     assert any("daily loss" in m for m in errors(caplog))
 
@@ -385,3 +393,87 @@ def test_drill_two_positions_for_one_fund(
     held_up(broker)
     broker.positions = lambda: [Position(UP, Decimal(1)), Position(UP, Decimal(1))]  # type: ignore[method-assign]
     assert_stopped(cycle(broker, ledger), broker, caplog, "twice")
+
+
+# --- review round 2: one decision per month end, on verified closes ------------------
+DAY = timedelta(days=1)
+
+
+def test_a_month_end_is_acted_on_once_no_mid_month_rebalancing(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger)
+    [bought] = broker.recent_orders()
+    broker._held[UP] = bought.filled_quantity / 2  # the holding drifts far below target...
+    broker._cash += bought.filled_quantity / 2 * broker.quotes[UP].amount
+    report = cycle(broker, ledger, now=NOW + 4 * DAY, run_id="run-2")
+    assert (report.sent, report.stopped) == (0, None)  # ...but the next rebalance is next month end
+    assert len(broker.recent_orders()) == 1
+
+
+def test_a_deferred_month_end_is_acted_on_later_with_the_verified_closes(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    assert cycle(broker, ledger, may_send=lambda: False).sent == 0  # day 1: closes verified, nothing sent
+    report = cycle(broker, ledger, now=NOW + DAY, run_id="run-2")
+    assert report.sent == 1
+
+
+def test_drill_a_later_day_without_verified_closes_stops(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    report = cycle(broker, ledger, now=NOW + 3 * DAY)  # the run after the month end never happened
+    assert_stopped(report, broker, caplog, "not verified")
+    assert broker.recent_orders() == []
+
+
+def test_drill_a_bad_month_end_print_never_flips_the_signal(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    held_up(broker)
+    history = FakeHistory()
+    k = DAYS.index(SIGNAL_DAY)
+    bad = history.bars[UP][k]
+    history.bars[UP][k] = replace(
+        bad, open=bad.open * 0.9, close=bad.close * 0.9
+    )  # would read as a trend break
+    first = cycle(broker, ledger, history=history)  # day 1: cross-check fails
+    second = cycle(broker, ledger, history=history, now=NOW + DAY, run_id="run-2")  # day 2: never verified
+    assert "cross-check" in (first.stopped or "") and "not verified" in (second.stopped or "")
+    assert broker.recent_orders() == []  # the held fund was never sold
+
+
+def test_drill_a_revised_month_end_close_stops(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    cycle(broker, ledger, may_send=lambda: False)  # day 1 verifies the closes
+    history = FakeHistory()
+    k = DAYS.index(SIGNAL_DAY)
+    history.bars[UP][k] = replace(history.bars[UP][k], close=history.bars[UP][k].close * 1.01)
+    report = cycle(broker, ledger, history=history, now=NOW + DAY, run_id="run-2")
+    assert_stopped(report, broker, caplog, "not verified")
+
+
+@pytest.mark.parametrize("bad", [Money(Decimal(0), Currency.GBP), Money(Decimal(15000), Currency.GBX)])
+def test_drill_a_bad_quote_for_a_held_fund_fails_the_equity_check(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture, bad: Money
+) -> None:
+    held_up(broker)
+    real = broker.quote
+    broker.quote = lambda i: bad if i == UP else real(i)  # type: ignore[method-assign]
+    assert_stopped(cycle(broker, ledger, signal_day=None), broker, caplog, "equity check")
+    assert ledger.previous_day_equity(NOW.date() + DAY) == gbp(1000)
+
+
+def test_a_day_start_older_than_five_days_counts_as_unknown(
+    tmp_path: Path, broker: FakeBroker, caplog: pytest.LogCaptureFixture
+) -> None:
+    old = Ledger.create(tmp_path / "old.sqlite")
+    old.seed_high_water_mark(gbp(1000), NOW - 10 * DAY)  # nothing recorded since
+    report = cycle(broker, old)
+    old.close()
+    assert report.sent == 0
+    assert any("no day-start equity" in m for m in errors(caplog))
+
+
+def test_no_signal_days_only_need_quotes_for_funds_held(broker: FakeBroker, ledger: Ledger) -> None:
+    del broker.quotes[DOWN]  # if the broker can't price a fund we don't hold
+    assert cycle(broker, ledger, signal_day=None).stopped is None

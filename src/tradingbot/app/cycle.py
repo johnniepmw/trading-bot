@@ -2,11 +2,13 @@
 
 Wiring only, no trading logic: the decisions are `strategy`, `portfolio` and `risk`; the
 sending is `execution`. Every failure stops the cycle with no new orders and an ERROR log
-line (the alert). The cycle is safe to run every day and to repeat: once holdings are on
-target the rebalance band produces no orders, so a day stopped by a check only defers.
+line (the alert). The cycle is safe to run every day and to repeat.
 
-`signal_day` is the latest completed month end (the caller's trading calendar, Phase 2), or
-None on days with no new targets to compute.
+`signal_day` is the latest completed month end, passed every day by the caller's trading
+calendar (Phase 2). Each month end is acted on once, like the backtest: the first run after
+it checks the signal-day closes against the broker's live prices and stores them; a run
+that completes marks the month end acted, and later runs only reconcile and mark. If the
+first run was stopped, a later run may act only on the same verified closes.
 """
 
 from __future__ import annotations
@@ -99,8 +101,8 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
 
     holdings = _holdings(broker, config.universe)
     account = broker.account()
-    quotes = {i: broker.quote(i) for i in config.universe}
-    _check_equity(account.cash, account.equity, holdings, quotes)
+    held_quotes = {i: broker.quote(i) for i, q in holdings.items() if q > 0}
+    _check_equity(account.cash, account.equity, holdings, held_quotes)
     mark = ledger.high_water_mark()
     if mark is None:
         raise CycleStopError("no high-water mark: the owner must seed it (setup step)")
@@ -110,11 +112,13 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
     ledger.update_high_water_mark(account.equity, now)
     ledger.record_equity(now.date(), account.equity)
     mark = ledger.high_water_mark()
-    if signal_day is None:
+    if signal_day is None or ledger.signal_acted(signal_day):
         return CycleReport(0, None)
 
     bars = _checked_history(history, config.universe, signal_day, now.date())
+    quotes = {i: broker.quote(i) for i in config.universe}
     _cross_check(bars, quotes)
+    _verify_signal_closes(ledger, bars, signal_day)
     weights = sleeve_weights(signals(bars, signal_day))
     weights = vol_scaled(weights, {i: daily_returns(b, signal_day) for i, b in bars.items()})
     proposed = orders_for(
@@ -142,6 +146,8 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
             )
     approved = [d.approved for d in decisions if d.approved is not None]
     result = execute(approved, broker, ledger, run_id=run_id, now=now, may_send=may_send)
+    if result.stopped is None:
+        ledger.mark_signal_acted(signal_day)
     return CycleReport(result.sent, result.stopped)
 
 
@@ -163,7 +169,12 @@ def _check_equity(
 ) -> None:
     """The broker's equity must match cash plus holdings at its own quotes, before it can
     move the high-water mark or the day start, or size anything."""
-    computed = cash.amount + sum((q * quotes[i].to_gbp().amount for i, q in holdings.items()), Decimal(0))
+    for instrument, quote in quotes.items():
+        if quote.currency is not instrument.currency or quote.amount <= 0:
+            raise CycleStopError(f"equity check failed: bad broker quote {quote} for {instrument.ticker}")
+    computed = cash.amount + sum(
+        (q * quotes[i].to_gbp().amount for i, q in holdings.items() if q > 0), Decimal(0)
+    )
     if computed <= 0 or abs(equity.amount / computed - 1) > EQUITY_TOLERANCE:
         raise CycleStopError(f"equity check failed: broker says {equity}, cash and holdings give {computed}")
 
@@ -198,3 +209,17 @@ def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instr
             raise CycleStopError(
                 f"price cross-check failed for {instrument.ticker}: data {close}, broker {quote}"
             )
+
+
+def _verify_signal_closes(ledger: Ledger, bars: Mapping[Instrument, Sequence[Bar]], signal_day: date) -> None:
+    """On the first run after the month end the latest close is the signal-day close, and it
+    has just passed the cross-check: store it. Later runs may only act on the same closes."""
+    closes = {
+        i: price_money(i, next(b for b in reversed(s) if b.day == signal_day).close) for i, s in bars.items()
+    }
+    if all(s[-1].day == signal_day for s in bars.values()):
+        ledger.store_verified_closes(signal_day, closes)
+    elif ledger.verified_closes(signal_day) != closes:
+        raise CycleStopError(
+            f"signal-day closes for {signal_day} not verified against the broker, or changed since"
+        )

@@ -9,8 +9,9 @@ Times are UTC. Amounts are stored as Decimal strings.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
@@ -30,6 +31,16 @@ CREATE TABLE IF NOT EXISTS intents (
     state TEXT NOT NULL,
     broker_order_id TEXT UNIQUE,
     filled_quantity TEXT
+);
+CREATE TABLE IF NOT EXISTS signal_closes (
+    signal_day TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    close TEXT NOT NULL,
+    PRIMARY KEY (signal_day, ticker, currency)
+);
+CREATE TABLE IF NOT EXISTS acted_signals (
+    signal_day TEXT PRIMARY KEY
 );
 CREATE TABLE IF NOT EXISTS daily_equity (
     day TEXT PRIMARY KEY,
@@ -98,7 +109,9 @@ class Ledger:
         # mode=rw: SQLite must not create the file if it vanishes between the check and here
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, isolation_level=None)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not {"intents", "marks", "daily_equity"} <= tables:  # e.g. an empty or truncated download
+        if (
+            not {"intents", "marks", "daily_equity", "signal_closes", "acted_signals"} <= tables
+        ):  # e.g. an empty or truncated download
             conn.close()
             raise LedgerError(f"not a ledger (missing tables): {path}")
         return cls(conn)
@@ -216,13 +229,45 @@ class Ledger:
             (day.isoformat(), str(equity.amount)),
         )
 
-    def previous_day_equity(self, day: date) -> Money | None:
+    def previous_day_equity(self, day: date, max_age_days: int = 5) -> Money | None:
         """The day-start equity for `day`: the last equity recorded on an earlier day, as the
-        backtest uses the previous close. None if there is none (risk then blocks buys)."""
+        backtest uses the previous close. None if there is none within `max_age_days` (a
+        stale value could hide a real loss; risk then blocks buys for the day)."""
+        oldest = (day - timedelta(days=max_age_days)).isoformat()
         row = self._conn.execute(
-            "SELECT amount FROM daily_equity WHERE day < ? ORDER BY day DESC LIMIT 1", (day.isoformat(),)
+            "SELECT amount FROM daily_equity WHERE day < ? AND day >= ? ORDER BY day DESC LIMIT 1",
+            (day.isoformat(), oldest),
         ).fetchone()
         return None if row is None else Money(Decimal(row[0]), Currency.GBP)
+
+    # --- month-end signals -----------------------------------------------------------
+    def store_verified_closes(self, signal_day: date, closes: Mapping[Instrument, Money]) -> None:
+        """The signal-day closes that passed the cross-check against the broker's prices."""
+        for instrument, close in closes.items():
+            self._conn.execute(
+                "INSERT INTO signal_closes (signal_day, ticker, currency, close) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (signal_day, ticker, currency) DO UPDATE SET close = excluded.close",
+                (signal_day.isoformat(), instrument.ticker, instrument.currency.value, str(close.amount)),
+            )
+
+    def verified_closes(self, signal_day: date) -> dict[Instrument, Money]:
+        rows = self._conn.execute(
+            "SELECT ticker, currency, close FROM signal_closes WHERE signal_day = ?",
+            (signal_day.isoformat(),),
+        )
+        return {Instrument(t, Currency(c)): Money(Decimal(v), Currency(c)) for t, c, v in rows}
+
+    def mark_signal_acted(self, signal_day: date) -> None:
+        """This month end's decision ran to completion; later runs only reconcile and mark."""
+        self._conn.execute(
+            "INSERT OR IGNORE INTO acted_signals (signal_day) VALUES (?)", (signal_day.isoformat(),)
+        )
+
+    def signal_acted(self, signal_day: date) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM acted_signals WHERE signal_day = ?", (signal_day.isoformat(),)
+        ).fetchone()
+        return row is not None
 
     # --- high-water mark --------------------------------------------------------------
     def seed_high_water_mark(self, equity: Money, at: datetime) -> None:
