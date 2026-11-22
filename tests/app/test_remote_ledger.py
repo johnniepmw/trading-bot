@@ -379,3 +379,14 @@ def test_a_scratch_copy_is_checked_against_the_reference_mark(
     ready.put(LOCKS, MARK_OBJECT, b'{"amount": "5000", "currency": "GBP"}')
     with pytest.raises(RestoredLedgerError):
         remote(ready, clock, tmp_path / "dry").open_scratch()
+
+
+def test_setup_refuses_when_a_reference_mark_existed_and_was_deleted(
+    store: FakeStore, clock: Clock, tmp_path: Path
+) -> None:
+    store.put(LOCKS, MARK_OBJECT, b'{"amount": "1000", "currency": "GBP"}')
+    store.remove(LOCKS, MARK_OBJECT)  # deleted (soft-deleted in GCS): its history still counts
+    setup = remote(store, clock, tmp_path / "setup")
+    setup.acquire(LockHolder("setup-exec", "setup-1", "setup"))
+    with pytest.raises(SetupRefusedError, match="reference mark"):
+        setup.create()
