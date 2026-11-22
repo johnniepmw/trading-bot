@@ -87,3 +87,28 @@ class Broker(BrokerReader, Protocol):
         """Send a market order; return the broker's order ID. Raises BrokerTimeoutError when the
         outcome is unknown, BrokerError when nothing was placed."""
         ...
+
+
+class _ReadOnly:
+    def __init__(self, broker: BrokerReader) -> None:
+        self._broker = broker
+
+    def account(self) -> AccountSnapshot:
+        return self._broker.account()
+
+    def positions(self) -> Sequence[Position]:
+        return self._broker.positions()
+
+    def quote(self, instrument: Instrument) -> Money:
+        return self._broker.quote(instrument)
+
+    def order(self, order_id: str) -> BrokerOrder:
+        return self._broker.order(order_id)
+
+    def recent_orders(self) -> Sequence[BrokerOrder]:
+        return self._broker.recent_orders()
+
+
+def read_only(broker: BrokerReader) -> BrokerReader:
+    """A view with no `place` at all, so a dry run can't send even by going round the types."""
+    return _ReadOnly(broker)

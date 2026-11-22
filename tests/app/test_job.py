@@ -77,7 +77,10 @@ def set_up(tmp_path: Path) -> Path:
         ({"LEDGER_BUCKET": ""}, "LEDGER_BUCKET"),
         ({"LOCK_BUCKET": "ledger"}, "separate"),
         ({"LOCAL_STORE_DIR": ""}, "LOCAL_STORE_DIR"),
-        ({"APP_ENV": "staging"}, "local and test runs only"),  # a directory store outside local/test
+        (
+            {"APP_ENV": "staging", "LEDGER_BUCKET": "p-staging-l", "LOCK_BUCKET": "p-staging-k"},
+            "local and test runs only",
+        ),  # a directory store outside local/test
     ],
 )
 def test_bad_wiring_refuses_to_start(tmp_path: Path, change: dict[str, str], message: str) -> None:
@@ -86,7 +89,7 @@ def test_bad_wiring_refuses_to_start(tmp_path: Path, change: dict[str, str], mes
 
 
 def test_prod_refuses_unverified_instruments(tmp_path: Path) -> None:
-    wiring = wiring_from({"APP_ENV": "prod", "LEDGER_BUCKET": "l", "LOCK_BUCKET": "k"})
+    wiring = wiring_from({"APP_ENV": "prod", "LEDGER_BUCKET": "p-prod-ledger", "LOCK_BUCKET": "p-prod-locks"})
     with pytest.raises(JobConfigError, match="unverified"):
         check_prod_ready(wiring, load_config())
 
@@ -94,7 +97,7 @@ def test_prod_refuses_unverified_instruments(tmp_path: Path) -> None:
 def test_prod_refuses_fakes_even_with_verified_instruments(tmp_path: Path) -> None:
     from dataclasses import replace  # noqa: PLC0415 - this test only
 
-    wiring = wiring_from({"APP_ENV": "prod", "LEDGER_BUCKET": "l", "LOCK_BUCKET": "k"})
+    wiring = wiring_from({"APP_ENV": "prod", "LEDGER_BUCKET": "p-prod-ledger", "LOCK_BUCKET": "p-prod-locks"})
     with pytest.raises(JobConfigError, match="Trading 212 adapter"):
         check_prod_ready(wiring, replace(load_config(), instruments_verified=True))
 
@@ -104,7 +107,12 @@ def test_a_live_operator_secret_builds_nothing_live(tmp_path: Path, caplog: pyte
 
     secret = tmp_path / "operator"
     secret.write_text('{"mode": "live", "capital_gbp": "500"}')
-    env = {"APP_ENV": "prod", "LEDGER_BUCKET": "l", "LOCK_BUCKET": "k", "FLAG_NEW_ORDERS": "off"}
+    env = {
+        "APP_ENV": "prod",
+        "LEDGER_BUCKET": "p-prod-ledger",
+        "LOCK_BUCKET": "p-prod-locks",
+        "FLAG_NEW_ORDERS": "off",
+    }
     job = Job(
         wiring=wiring_from(env),
         config=replace(load_config(), operator_secret_path=str(secret)),
@@ -382,3 +390,70 @@ def test_a_storage_failure_stops_a_dry_run_with_its_own_line(
 def test_setup_refuses_an_equity_that_isnt_a_positive_amount(tmp_path: Path, equity: str) -> None:
     assert job_at(tmp_path, SETUP_DAY).setup(equity) == EXIT_STOPPED
     assert store(tmp_path).info("ledger", LEDGER_OBJECT) is None
+
+
+# --- hardening from the security review ------------------------------------------------
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"APP_ENV": "staging", "LOCAL_STORE_DIR": "", "LEDGER_BUCKET": "p-prod-ledger"}, "staging"),
+        (
+            {
+                "APP_ENV": "staging",
+                "LOCAL_STORE_DIR": "",
+                "LOCK_BUCKET": "p-prod-locks",
+                "LEDGER_BUCKET": "p-staging-l",
+            },
+            "staging",
+        ),
+        ({"CLOUD_RUN_JOB": "trading-bot-prod"}, "Cloud Run"),  # a directory store on Cloud Run
+    ],
+)
+def test_wiring_binds_buckets_and_stores_to_the_environment(
+    tmp_path: Path, change: dict[str, str], message: str
+) -> None:
+    with pytest.raises(JobConfigError, match=message):
+        wiring_from(env_for(tmp_path, **change))
+
+
+def test_staging_buckets_named_for_staging_are_accepted(tmp_path: Path) -> None:
+    env = env_for(
+        tmp_path,
+        APP_ENV="staging",
+        LOCAL_STORE_DIR="",
+        LEDGER_BUCKET="p-staging-ledger",
+        LOCK_BUCKET="p-staging-locks",
+    )
+    assert wiring_from(env).app_env == "staging"
+
+
+def test_fakes_are_never_built_for_prod(tmp_path: Path) -> None:
+    from dataclasses import replace  # noqa: PLC0415
+
+    job = job_at(tmp_path, RUN_DAY)
+    prod = replace(job, wiring=replace(job.wiring, app_env="prod"))
+    with pytest.raises(JobConfigError, match="fake"):
+        prod.fake_account()
+    with pytest.raises(JobConfigError, match="synthetic"):
+        prod.history()
+
+
+def test_a_run_refuses_a_missing_fake_account(set_up: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store(set_up).delete(
+        "ledger",
+        FAKE_ACCOUNT_OBJECT,
+        if_generation_match=store(set_up).info("ledger", FAKE_ACCOUNT_OBJECT).generation,
+    )  # type: ignore[union-attr]
+    with caplog.at_level(logging.ERROR):
+        assert job_at(set_up, RUN_DAY).run() == EXIT_STOPPED
+    assert "fake account missing" in caplog.text
+
+
+def test_the_dry_runs_broker_has_no_place_at_run_time() -> None:
+    from tradingbot.brokers.fake.broker import FakeBroker  # noqa: PLC0415
+    from tradingbot.brokers.port import read_only  # noqa: PLC0415
+    from tradingbot.domain.money import Currency, Money  # noqa: PLC0415
+
+    reader = read_only(FakeBroker(Money(Decimal(1000), Currency.GBP), {}))
+    assert not hasattr(reader, "place")
+    assert reader.account().cash == Money(Decimal(1000), Currency.GBP)

@@ -38,6 +38,7 @@ from tradingbot.app.remote_ledger import (
 )
 from tradingbot.app.storage import GcsObjectStore, ObjectStore, metadata_token, urllib_transport
 from tradingbot.brokers.fake.broker import FakeBroker
+from tradingbot.brokers.port import read_only
 from tradingbot.config.load import load_config
 from tradingbot.config.types import BotConfig
 from tradingbot.data.prices import PriceHistory
@@ -80,6 +81,12 @@ def wiring_from(env: Mapping[str, str]) -> Wiring:
         raise JobConfigError(f"{', '.join(missing)} must be set")
     if buckets["LEDGER_BUCKET"] == buckets["LOCK_BUCKET"]:
         raise JobConfigError("the lock bucket must be separate from the ledger bucket (ADR-0017)")
+    if app_env in {"staging", "prod"}:
+        wrong = [name for name, value in buckets.items() if f"-{app_env}" not in value]
+        if wrong:  # e.g. staging settings pointed at prod's buckets
+            raise JobConfigError(f"{', '.join(wrong)} must be the {app_env} bucket (named with -{app_env})")
+    if app_env in {"local", "test"} and (env.get("CLOUD_RUN_JOB") or env.get("K_SERVICE")):
+        raise JobConfigError("APP_ENV local or test can't run on Cloud Run (no shared lock)")
     local = env.get("LOCAL_STORE_DIR")
     if app_env in {"local", "test"} and not local:
         raise JobConfigError("LOCAL_STORE_DIR must be set for local and test runs")
@@ -136,8 +143,13 @@ class FakeAccount:
         self._quotes = {i: price_money(i, synthetic_close(i, close_day)) for i in config.universe}
         self._generation = 0
 
-    def load(self) -> FakeBroker:
+    def load(self, *, new: bool = False) -> FakeBroker:
+        """The saved account; `new` (setup only) starts one instead and refuses if one exists."""
         found = self._store.info(self._bucket, FAKE_ACCOUNT_OBJECT)
+        if found is None and not new:
+            raise ValueError("fake account missing: setup creates it")
+        if found is not None and new:
+            raise ValueError("fake account already exists: setup runs once")
         if found is None:
             broker = FakeBroker(FAKE_STARTING_CASH, self._quotes)
         else:
@@ -168,8 +180,15 @@ class Job:
     def _cycle_config(self) -> CycleConfig:
         return CycleConfig(universe=self.config.universe, limits=Limits(**vars(self.config.limits)))
 
-    def _history(self) -> PriceHistory:
-        return SyntheticHistory()  # prod never gets here (check_prod_ready)
+    def history(self) -> PriceHistory:
+        if self.wiring.app_env not in FAKE_ENVS:
+            raise JobConfigError("synthetic prices are for local, test and staging only")
+        return SyntheticHistory()
+
+    def fake_account(self) -> FakeAccount:
+        if self.wiring.app_env not in FAKE_ENVS:
+            raise JobConfigError("the fake broker is for local, test and staging only")
+        return FakeAccount(self.store, self.wiring.ledger_bucket, self.config, self.clock)
 
     def _remote(self, workdir: Path) -> RemoteLedger:
         return RemoteLedger(
@@ -243,7 +262,7 @@ class Job:
     def _run_locked(self, remote: RemoteLedger, run_id: str, signal_day: date, now: datetime) -> int:
         try:
             ledger = remote.open()
-            account = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, self.clock)
+            account = self.fake_account()
             broker = account.load()
         except (LedgerStorageError, OSError, ValueError) as error:
             log.error("cycle stopped: %s", error)
@@ -254,7 +273,7 @@ class Job:
         report = run_cycle(
             broker=broker,
             ledger=ledger,
-            history=self._history(),
+            history=self.history(),
             config=self._cycle_config(),
             signal_day=signal_day,
             clock=self.clock,
@@ -277,7 +296,7 @@ class Job:
             try:
                 calendar = self._calendar()
                 signal_day = calendar.signal_day(now.date())
-                reader = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, self.clock).load()
+                reader = read_only(self.fake_account().load())
                 ledger = self._remote(Path(scratch)).open_scratch()
             except (CalendarError, LedgerStorageError, OSError, ValueError) as error:
                 log.warning("dry run stopped: %s", error)
@@ -286,7 +305,7 @@ class Job:
                 report = dry_run_cycle(
                     broker=reader,
                     ledger=ledger,
-                    history=self._history(),
+                    history=self.history(),
                     config=self._cycle_config(),
                     signal_day=signal_day,
                     clock=self.clock,
@@ -320,9 +339,9 @@ class Job:
                 remote.release()
 
     def _setup_locked(self, remote: RemoteLedger, stated: Money, now: datetime) -> int:
-        account = FakeAccount(self.store, self.wiring.ledger_bucket, self.config, self.clock)
+        account = self.fake_account()
         try:
-            broker = account.load()
+            broker = account.load(new=True)
             actual = broker.account().equity
             if abs(actual.amount - stated.amount) > actual.amount * SETUP_EQUITY_TOLERANCE:
                 log.error(

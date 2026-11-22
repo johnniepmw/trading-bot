@@ -43,7 +43,7 @@ def test_a_missing_ledger_fails_closed(run_job: RunJob, tmp_path: Path) -> None:
     # the dry run checks the ledger on any day (a real-clock `run` on a weekend does nothing)
     result = run_job("run", "--dry-run", env=wiring(tmp_path))
     assert result.returncode == 1
-    assert any("ledger missing" in line["message"] for line in log_lines(result))
+    assert any("missing" in line["message"] for line in log_lines(result))  # the account or the ledger
 
 
 def test_prod_refuses_to_start_on_fakes(run_job: RunJob, tmp_path: Path) -> None:
