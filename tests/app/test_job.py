@@ -26,6 +26,7 @@ from tradingbot.app.job import (
 from tradingbot.app.local_store import LocalObjectStore
 from tradingbot.app.remote_ledger import LEDGER_OBJECT, LOCK_OBJECT
 from tradingbot.config.load import load_config
+from tradingbot.data.prices import DataError
 from tradingbot.ledger.store import IntentState, Ledger
 
 SETUP_DAY = datetime(2026, 11, 30, 7, 15, tzinfo=UTC)  # a Monday
@@ -449,6 +450,21 @@ def test_staging_buckets_named_for_staging_are_accepted(tmp_path: Path) -> None:
     assert wiring_from(env).app_env == "staging"
 
 
+def test_prod_prices_come_from_eodhd_with_the_mounted_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace  # noqa: PLC0415
+
+    from tradingbot.app import eodhd  # noqa: PLC0415
+
+    key = tmp_path / "key"
+    key.write_text("abc")
+    monkeypatch.setattr(eodhd, "KEY_PATH", key)
+    job = job_at(tmp_path, RUN_DAY)
+    prod = replace(job, wiring=replace(job.wiring, app_env="prod"))
+    assert isinstance(prod.history(), eodhd.EodhdHistory)
+
+
 def test_fakes_are_never_built_for_prod(tmp_path: Path) -> None:
     from dataclasses import replace  # noqa: PLC0415
 
@@ -456,7 +472,7 @@ def test_fakes_are_never_built_for_prod(tmp_path: Path) -> None:
     prod = replace(job, wiring=replace(job.wiring, app_env="prod"))
     with pytest.raises(JobConfigError, match="fake"):
         prod.fake_account()
-    with pytest.raises(JobConfigError, match="synthetic"):
+    with pytest.raises(DataError, match="EODHD key"):  # prod reads EODHD, never synthetic prices
         prod.history()
 
 

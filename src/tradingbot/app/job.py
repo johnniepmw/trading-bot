@@ -28,6 +28,7 @@ from pathlib import Path
 
 from tradingbot.app.calendar import CalendarError, TradingCalendar
 from tradingbot.app.cycle import CycleConfig, dry_run_cycle, run_cycle
+from tradingbot.app.eodhd import EodhdHistory, read_key
 from tradingbot.app.flags import Flags
 from tradingbot.app.local_store import LocalObjectStore
 from tradingbot.app.operator import read_operator
@@ -112,7 +113,7 @@ def check_prod_ready(wiring: Wiring, config: BotConfig) -> None:
         return
     if not config.instruments_verified:
         raise JobConfigError("prod refuses to trade: the config's instrument data is unverified")
-    raise JobConfigError("prod needs the Trading 212 adapter (step 4) and a live price source (step 3)")
+    raise JobConfigError("prod needs the Trading 212 adapter (step 4)")
 
 
 def warn_if_live_requested(config: BotConfig, wiring: Wiring) -> None:
@@ -185,6 +186,9 @@ class Job:
         return CycleConfig(universe=self.config.universe, limits=Limits(**vars(self.config.limits)))
 
     def history(self) -> PriceHistory:
+        """EODHD in prod (ADR-0018); synthetic prices everywhere else."""
+        if self.wiring.app_env == "prod":
+            return EodhdHistory(urllib_transport(timeout=30.0), read_key())
         if self.wiring.app_env not in FAKE_ENVS:
             raise JobConfigError("synthetic prices are for local, test and staging only")
         return SyntheticHistory()

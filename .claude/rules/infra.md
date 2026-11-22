@@ -6,7 +6,9 @@ paths:
   (what resources are created, changed or destroyed, cost, blast radius).
 - Never put secret values in OpenTofu: add the name to `secrets` in `infra/envs/<env>`
   (the job module creates the container with no version); the owner adds the value with
-  `make secret-set` before the job needs it. The live switch `prod-operator` is the
+  `make secret-set` before the job needs it. Cloud Run refuses to mount a secret with no
+  version, so the owner adds the value before the PR that mounts it is applied (or the
+  apply fails and is re-run afterwards, as in Phase 2 step 3). The live switch `prod-operator` is the
   bootstrap's, never the module's.
 - Ship infra changes in their own PR, merged before the app change that needs them.
   OpenTofu template changes create a revision that takes traffic at the next deploy.
