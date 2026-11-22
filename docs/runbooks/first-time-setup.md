@@ -31,12 +31,24 @@ scanning and push protection on the free plan. No GitHub Pro needed.
    in the console if you don't pass `billing_account` to bootstrap.
 2. `gcloud auth login && gcloud auth application-default login`
 3. `cp infra/bootstrap/bootstrap.tfvars.example infra/bootstrap/bootstrap.tfvars`, fill in
-   project ID, repo (`owner/name`), app name, alert email.
+   project ID, repo (`owner/name`), its numeric IDs (`github_repository_id`: `gh api
+   repos/<owner>/<repo> --jq .id`; `github_owner_id`: `--jq .owner.id`), app name (18
+   characters or fewer), alert email.
 4. `make infra-bootstrap` — turns on the APIs it needs with `gcloud` first (a new project
    has them off; if the first run still fails with "API has not been used in project …
    before", wait two minutes and re-run), then creates the state bucket, Artifact Registry,
    Workload Identity Federation and the three CI identities, and migrates its own state
    into the bucket.
+   Before every bootstrap run, check that no service account holds Owner, Editor or a
+   Secret Manager role on the project (CI may act as the bot's runtime identities, so any
+   other identity with those roles would be a way around the owner-only `prod-operator`
+   secret, ADR-0009):
+   `gcloud projects get-iam-policy PROJECT_ID --flatten=bindings --filter='bindings.members:serviceAccount AND (bindings.role:roles/owner OR bindings.role:roles/editor OR bindings.role:secretmanager)' --format='value(bindings.role, bindings.members)'`
+   Expected, and fine to leave: `roles/editor` for `NUMBER@cloudservices.gserviceaccount.com`
+   (Google's own API agent; removing it breaks services, and CI can't act as it), and, after
+   the first Phase 2 run, `roles/secretmanager.admin` for `ci-infra-apply@…` (it has a
+   condition excluding `prod-operator`). Remove anything else, especially a default account
+   (`…-compute@developer.gserviceaccount.com` or `…@appspot.gserviceaccount.com`).
 5. `make gh-vars` — writes the outputs into GitHub Actions variables. **This repo: don't
    run it until the Phase 2 job module lands.** Once the variables exist, the deploy
    workflow tries to deploy the bot as a service and fails on every merge to main
