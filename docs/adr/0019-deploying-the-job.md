@@ -50,6 +50,8 @@ Option 2.
   deploy it deploys a copy whose entrypoint exits with an error, and passes only if that
   deploy fails and staging is back on the good image. It never touches prod. (Cloud Shell
   can't push to the registry, so the drill runs in Actions.)
+- **`ops clear-pause`** (owner only, checked against the triggering actor, so another user's
+  re-run doesn't count) removes pause requests; it doesn't touch the schedule.
 - **`ops pause`** pauses the schedule (the deployer's custom role allows pause only). Only
   the owner resumes it.
 - **Clearing a stale lock** is an owner `gcloud storage rm` of `run.lock`, done in person

@@ -38,6 +38,7 @@ def env_for(tmp_path: Path, **extra: str) -> dict[str, str]:
         "APP_ENV": "test",
         "LEDGER_BUCKET": "ledger",
         "LOCK_BUCKET": "locks",
+        "PAUSE_BUCKET": "pause",
         "LOCAL_STORE_DIR": str(tmp_path / "store"),
         "FLAG_NEW_ORDERS": "on",
         **extra,
@@ -78,7 +79,12 @@ def set_up(tmp_path: Path) -> Path:
         ({"LOCK_BUCKET": "ledger"}, "separate"),
         ({"LOCAL_STORE_DIR": ""}, "LOCAL_STORE_DIR"),
         (
-            {"APP_ENV": "staging", "LEDGER_BUCKET": "p-staging-l", "LOCK_BUCKET": "p-staging-k"},
+            {
+                "APP_ENV": "staging",
+                "LEDGER_BUCKET": "p-staging-l",
+                "LOCK_BUCKET": "p-staging-k",
+                "PAUSE_BUCKET": "p-staging-p",
+            },
             "local and test runs only",
         ),  # a directory store outside local/test
     ],
@@ -89,7 +95,14 @@ def test_bad_wiring_refuses_to_start(tmp_path: Path, change: dict[str, str], mes
 
 
 def test_prod_refuses_unverified_instruments(tmp_path: Path) -> None:
-    wiring = wiring_from({"APP_ENV": "prod", "LEDGER_BUCKET": "p-prod-ledger", "LOCK_BUCKET": "p-prod-locks"})
+    wiring = wiring_from(
+        {
+            "APP_ENV": "prod",
+            "LEDGER_BUCKET": "p-prod-ledger",
+            "LOCK_BUCKET": "p-prod-locks",
+            "PAUSE_BUCKET": "p-prod-pause",
+        }
+    )
     with pytest.raises(JobConfigError, match="unverified"):
         check_prod_ready(wiring, load_config())
 
@@ -97,7 +110,14 @@ def test_prod_refuses_unverified_instruments(tmp_path: Path) -> None:
 def test_prod_refuses_fakes_even_with_verified_instruments(tmp_path: Path) -> None:
     from dataclasses import replace  # noqa: PLC0415 - this test only
 
-    wiring = wiring_from({"APP_ENV": "prod", "LEDGER_BUCKET": "p-prod-ledger", "LOCK_BUCKET": "p-prod-locks"})
+    wiring = wiring_from(
+        {
+            "APP_ENV": "prod",
+            "LEDGER_BUCKET": "p-prod-ledger",
+            "LOCK_BUCKET": "p-prod-locks",
+            "PAUSE_BUCKET": "p-prod-pause",
+        }
+    )
     with pytest.raises(JobConfigError, match="Trading 212 adapter"):
         check_prod_ready(wiring, replace(load_config(), instruments_verified=True))
 
@@ -111,6 +131,7 @@ def test_a_live_operator_secret_builds_nothing_live(tmp_path: Path, caplog: pyte
         "APP_ENV": "prod",
         "LEDGER_BUCKET": "p-prod-ledger",
         "LOCK_BUCKET": "p-prod-locks",
+        "PAUSE_BUCKET": "p-prod-pause",
         "FLAG_NEW_ORDERS": "off",
     }
     job = Job(
@@ -423,6 +444,7 @@ def test_staging_buckets_named_for_staging_are_accepted(tmp_path: Path) -> None:
         LOCAL_STORE_DIR="",
         LEDGER_BUCKET="p-staging-ledger",
         LOCK_BUCKET="p-staging-locks",
+        PAUSE_BUCKET="p-staging-pause",
     )
     assert wiring_from(env).app_env == "staging"
 

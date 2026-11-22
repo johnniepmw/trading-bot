@@ -26,6 +26,10 @@ Deploys are serialised (one at a time). Re-running the workflow redeploys the sa
 - **Rollback** (seconds, no rebuild): `ops` workflow → `action=rollback, env=prod`.
   Puts the job back on the image it ran before the last deploy and runs a `smoke`
   execution.
+- **Pause requests** (the one-way stop, monitoring AC6): any object in the environment's
+  pause bucket stops new orders, checked before every order like the kill switch; an
+  unreadable bucket counts as paused. `ops` → `action=clear-pause` removes them (owner
+  only). Not the same as pausing the schedule.
 - **Pause** the schedule: `ops` workflow → `action=pause` (the owner; agents in staging,
   or rollback and kill in prod). No new runs; a running one finishes. Only the owner
   resumes it. Agents may trigger it during an
