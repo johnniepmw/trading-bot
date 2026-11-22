@@ -353,3 +353,47 @@ def test_a_dividend_adjustment_on_a_fund_marked_accumulating_refuses_the_export(
     }
     with pytest.raises(ex.ExportError, match="accumulating"):
         ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY)
+
+
+def test_a_distributing_series_with_a_year_of_no_dividends_is_a_problem() -> None:
+    # the average looks plausible, but 2022's dividends are missing (e.g. recorded in the wrong unit)
+    s = ex.Series("A.L", "GBP", [ex.Bar(DAYS[0], 1.0, 1.0)], yield_=0.02, yearly={2021: 0.04, 2022: 0.0})
+    problem = ex.yield_problem(ex.Source("A.L", "a.uk", distributing=True), s)
+    assert problem is not None and "2022" in problem
+
+
+def test_yearly_yields_are_measured_from_year_end_to_year_end() -> None:
+    days = [date(2020, 12, 31), date(2021, 6, 30), date(2021, 12, 31), date(2022, 12, 30)]
+    body = yahoo(days, [100.0] * 4, adj=[90.0, 92.0, 94.5, 94.5])
+    s = ex.fetch_yahoo("AAA.L", opener({"AAA.L": body}), TODAY)
+    assert s.yearly == pytest.approx({2021: 94.5 / 90 - 1, 2022: 0.0})
+
+
+def test_too_many_skipped_rows_refuse_the_export(tmp_path: Path) -> None:
+    body = json.loads(yahoo(DAYS, CLOSES))
+    body["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"][1] = None  # 1 of 5 rows: 20%
+    p = {"AAA.L": json.dumps(body).encode(), "aaa.uk": stooq(DAYS, CLOSES)}
+    with pytest.raises(ex.ExportError, match="skipped"):
+        ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY)
+
+
+def test_the_redirect_guard_is_wired_into_the_opener() -> None:
+    assert any(isinstance(h, ex._SafeRedirect) for h in ex._URLOPENER.handlers)
+
+
+def test_a_symbol_with_a_trailing_newline_is_refused(tmp_path: Path) -> None:
+    body = (
+        'hold_out_start = "2023-01-01"\n[[fund]]\nticker = "AAA\\n"\nrole = "trade"\n'
+        'yahoo = "AAA.L"\nstooq = "aaa.uk"\ndistributing = false\nproxies = []\n'
+    )
+    path = tmp_path / "u.toml"
+    path.write_text(body)
+    with pytest.raises(ex.ExportError, match="invalid"):
+        ex.load_universe(path)
+
+
+def test_a_bad_timestamp_is_an_export_error() -> None:
+    body = json.loads(yahoo(DAYS[:1], [1.0]))
+    body["chart"]["result"][0]["timestamp"] = ["soon"]
+    with pytest.raises(ex.ExportError):
+        ex.fetch_yahoo("AAA.L", opener({"AAA.L": json.dumps(body).encode()}), TODAY)

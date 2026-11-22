@@ -22,7 +22,9 @@ The export:
   export (--accept-problems overrides; the manifest records it);
 - writes the development and hold-out periods to separate folders with a manifest (sources,
   splices, checks, SHA-256 hashes), building it in a temporary folder that only becomes the
-  output folder when everything succeeded. Nothing outside it is touched.
+  output folder when everything succeeded. Nothing outside it is touched. (If the process
+  is killed mid-run, a hidden `.history-export-*` folder may remain beside the output:
+  delete it; it may hold hold-out data.)
 Only the final step-8 run is given the hold-out folder (docs/strategies/trend-long-or-cash.md).
 """
 
@@ -66,6 +68,7 @@ HARD_DAY_LIMIT = 0.10  # any single day further apart than this is a problem (a 
 MIN_COVERAGE = 0.90  # the second source must cover this share of the series' days
 MAX_DAILY_RATIO = 10.0  # a 10x close-to-close move is a data error (pounds read as pence)
 MAX_OPEN_CLOSE_GAP = 0.20  # opens and closes must be adjusted alike
+MAX_SKIPPED_SHARE = 0.01  # more unusable rows than this is a problem
 ACCUMULATING_MAX_YIELD = 0.005
 DISTRIBUTING_YIELD = (0.0005, 0.10)
 
@@ -105,6 +108,7 @@ class Series:
     bars: list[Bar] = field(default_factory=list)
     skipped: int = 0
     yield_: float = 0.0  # implied yearly dividend yield from the adjustment factor
+    yearly: dict[int, float] = field(default_factory=dict)  # the same, year end to year end
 
 
 def check_url(url: str) -> None:
@@ -134,7 +138,7 @@ def default_opener(url: str) -> bytes:
 
 def _source(raw: dict[str, Any]) -> Source:
     source = Source(str(raw["yahoo"]), str(raw["stooq"]), bool(raw["distributing"]))
-    if not SYMBOL.match(source.yahoo) or not SYMBOL.match(source.stooq):
+    if not SYMBOL.fullmatch(source.yahoo) or not SYMBOL.fullmatch(source.stooq):
         raise ExportError(f"invalid symbol in universe: {source}")
     return source
 
@@ -150,7 +154,7 @@ def load_universe(path: Path = UNIVERSE) -> tuple[list[Fund], date]:
     except (KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
         raise ExportError(f"invalid universe file: {error!r}") from error
     for fund in funds:
-        if not TICKER.match(fund.ticker) or fund.role not in {"trade", "benchmark"}:
+        if not TICKER.fullmatch(fund.ticker) or fund.role not in {"trade", "benchmark"}:
             raise ExportError(f"invalid ticker or role in universe: {fund.ticker!r} {fund.role!r}")
     return funds, hold_out
 
@@ -171,7 +175,10 @@ def fetch_yahoo(symbol: str, opener: Opener, today: date) -> Series:
     by_day: dict[date, tuple[Bar, float]] = {}
     skipped = 0
     for stamp, open_, close, adj in rows:
-        day = datetime.fromtimestamp(stamp, LONDON).date()
+        try:
+            day = datetime.fromtimestamp(stamp, LONDON).date()
+        except (TypeError, ValueError, OverflowError, OSError) as error:
+            raise ExportError(f"{symbol}: bad timestamp {stamp!r}") from error
         if not _finite_positive(open_, close, adj) or day >= today:
             skipped += day < today  # today's partial bar isn't a fault
             continue
@@ -184,8 +191,13 @@ def fetch_yahoo(symbol: str, opener: Opener, today: date) -> Series:
     _check_bars(symbol, bars)
     years = (days[-1] - days[0]).days / 365.25
     change = by_day[days[-1]][1] / by_day[days[0]][1]
-    yield_ = change ** (1 / years) - 1 if years > 0 else 0.0
-    return Series(symbol, currency, bars, skipped, yield_)
+    try:
+        yield_ = change ** (1 / years) - 1 if years > 0 else 0.0
+    except OverflowError as error:
+        raise ExportError(f"{symbol}: adjustment factor out of range") from error
+    year_end = {d.year: by_day[d][1] for d in days}  # days are sorted: the last day of each year wins
+    yearly = {y: year_end[y] / year_end[y - 1] - 1 for y in sorted(year_end) if y - 1 in year_end}
+    return Series(symbol, currency, bars, skipped, yield_, yearly)
 
 
 def _check_bars(symbol: str, bars: list[Bar]) -> None:
@@ -204,6 +216,13 @@ def yield_problem(source: Source, series: Series) -> str | None:
         return f"{series.symbol}: marked accumulating but its adjustment implies a {series.yield_:.2%} yearly yield"
     if source.distributing and not low <= series.yield_ <= high:
         return f"{series.symbol}: marked distributing but its adjustment implies a {series.yield_:.2%} yearly yield"
+    for year, value in series.yearly.items():
+        if source.distributing and value < low:
+            return f"{series.symbol}: marked distributing but shows no dividends in {year}"
+        if not source.distributing and value > ACCUMULATING_MAX_YIELD:
+            return (
+                f"{series.symbol}: marked accumulating but shows a {value:.2%} dividend adjustment in {year}"
+            )
     return None
 
 
@@ -321,7 +340,15 @@ def _export_fund(
         problems += check_problems(source.yahoo, check)
         if (problem := yield_problem(source, s)) is not None:
             problems.append(problem)
-        checks[source.yahoo] = check | {"skipped_rows": s.skipped, "implied_yield": s.yield_}
+        if s.skipped > MAX_SKIPPED_SHARE * (len(s.bars) + s.skipped):
+            problems.append(
+                f"{source.yahoo}: {s.skipped} of {len(s.bars) + s.skipped} rows skipped as unusable"
+            )
+        checks[source.yahoo] = check | {
+            "skipped_rows": s.skipped,
+            "implied_yield": s.yield_,
+            "yearly_yield": s.yearly,
+        }
         series.append(s)
     primary = series[-1]
     bars, splices = splice(primary, series[:-1])
@@ -400,7 +427,7 @@ def main(argv: list[str] | None = None, opener: Opener = default_opener) -> int:
         if args.out.resolve().is_relative_to(ROOT):
             raise ExportError(f"--out {args.out} is inside the repository: use a folder outside it")
         manifest = export(funds, hold_out, args.out, opener, today, accept_problems=args.accept_problems)
-    except ExportError as error:
+    except (ExportError, OSError) as error:
         print(f"export failed: {error}", file=sys.stderr)
         return 1
     print(f"wrote {len(manifest['funds'])} funds to {args.out}")
