@@ -132,3 +132,17 @@ def test_the_bundled_calendar_lists_englands_eight_closures_each_year() -> None:
     holidays = load_config(BUNDLED).holidays
     assert sorted({d.year for d in holidays}) == [2026, 2027]
     assert [sum(d.year == y for d in holidays) for y in (2026, 2027)] == [8, 8]
+
+
+def test_the_bundled_units_match_the_data_sources_quotes() -> None:
+    # scripts/eodhd_check.py, 2026-11-22: IGLT 9.47 and INXG 10.46 are pounds; EMIM and SGLN pence
+    units = {i.ticker: i.currency.value for i in load_config(BUNDLED).universe}
+    assert units == {
+        "VWRP": "GBP",
+        "VUKE": "GBP",
+        "EMIM": "GBX",
+        "IGLT": "GBP",
+        "VAGP": "GBP",
+        "INXG": "GBP",
+        "SGLN": "GBX",
+    }
