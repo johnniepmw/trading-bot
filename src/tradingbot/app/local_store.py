@@ -82,6 +82,12 @@ class LocalObjectStore:
         index["live"] = None
         self._save_index(bucket, name, index)
 
+    def has_objects(self, bucket: str) -> bool:
+        folder = self._root / bucket
+        return any(
+            json.loads(index.read_text()).get("live") is not None for index in folder.glob("*/index.json")
+        )
+
     def has_any_version(self, bucket: str, name: str) -> bool:
         versions = self._index(bucket, name)["versions"]
         return bool(versions)

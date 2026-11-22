@@ -2,7 +2,8 @@ name: ops
 
 # Manual operations without a deploy. Runnable from the GitHub mobile app.
 #   rollback  put the job back on the image it ran before the last deploy (or a named digest)
-#   pause     pause the job's schedule (stops new runs; only the owner resumes it)
+#   pause        pause the job's SCHEDULE (no new runs); the owner resumes it in the console
+#   clear-pause  remove every pause REQUEST (new orders resume at the next check; owner only)
 #   kill      turn a feature flag off via the remote override
 #   set       force a flag on/off (owner)      restore   remove the override (owner)
 # Agents may run rollback and kill (any env) and anything in staging; the kit's guard hook
@@ -13,7 +14,7 @@ on:
     inputs:
       action:
         type: choice
-        options: [rollback, pause, kill, set, restore]
+        options: [rollback, pause, clear-pause, kill, set, restore]
         required: true
       env:
         type: choice
@@ -59,7 +60,9 @@ jobs:
       VALUE: ${{ inputs.value }}
       IMAGE: ${{ inputs.image }}
       # a named digest skips the deploy's checks: the owner's call only
-      NAMED_ROLLBACK_ALLOWED: ${{ github.actor == github.repository_owner }}
+      NAMED_ROLLBACK_ALLOWED: ${{ github.triggering_actor == github.repository_owner }}
+      # clearing a pause request resumes trading: the owner's call only
+      OWNER: ${{ github.triggering_actor == github.repository_owner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -72,6 +75,7 @@ jobs:
           echo "ops: ${ACTION} on ${TARGET_ENV} by ${GITHUB_ACTOR}"
           case "$ACTION" in
             rollback) bash scripts/cloudrun-job-rollback.sh "$TARGET_ENV" "$IMAGE" ;;
+            clear-pause) bash scripts/pause-clear.sh "$TARGET_ENV" ;;
             pause) gcloud scheduler jobs pause "${APP_NAME}-${TARGET_ENV}-daily" --location "$GCP_REGION" --project "$GCP_PROJECT" --quiet ;;
             kill|restore) bash scripts/flag-override.sh "$TARGET_ENV" "$ACTION" "$FLAG" ;;
             set) bash scripts/flag-override.sh "$TARGET_ENV" set "$FLAG" "$VALUE" ;;
@@ -84,5 +88,5 @@ jobs:
           OUTCOME: ${{ job.status }}
         run: |
           gh issue create --label incident \
-            --title "ops: ${ACTION} on prod (${FLAG:-${IMAGE:-previous image}}) — ${OUTCOME}" \
+            --title "ops: ${ACTION} on prod (${FLAG:-${IMAGE:-$ACTION}}) — ${OUTCOME}" \
             --body "Triggered by ${GITHUB_ACTOR}. Run: ${RUN_URL}. Follow up with a fix-forward PR and close this issue when resolved."

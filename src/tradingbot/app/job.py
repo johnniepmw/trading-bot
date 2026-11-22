@@ -4,6 +4,7 @@ Wiring only. The config file (`config/bot.toml`) holds everything but per-enviro
 wiring, which comes from env vars:
 - `APP_ENV`: local | test | staging | prod.
 - `LEDGER_BUCKET`, `LOCK_BUCKET`: where the ledger, its lock and the reference mark live.
+- `PAUSE_BUCKET`: pause requests; any object there stops new orders (step 7b).
 - `LOCAL_STORE_DIR`: local and test only, a directory standing in for the buckets.
 - `CLOUD_RUN_EXECUTION` (set by Cloud Run), `APP_VERSION`, `FLAGS_BUCKET` (see flags).
 
@@ -30,6 +31,7 @@ from tradingbot.app.cycle import CycleConfig, dry_run_cycle, run_cycle
 from tradingbot.app.flags import Flags
 from tradingbot.app.local_store import LocalObjectStore
 from tradingbot.app.operator import read_operator
+from tradingbot.app.pause import PauseRequests
 from tradingbot.app.remote_ledger import (
     LedgerStorageError,
     LockHeldError,
@@ -66,6 +68,7 @@ class Wiring:
     app_env: str
     ledger_bucket: str
     lock_bucket: str
+    pause_bucket: str
     local_store_dir: Path | None
     execution: str
     version: str
@@ -75,7 +78,7 @@ def wiring_from(env: Mapping[str, str]) -> Wiring:
     app_env = env.get("APP_ENV", "")
     if app_env not in ENVIRONMENTS:
         raise JobConfigError(f"APP_ENV must be one of {', '.join(sorted(ENVIRONMENTS))}")
-    buckets = {name: env.get(name, "") for name in ("LEDGER_BUCKET", "LOCK_BUCKET")}
+    buckets = {name: env.get(name, "") for name in ("LEDGER_BUCKET", "LOCK_BUCKET", "PAUSE_BUCKET")}
     missing = [name for name, value in buckets.items() if not value]
     if missing:
         raise JobConfigError(f"{', '.join(missing)} must be set")
@@ -96,6 +99,7 @@ def wiring_from(env: Mapping[str, str]) -> Wiring:
         app_env=app_env,
         ledger_bucket=buckets["LEDGER_BUCKET"],
         lock_bucket=buckets["LOCK_BUCKET"],
+        pause_bucket=buckets["PAUSE_BUCKET"],
         local_store_dir=Path(local) if local else None,
         execution=env.get("CLOUD_RUN_EXECUTION") or "local",
         version=env.get("APP_VERSION", "dev"),
@@ -270,6 +274,12 @@ class Job:
         # a real broker's records are durable the moment it accepts an order; so is the fake's
         broker.after_place = lambda: account.save(broker)
 
+        pause = PauseRequests(self.store, self.wiring.pause_bucket)
+        if pause.present():
+            log.warning(
+                "paused: a pause request exists, or the pause location can't be read; no new orders",
+                extra={"alert": "paused"},
+            )
         report = run_cycle(
             broker=broker,
             ledger=ledger,
@@ -278,7 +288,7 @@ class Job:
             signal_day=signal_day,
             clock=self.clock,
             run_id=run_id,
-            may_send=lambda: self.flags.is_enabled("new-orders"),
+            may_send=lambda: self.flags.is_enabled("new-orders") and not pause.present(),
             checkpoint=remote.checkpoint,
             version=self.wiring.version,
         )

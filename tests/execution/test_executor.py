@@ -92,7 +92,7 @@ def test_the_kill_switch_is_checked_before_every_order(broker: FakeBroker, ledge
         may_send=lambda: next(answers),
         checkpoint=nothing,
     )
-    assert (report.sent, report.stopped) == (1, "kill switch off")
+    assert (report.sent, report.stopped) == (1, "new orders off (kill switch or pause request)")
     assert len(broker.recent_orders()) == 1
     assert len(ledger.open_intents()) == 1  # nothing recorded for the order not attempted
 
@@ -472,6 +472,6 @@ def test_the_kill_switch_is_read_again_after_the_pre_send_checkpoint(
         may_send=lambda: next(answers),
         checkpoint=saved,
     )
-    assert (report.sent, report.stopped) == (0, "kill switch off")
+    assert (report.sent, report.stopped) == (0, "new orders off (kill switch or pause request)")
     assert broker.recent_orders() == []
     assert saved.seen[-1] == ([IntentState.NOT_SENT], 0)
