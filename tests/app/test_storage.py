@@ -211,3 +211,24 @@ def test_no_live_noncurrent_or_soft_deleted_version_means_none() -> None:
     store, sent = gcs((200, b"{}"), (200, b"{}"))
     assert not store.has_any_version("b", "ledger.sqlite")
     assert len(sent.calls) == 2
+
+
+def test_a_bucket_with_any_object_has_objects() -> None:
+    store, sent = gcs((200, json.dumps({"items": [{"name": "requests/x"}]}).encode()))
+    assert store.has_objects("pause")
+    assert (
+        sent.calls[0][1]
+        == "https://storage.googleapis.com/storage/v1/b/pause/o?maxResults=1&fields=items%28name%29"
+    )
+
+
+def test_an_empty_bucket_has_no_objects() -> None:
+    store, _ = gcs((200, b"{}"))
+    assert not store.has_objects("pause")
+
+
+def test_a_missing_pause_bucket_is_an_error_not_empty() -> None:
+    store, _ = gcs((404, b""))
+    with pytest.raises(StorageError) as raised:
+        store.has_objects("pause")
+    assert not isinstance(raised.value, PreconditionFailedError)

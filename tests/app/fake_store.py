@@ -72,6 +72,9 @@ class FakeStore:
         if fault == "after":
             raise TransientStorageError("timeout after deleting")
 
+    def has_objects(self, bucket: str) -> bool:
+        return any(self._live(b, n) is not None for (b, n) in self._objects if b == bucket)
+
     def has_any_version(self, bucket: str, name: str) -> bool:
         return bool(self._objects.get((bucket, name)))
 

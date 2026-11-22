@@ -14,6 +14,7 @@ locals {
   ledger_bucket = "${var.project_id}-ledger-${var.env}" # the job refuses buckets not named -<env>
   lock_bucket   = "${var.project_id}-locks-${var.env}"
   flags_bucket  = "${var.project_id}-flags-${var.env}"
+  pause_bucket  = "${var.project_id}-pause-${var.env}"
   soft_delete   = var.soft_delete_days * 86400
   secret_ids    = { for name in var.secrets : name => "${var.env}-${name}" }
   mounts        = merge({ for name, secret in google_secret_manager_secret.this : name => secret.secret_id }, var.owner_secrets)
@@ -79,6 +80,18 @@ resource "google_storage_bucket" "flags" {
   }
 }
 
+# Pause requests (Phase 2 step 7b; monitoring AC6): any object here stops new orders. The
+# job only reads; the owner's `ops` action clears requests; Phase 3's dashboard identity will
+# get create-only access, so it can pause but never resume.
+resource "google_storage_bucket" "pause" {
+  project                     = var.project_id
+  name                        = local.pause_bucket
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = var.env != "prod"
+}
+
 # Seeded once with no overrides (the registry defaults apply); never overwritten, because
 # the `ops` workflow writes kill overrides here and a re-apply must not undo them.
 resource "google_storage_bucket_object" "flags_seed" {
@@ -119,6 +132,19 @@ resource "google_secret_manager_secret_iam_member" "runtime_secrets" {
   secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${var.runtime_sa}"
+}
+
+resource "google_storage_bucket_iam_member" "runtime_pause" {
+  bucket = google_storage_bucket.pause.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${var.runtime_sa}"
+}
+
+# The owner's `ops` action lists and clears requests (and may add one).
+resource "google_storage_bucket_iam_member" "deployer_pause" {
+  bucket = google_storage_bucket.pause.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${var.deployer_sa}"
 }
 
 # Plans refresh the seeded flags object; overrides are on/off switches, not account data.
@@ -171,6 +197,10 @@ resource "google_cloud_run_v2_job" "this" {
           name  = "FLAGS_BUCKET"
           value = google_storage_bucket.flags.name
         }
+        env {
+          name  = "PAUSE_BUCKET"
+          value = google_storage_bucket.pause.name
+        }
         dynamic "volume_mounts" {
           for_each = local.mounts
           content {
@@ -209,6 +239,7 @@ resource "google_cloud_run_v2_job" "this" {
     google_storage_bucket_iam_member.runtime_ledger,
     google_storage_bucket_iam_member.runtime_locks,
     google_storage_bucket_iam_member.runtime_flags,
+    google_storage_bucket_iam_member.runtime_pause,
     google_secret_manager_secret_iam_member.runtime_secrets,
   ]
 }

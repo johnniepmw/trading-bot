@@ -132,3 +132,10 @@ def test_one_alert_condition_per_environment() -> None:
 @pytest.mark.parametrize("env", [STAGING, PROD])
 def test_alerts_go_to_the_owners_email(env: Path) -> None:
     assert re.search(r"alert_email\s*=\s*local\.b\.alert_email", env.read_text())
+
+
+def test_the_job_reads_its_pause_location_and_cant_clear_it() -> None:
+    text = (MODULE / "main.tf").read_text()
+    assert re.search(r'pause_bucket\s*=\s*"\$\{var.project_id\}-pause-\$\{var.env\}"', text)
+    assert 'role   = "roles/storage.objectViewer"' in resource("google_storage_bucket_iam_member", "runtime_pause")
+    assert 'name  = "PAUSE_BUCKET"' in resource("google_cloud_run_v2_job", "this")

@@ -49,6 +49,7 @@ class ObjectStore(Protocol):
     def write(self, bucket: str, name: str, data: bytes, *, if_generation_match: int) -> ObjectInfo: ...
     def delete(self, bucket: str, name: str, *, if_generation_match: int) -> None: ...
     def has_any_version(self, bucket: str, name: str) -> bool: ...
+    def has_objects(self, bucket: str) -> bool: ...
 
 
 # (method, url, headers, body) -> (status, body); raises TransientStorageError on a network failure
@@ -157,6 +158,17 @@ class GcsObjectStore:
         )
         if status not in {200, 204}:
             raise _error(status, f"delete {name}")
+
+    def has_objects(self, bucket: str) -> bool:
+        """Whether the bucket holds any live object (pause requests)."""
+        query = urllib.parse.urlencode({"maxResults": 1, "fields": "items(name)"})
+        status, body = self._call("GET", f"{_API}{urllib.parse.quote(bucket, safe='')}/o?{query}")
+        if status != 200:  # noqa: PLR2004
+            raise _error(status, "list objects", missing_is_precondition=False)
+        try:
+            return bool(json.loads(body).get("items"))
+        except (ValueError, AttributeError) as error:
+            raise StorageError("list objects: unexpected response") from error
 
     def has_any_version(self, bucket: str, name: str) -> bool:
         """Live, noncurrent or soft-deleted: any trace that the object existed (ADR-0017)."""

@@ -14,6 +14,10 @@ output "lock_bucket" {
   value = google_storage_bucket.locks.name
 }
 
+output "pause_bucket" {
+  value = google_storage_bucket.pause.name
+}
+
 output "flags_bucket" {
   value = google_storage_bucket.flags.name
 }
