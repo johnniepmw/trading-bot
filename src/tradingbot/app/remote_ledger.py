@@ -8,7 +8,7 @@ After a successful upload the reference mark (the highest high-water mark ever s
 outside the ledger) is raised; a downloaded ledger whose mark is below it was restored from
 an older version and is refused. The lock is released last. A held lock stops the run
 quietly (a duplicate trigger); a stale one stops it with an alert, and only the owner clears
-it (`ops unlock`).
+it (the stale-lock runbook: a `gcloud storage rm` of `run.lock`).
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ class RemoteLedger:
         who = self._describe(held)
         if self._clock() - held.created > STALE_AFTER:
             log.error(
-                "stale lock: held by %s since %s; the owner clears it with ops unlock",
+                "stale lock: held by %s since %s; the owner clears it (stale-lock runbook)",
                 who,
                 held.created.isoformat(),
             )

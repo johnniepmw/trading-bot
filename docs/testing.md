@@ -12,7 +12,7 @@ read. The suite is the specification; treat it that way.
 | Architecture | Module boundaries and dependency direction | config + `make arch` | `make check`, CI |
 | Contract | Our assumptions about third-party APIs (recorded responses replayed; nightly live check against sandbox) | `tests/contract/` | CI (replay), nightly (live) |
 | End-to-end | A user-visible flow through the deployed shape of the app (browser or HTTP) | `e2e/` | CI on every PR (app started locally), staging on every deploy, nightly against staging |
-| Smoke | The deployed revision is alive and is the expected version | `scripts/smoke.sh` | every deploy, before traffic |
+| Smoke | The deployed image starts, reads its config and flags | the `smoke` command, run as a job execution | every deploy and rollback |
 | Backtest regression | The strategy's output on a frozen, seeded synthetic market is unchanged | `tests/backtest/regression.json` | `check-fast`; updating the numbers needs a stated reason in the PR |
 
 ## Rules
