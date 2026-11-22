@@ -477,3 +477,37 @@ def test_a_day_start_older_than_five_days_counts_as_unknown(
 def test_no_signal_days_only_need_quotes_for_funds_held(broker: FakeBroker, ledger: Ledger) -> None:
     del broker.quotes[DOWN]  # if the broker can't price a fund we don't hold
     assert cycle(broker, ledger, signal_day=None).stopped is None
+
+
+@pytest.mark.parametrize(("change", "acts"), [(1.004, True), (1.006, False)])
+def test_verified_closes_allow_a_small_rescale(
+    broker: FakeBroker, ledger: Ledger, change: float, acts: bool
+) -> None:
+    # adjusted (total-return) histories are rescaled when a fund goes ex-dividend
+    cycle(broker, ledger, may_send=lambda: False)  # day 1 verifies the closes
+    history = FakeHistory()
+    for inst in (UP, DOWN):
+        history.bars[inst] = [
+            replace(b, open=b.open * change, close=b.close * change) for b in history.bars[inst]
+        ]
+    broker.quotes = {i: Money(q.amount * Decimal(repr(change)), q.currency) for i, q in broker.quotes.items()}
+    report = cycle(broker, ledger, history=history, now=NOW + DAY, run_id="run-2")
+    assert (report.sent == 1) is acts
+
+
+def test_drill_a_signal_day_more_than_35_days_old_stops(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    report = cycle(broker, ledger, now=NOW + 40 * DAY)  # a calendar bug reviving an old month end
+    assert_stopped(report, broker, caplog, "too old")
+
+
+def test_an_accepted_order_that_ends_rejected_or_cancelled_alerts(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    broker.market_open = False  # accepted, queued
+    cycle(broker, ledger)
+    broker.cancel(broker.recent_orders()[0].order_id)
+    caplog.clear()
+    cycle(broker, ledger, signal_day=None, now=NOW + DAY, run_id="run-2")
+    assert any("CANCELLED" in m for m in errors(caplog))

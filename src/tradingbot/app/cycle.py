@@ -35,6 +35,8 @@ log = logging.getLogger(__name__)
 QUOTE_TOLERANCE = Decimal("0.02")  # data source's latest close vs the broker's live price
 EQUITY_TOLERANCE = Decimal("0.02")  # broker equity vs cash + holdings at the broker's quotes
 MAX_NEW_PEAK = Decimal("0.10")  # a new high-water mark more than 10% above the last is refused
+CLOSE_RESCALE_TOLERANCE = Decimal("0.005")  # adjusted histories rescale on ex-dividend dates
+MAX_SIGNAL_AGE = timedelta(days=35)  # an older month end is a calendar bug, not a decision
 HISTORY_CALENDAR_DAYS = 450  # enough for 210 trading days plus the 60-day volatility window
 # risk vetoes that concern the whole account: these are alerts, not routine shrinks
 ACCOUNT_VETOES = ("no high-water mark", "no day-start equity", "drawdown stop", "daily loss limit")
@@ -95,7 +97,11 @@ def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle
         raise CycleStopError(f"the clock must be UTC, got {now!r}")
     if signal_day is not None and signal_day >= now.date():
         raise CycleStopError(f"signal day {signal_day} is not before today ({now.date()})")
+    if signal_day is not None and now.date() - signal_day > MAX_SIGNAL_AGE:
+        raise CycleStopError(f"signal day {signal_day} is too old")
     reconciled = reconcile(broker, ledger)
+    for shortfall in reconciled.shortfalls:
+        log.error("order ended short: %s (the month end's decision stands until the next one)", shortfall)
     if not reconciled.clean:
         raise CycleStopError("not reconciled: " + "; ".join(reconciled.problems))
 
@@ -213,13 +219,21 @@ def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instr
 
 def _verify_signal_closes(ledger: Ledger, bars: Mapping[Instrument, Sequence[Bar]], signal_day: date) -> None:
     """On the first run after the month end the latest close is the signal-day close, and it
-    has just passed the cross-check: store it. Later runs may only act on the same closes."""
+    has just passed the cross-check: store it. A later run may only act on the same closes
+    (within CLOSE_RESCALE_TOLERANCE). If they were never verified, the month end is skipped:
+    one alert, then later runs only reconcile and mark until the next month end."""
     closes = {
         i: price_money(i, next(b for b in reversed(s) if b.day == signal_day).close) for i, s in bars.items()
     }
     if all(s[-1].day == signal_day for s in bars.values()):
         ledger.store_verified_closes(signal_day, closes)
-    elif ledger.verified_closes(signal_day) != closes:
+        return
+    verified = ledger.verified_closes(signal_day)
+    if set(verified) != set(closes) or any(
+        abs(closes[i].amount / verified[i].amount - 1) > CLOSE_RESCALE_TOLERANCE for i in closes
+    ):
+        ledger.mark_signal_acted(signal_day)
         raise CycleStopError(
-            f"signal-day closes for {signal_day} not verified against the broker, or changed since"
+            f"signal-day closes for {signal_day} not verified against the broker, or changed since:"
+            " month end skipped until the next one"
         )

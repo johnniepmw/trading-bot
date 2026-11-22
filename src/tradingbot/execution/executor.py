@@ -44,7 +44,8 @@ class ExecutionReport:
 
 @dataclass
 class ReconcileResult:
-    problems: list[str] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)  # block new orders
+    shortfalls: list[str] = field(default_factory=list)  # settled short of a full fill: alert, don't block
 
     @property
     def clean(self) -> bool:
@@ -96,6 +97,12 @@ def execute(  # noqa: PLR0913 - the order path's explicit dependencies
 def _settle(ledger: Ledger, intent: Intent, order: BrokerOrder, result: ReconcileResult) -> None:
     if order.status in _SETTLED:
         ledger.settle(intent.intent_id, _SETTLED[order.status], order.order_id, order.filled_quantity)
+        if order.status is not OrderStatus.FILLED:
+            o = order.order
+            result.shortfalls.append(
+                f"intent {intent.intent_id}: {o.side} {o.instrument.ticker} ended {order.status}"
+                f" with {order.filled_quantity} of {o.quantity} filled"
+            )
     else:
         if intent.broker_order_id is None:
             ledger.mark_sent(intent.intent_id, order.order_id)
