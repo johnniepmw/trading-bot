@@ -196,7 +196,8 @@ resource "google_project_iam_custom_role" "infra_plan_reader" {
 }
 
 resource "google_project_iam_member" "infra_plan" {
-  for_each = toset([google_project_iam_custom_role.infra_plan_reader.id, "roles/iam.securityReviewer"])
+  # static keys: the custom role's id is only known after apply
+  for_each = { reader = google_project_iam_custom_role.infra_plan_reader.id, security = "roles/iam.securityReviewer" }
   project  = var.project_id
   role     = each.value
   member   = "serviceAccount:${google_service_account.ci["ci-infra-plan"].email}"

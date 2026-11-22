@@ -47,8 +47,12 @@ scanning and push protection on the free plan. No GitHub Pro needed.
    Expected, and fine to leave: `roles/editor` for `NUMBER@cloudservices.gserviceaccount.com`
    (Google's own API agent; removing it breaks services, and CI can't act as it), and, after
    the first Phase 2 run, `roles/secretmanager.admin` for `ci-infra-apply@…` (it has a
-   condition excluding `prod-operator`). Remove anything else, especially a default account
-   (`…-compute@developer.gserviceaccount.com` or `…@appspot.gserviceaccount.com`).
+   condition excluding `prod-operator`). Remove anything else. In particular, turning on the
+   Cloud Run API creates Google's default Compute account
+   (`NUMBER-compute@developer.gserviceaccount.com`) with Editor; the bot never uses it, so
+   remove that binding: `gcloud projects remove-iam-policy-binding PROJECT_ID
+   --member=serviceAccount:NUMBER-compute@developer.gserviceaccount.com --role=roles/editor
+   --condition=None`. The same goes for `…@appspot.gserviceaccount.com`.
 5. `make gh-vars` — writes the outputs into GitHub Actions variables. **This repo: don't
    run it until the Phase 2 job module lands.** Once the variables exist, the deploy
    workflow tries to deploy the bot as a service and fails on every merge to main
