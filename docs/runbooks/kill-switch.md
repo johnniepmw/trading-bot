@@ -9,8 +9,9 @@ closing positions is yours (closing-positions.md).
 | **Kill switch** `new-orders` | new orders | within 30 seconds | owner: `ops` → `restore` |
 | **Pause the schedule** | whole runs | from the next scheduled run | owner, in the console |
 
-All three fail closed: if the bot can't read the pause bucket or the flags file, it treats
-that as stopped and alerts.
+The first two fail closed: an unreadable pause bucket counts as paused straight away; the
+kill switch counts as off once the flags file has gone unread for 5 minutes (a run reads it
+fresh at start). Pausing the schedule reads nothing: no run starts.
 
 ## Pause request (the one-way stop)
 Any object in the environment's pause bucket stops new orders. You (and in Phase 3 the

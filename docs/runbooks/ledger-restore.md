@@ -27,8 +27,10 @@ Commands for prod; Cloud Shell, `gcloud config set project trading-bot-515509`.
 6. Dry run: `gcloud run jobs execute trading-bot-prod --region europe-west2 --args=run,--dry-run --wait`,
    then `make logs ENV=prod`. It must not say "below the reference mark" or "not a ledger".
 7. Resume the schedule (console: Cloud Scheduler → `trading-bot-prod-daily` → Resume).
-   The next run reconciles with the broker: orders placed after the restored version are
-   matched again from the broker's records.
+   The next run reconciles with the broker, but only for orders the restored version
+   already knows about. Orders sent after it (and a month end it hadn't yet marked done)
+   are not in it: the strategy decides again from current holdings. Tell the agent about
+   any orders from that gap, so the record can be completed.
 
 **"Below the reference mark"**: an older ledger is current. Find the version that matches
 the mark (step 3, with the agent) and restore that instead. Never edit or delete
