@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import MappingProxyType
 
+from tradingbot.app.alerts import drawdown_crossings
 from tradingbot.brokers.port import Broker, BrokerReader
 from tradingbot.data.prices import PriceHistory, validate_history
 from tradingbot.domain.market import Bar, Instrument, price_money
@@ -269,9 +270,11 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
     if account.equity.amount > mark.amount * (1 + MAX_NEW_PEAK):
         raise CycleStopError(f"implausible new peak: {account.equity} against a mark of {mark}")
     day_start = ledger.previous_day_equity(now.date())
+    last_recorded = ledger.previous_day_equity(now.date(), max_age_days=3650)  # alerts: no age limit
     ledger.update_high_water_mark(account.equity, now)
     ledger.record_equity(now.date(), account.equity)
     mark = ledger.high_water_mark()
+    _alert_drawdown(last_recorded, account.equity, mark, alert)
     if signal_day is None or ledger.signal_acted(signal_day):
         return None
 
@@ -307,6 +310,7 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
                 decision.order.side,
                 decision.order.instrument.ticker,
                 decision.reason,
+                extra={"alert": "account_veto"} if account_veto and alert >= logging.ERROR else None,
             )
         elif decision.reason.startswith("shrunk"):
             log.warning("%s %s: %s", decision.order.side, decision.order.instrument.ticker, decision.reason)
@@ -325,6 +329,20 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
         ],
     )
     return decisions
+
+
+def _alert_drawdown(last: Money | None, equity: Money, mark: Money | None, alert: int) -> None:
+    """A WARNING per level crossed since the last recorded equity; tagged only in a real run
+    (`alert` is ERROR there), so a dry run reports it and pages nobody."""
+    if mark is None:
+        return
+    previous = last.amount if last is not None else None
+    for level in drawdown_crossings(previous, equity.amount, mark=mark.amount):
+        log.warning(
+            "drawdown crossed %d%% below the high-water mark",
+            level,
+            extra={"alert": "drawdown"} if alert >= logging.ERROR else None,
+        )
 
 
 def _holdings(broker: BrokerReader, universe: Mapping[Instrument, Decimal]) -> dict[Instrument, Decimal]:

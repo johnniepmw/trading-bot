@@ -114,3 +114,21 @@ def test_the_image_takes_its_command_from_the_jobs_args() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert 'ENTRYPOINT ["python", "-m", "tradingbot.app"]' in dockerfile
     assert 'CMD ["smoke"]' in dockerfile
+
+
+def test_alerts_match_only_the_bots_own_alert_lines_or_a_failed_schedule() -> None:
+    block = resource("google_monitoring_alert_policy", "bot_alert")
+    assert 'resource.labels.job_name=\\"${local.job_name}\\" AND jsonPayload.alert:*' in block
+    assert 'resource.labels.job_id=\\"${local.job_name}-daily\\" AND severity>=ERROR' in block
+    assert "textPayload" not in block  # Cloud Run's own "task failed" entries never page
+    assert 'kind = "EXTRACT(jsonPayload.alert)"' in block
+    assert "$${log.extracted_label.kind}" in block  # the email names the kind
+
+
+def test_one_alert_condition_per_environment() -> None:
+    assert (MODULE / "main.tf").read_text().count("condition_matched_log") == 1
+
+
+@pytest.mark.parametrize("env", [STAGING, PROD])
+def test_alerts_go_to_the_owners_email(env: Path) -> None:
+    assert re.search(r"alert_email\s*=\s*local\.b\.alert_email", env.read_text())

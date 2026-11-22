@@ -19,6 +19,7 @@ import sys
 from collections.abc import Mapping
 from typing import TextIO
 
+from tradingbot.app.alerts import alert_kind
 from tradingbot.app.flags import Flags, GcsSource, load_registry
 from tradingbot.app.job import EXIT_STOPPED, JobConfigError, build_job
 from tradingbot.config.load import ConfigFileError
@@ -88,6 +89,9 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         entry = {"severity": record.levelname, "message": record.getMessage(), "logger": record.name}
+        kind = alert_kind(record)
+        if kind is not None:
+            entry["alert"] = kind  # what Cloud Monitoring's alert policy matches
         if record.exc_info:
             entry["exception"] = self.formatException(record.exc_info)
         return json.dumps(entry)
@@ -101,4 +105,9 @@ def configure_logging() -> None:
 
 if __name__ == "__main__":
     configure_logging()
-    sys.exit(main())
+    try:
+        code = main()
+    except Exception as error:
+        log.exception("crashed: %s", type(error).__name__)
+        code = 1
+    sys.exit(code)

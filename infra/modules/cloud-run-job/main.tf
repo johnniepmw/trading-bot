@@ -250,3 +250,44 @@ resource "google_cloud_scheduler_job" "daily" {
 
   depends_on = [google_cloud_run_v2_job_iam_member.scheduler_runs]
 }
+
+# ---------- alerts (Phase 2 step 7a; monitoring AC5) ------------------------------------------
+# The bot puts `alert: <kind>` on every ERROR line and on chosen WARNINGs (drawdown crossings).
+# This policy matches that field only, never Cloud Run's own "task failed" entries, so a dry
+# run that stops correctly (WARNING) pages nobody. The notification names the kind; the
+# line itself (which may hold account data) stays in Cloud Logging (ADR-0014).
+resource "google_monitoring_notification_channel" "email" {
+  project      = var.project_id
+  display_name = "${local.job_name} owner email"
+  type         = "email"
+  labels       = { email_address = var.alert_email }
+}
+
+resource "google_monitoring_alert_policy" "bot_alert" {
+  project               = var.project_id
+  display_name          = "${local.job_name}: the bot needs attention"
+  combiner              = "OR"
+  notification_channels = concat([google_monitoring_notification_channel.email.id], var.push_channels)
+
+  conditions {
+    display_name = "A bot alert line, or the schedule failing to start the job"
+    condition_matched_log {
+      # the bot's own alert lines, or Cloud Scheduler failing to start the job (a missed run);
+      # one condition per environment, since alerting may be billed per condition
+      filter           = "(resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${local.job_name}\" AND jsonPayload.alert:*) OR (resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"${local.job_name}-daily\" AND severity>=ERROR)"
+      label_extractors = { kind = "EXTRACT(jsonPayload.alert)" }
+    }
+  }
+
+  alert_strategy {
+    notification_rate_limit {
+      period = "300s"
+    }
+    auto_close = "1800s"
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = "${local.job_name}: alert kind `$${log.extracted_label.kind}` (empty: Cloud Scheduler couldn't start the job, so today's run is missing). Read it with `make logs ENV=${var.env}`; runbooks in docs/runbooks/. A stop already means no new orders; nothing needs doing to stay safe."
+  }
+}

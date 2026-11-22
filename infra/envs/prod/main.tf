@@ -39,6 +39,7 @@ module "job" {
   scheduler_sa  = local.b.sa_runtime["scheduler"]
   deployer_sa   = local.b.sa_deployer
   plan_sa       = local.b.sa_infra_plan
+  alert_email   = local.b.alert_email
   owner_secrets = { "prod-operator" = local.b.operator_secret } # the live switch (ADR-0009)
 }
 
