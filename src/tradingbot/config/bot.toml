@@ -2,7 +2,9 @@
 # anything here needs the owner's approval. Per-environment wiring (APP_ENV, buckets, the
 # broker's base URL) comes from env vars; secrets are files under /secrets/.
 
-# Currencies and quantity steps below are UNVERIFIED until the owner's Phase 0 API check;
+# Currencies were checked against EODHD's prices on 2026-11-22 (scripts/eodhd_check.py: IGLT and
+# INXG are quoted in pounds, the rest as listed). Quantity steps, and the broker's own units,
+# stay UNVERIFIED until the owner's Phase 0 API check;
 # prod refuses to trade while this is false. Staging runs on fakes and doesn't care.
 instruments_verified = false
 
@@ -46,7 +48,7 @@ quantity_step = "0.0001"
 
 [[instrument]]
 ticker = "IGLT"
-currency = "GBX"
+currency = "GBP"
 quantity_step = "0.0001"
 
 [[instrument]]
@@ -56,7 +58,7 @@ quantity_step = "0.0001"
 
 [[instrument]]
 ticker = "INXG"
-currency = "GBX"
+currency = "GBP"
 quantity_step = "0.0001"
 
 [[instrument]]
