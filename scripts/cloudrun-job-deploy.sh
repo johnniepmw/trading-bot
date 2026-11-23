@@ -25,10 +25,16 @@ CHECK_TIMEOUT="${CHECK_TIMEOUT:-900}"  # well inside the window and the workflow
 
 gc() { gcloud "$@" --project "$project" --quiet; }
 
+# Executions of the job that haven't finished (no completion time). Filtered here, not with
+# gcloud's --filter: newer gcloud releases reject `status.completionTime:*` (2026-11-23).
+unfinished() {
+  gc run jobs executions list --job "$job" --region "$region" --limit 50 \
+    --format='value(metadata.name,status.completionTime)' | awk -F'\t' 'NF && $2 == "" {print $1}'
+}
+
 check_window() {
   local running state next
-  running="$(gc run jobs executions list --job "$job" --region "$region" \
-    --filter='NOT status.completionTime:*' --format='value(metadata.name)')"
+  running="$(unfinished)"
   [ -z "$running" ] || { echo "deploy: refused: an execution of $job is running ($running); try again later" >&2; exit 75; }
   IFS=$'\t' read -r state next < <(gc scheduler jobs describe "${job}-daily" --location "$region" \
     --format='value(state,scheduleTime)') || true
@@ -52,8 +58,7 @@ checked=no
 restore() {
   [ "$checked" = yes ] && return 0
   echo "deploy: no passed check; cancelling $job's unfinished executions and going back to ${previous##*@}" >&2
-  for name in $(gc run jobs executions list --job "$job" --region "$region" \
-      --filter='NOT status.completionTime:*' --format='value(metadata.name)' 2>/dev/null || true); do
+  for name in $(unfinished 2>/dev/null || true); do
     gc run jobs executions cancel "$name" --region "$region" || true
   done
   gc run jobs update "$job" --region "$region" --image "$previous" \

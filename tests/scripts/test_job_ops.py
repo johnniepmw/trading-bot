@@ -38,7 +38,11 @@ if cmd == "run jobs executions" and a[3] == "cancel":
 elif cmd == "run jobs executions":
     if os.path.exists(path("list_fails")):
         sys.exit(1)
-    print(read("running"))
+    if any(x.startswith("--filter") for x in a):  # as gcloud 2026-11: `:*` is refused
+        sys.stderr.write("ERROR: Unknown string format: *\n"); sys.exit(1)
+    for name in read("running").split():
+        print(name + "\t")  # no completion time: still running
+    print("trading-bot-x-done\t2026-11-23T07:16:02.123Z")  # a finished one is never "running"
 elif cmd == "scheduler jobs describe":
     print(read("scheduler", "PAUSED\t"))
 elif cmd == "run jobs describe":
