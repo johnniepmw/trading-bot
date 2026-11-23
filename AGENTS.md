@@ -117,7 +117,8 @@ auto-merges when CI, agent-review and risk-gate pass.
   the kit repo, then `make kit-sync`; `make kit-check` catches local edits.
 - In cloud sessions mise may fail to download tools from GitHub; the system `uv` is
   enough for `make check-fast`.
-- The bot is a job, not a service: `python -m tradingbot.app smoke` is its health check,
+- The bot is a job (`python -m tradingbot.app smoke` is its health check); its only service is
+  the owner's dashboard (`serve`, behind IAP; ADR-0020),
   and `make e2e` runs it as a subprocess (ADR-0011).
 - In Claude Code cloud sessions `gh pr` and `gh issue` fail (GraphQL is blocked). Use the
   kit's `.claude/scripts/gh-pr.sh` or `gh api` REST calls. See docs/runbooks/cloud-sessions.md.

@@ -24,3 +24,4 @@ Accepted ADRs are never rewritten; a new ADR supersedes them.
 | [0017](0017-ledger-lock-checkpoints-reference-mark.md) | The ledger in GCS: a lock object, per-intent checkpoints and a reference mark | accepted |
 | [0018](0018-price-data-eodhd.md) | Live price data from EODHD's free tier, checked against the broker | accepted |
 | [0019](0019-deploying-the-job.md) | Deploying the job: image only, a check execution, prod behind a window and a dry run | accepted |
+| [0020](0020-dashboard-service-behind-iap.md) | The dashboard: a Cloud Run service behind IAP, read-only but for a one-way pause | accepted |
