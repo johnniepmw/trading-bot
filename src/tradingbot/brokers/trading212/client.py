@@ -59,14 +59,17 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
         return None  # urllib then raises HTTPError with the 3xx status
 
 
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RefuseRedirects())  # no env proxies
+def _build_opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _RefuseRedirects())  # no env proxies
 
 
 def urllib_transport(timeout: float = TIMEOUT_SECONDS) -> Transport:
+    opener = _build_opener()
+
     def send(method: str, url: str, headers: Mapping[str, str], body: bytes | None) -> tuple[int, bytes]:
         request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)  # noqa: S310 - fixed host
         try:
-            with _OPENER.open(request, timeout=timeout) as response:
+            with opener.open(request, timeout=timeout) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as error:
             return error.code, error.read()
@@ -131,6 +134,10 @@ class Trading212Client:
         self._clock = clock
         self._sleep = sleep
         self._last: dict[str, float] = {}
+
+    @property
+    def base(self) -> str:
+        return self._base
 
     def get(self, path: str, group: str) -> object:
         for attempt in range(2):

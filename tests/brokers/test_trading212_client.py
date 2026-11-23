@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import http.server
-import importlib
 import json
 import threading
 import urllib.error
@@ -203,6 +202,11 @@ def test_missing_credentials_are_an_error(tmp_path: Path) -> None:
 
 
 # --- the real transport ---------------------------------------------------------------
+class _Opener:
+    def __init__(self, open_: object) -> None:
+        self.open = open_
+
+
 class _Response:
     status = 200
 
@@ -217,7 +221,7 @@ class _Response:
 
 
 def test_the_transport_returns_status_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(client_module._OPENER, "open", lambda request, timeout: _Response())
+    monkeypatch.setattr(client_module, "_build_opener", lambda: _Opener(lambda request, timeout: _Response()))
     assert urllib_transport()("GET", f"{DEMO_BASE}/x", {}, None) == (200, b"{}")
 
 
@@ -225,7 +229,7 @@ def test_the_transport_returns_http_errors_as_statuses(monkeypatch: pytest.Monke
     def fail(request: object, timeout: float) -> None:
         raise urllib.error.HTTPError(f"{DEMO_BASE}/x", 404, "nf", {}, None)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(client_module._OPENER, "open", fail)
+    monkeypatch.setattr(client_module, "_build_opener", lambda: _Opener(fail))
     assert urllib_transport()("GET", f"{DEMO_BASE}/x", {}, None)[0] == 404
 
 
@@ -233,7 +237,7 @@ def test_a_network_failure_is_an_unknown_outcome_without_the_query(monkeypatch: 
     def fail(request: object, timeout: float) -> None:
         raise TimeoutError("secret detail")
 
-    monkeypatch.setattr(client_module._OPENER, "open", fail)
+    monkeypatch.setattr(client_module, "_build_opener", lambda: _Opener(fail))
     with pytest.raises(BrokerTimeoutError) as error:
         urllib_transport()("POST", f"{DEMO_BASE}/x?cursor=1", {}, b"{}")
     assert str(error.value) == f"POST {DEMO_BASE}/x: TimeoutError"
@@ -265,17 +269,11 @@ def local_server() -> Iterator[str]:
 
 
 def test_the_transport_ignores_proxy_settings(local_server: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    # urllib reads proxy variables when the opener is built (at import), so rebuild it under them
     for name in ("HTTP_PROXY", "http_proxy"):
         monkeypatch.setenv(name, "http://127.0.0.1:9")  # nothing listens there
     for name in ("NO_PROXY", "no_proxy"):
         monkeypatch.delenv(name, raising=False)
-    fresh = importlib.reload(client_module)
-    try:
-        assert fresh.urllib_transport(timeout=5)("GET", f"{local_server}/ok", {}, None) == (200, b"{}")
-    finally:
-        monkeypatch.undo()
-        importlib.reload(client_module)
+    assert urllib_transport(timeout=5)("GET", f"{local_server}/ok", {}, None) == (200, b"{}")
 
 
 def test_the_transport_does_not_follow_redirects(local_server: str) -> None:

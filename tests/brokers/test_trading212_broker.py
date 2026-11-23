@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +16,8 @@ from tradingbot.brokers.trading212.client import Trading212Client
 from tradingbot.domain.approval import ApprovedOrder
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency
+from tradingbot.execution.executor import reconcile
+from tradingbot.ledger.store import IntentState, Ledger
 
 from .t212_sim import NOW, Trading212Sim
 
@@ -165,3 +169,23 @@ def test_a_refused_order_is_a_broker_error_with_its_code() -> None:
             ApprovedOrder(Order(VWRP, Side.BUY, Decimal(1)))
         )
     assert type(error.value) is BrokerError
+
+
+# --- reconcile over the adapter ------------------------------------------------------
+@pytest.mark.parametrize("days_later", [1, 36])
+def test_a_crash_after_sending_is_found_however_late_the_next_run(tmp_path: Path, days_later: int) -> None:
+    # sent, then the job died before saving the order ID: the intent is still INTENDED
+    sim = Trading212Sim(Decimal(1000), {"VWRPl_EQ": Decimal(100)})
+    order = Order(VWRP, Side.BUY, Decimal(1))
+    ledger = Ledger.create(tmp_path / "ledger.sqlite")
+    intent = ledger.record_intent("run-1", order, NOW - timedelta(seconds=1))
+    broker(sim).place(ApprovedOrder(order))
+    later = Trading212Broker(
+        Trading212Client(sim, "k:s", clock=lambda: 0.0, sleep=lambda _: None),
+        frozenset({VWRP, SGLN}),
+        clock=lambda: NOW + timedelta(days=days_later),
+    )
+    assert reconcile(later, ledger).clean
+    (settled,) = ledger.settled()
+    assert (settled.intent_id, settled.state) == (intent, IntentState.FILLED)
+    ledger.close()

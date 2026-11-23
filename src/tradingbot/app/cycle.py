@@ -394,7 +394,9 @@ def _quote(broker: BrokerReader, instrument: Instrument, series: Sequence[Bar]) 
 
 def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instrument, Money]) -> None:
     """The data source's latest close must be within QUOTE_TOLERANCE of the broker's live
-    price, so a wrong third-party price can't flip a signal."""
+    price, so a wrong third-party price can't flip a signal. Only held funds have a broker
+    price on Trading 212 (`_quote`): for the others the close is compared with itself, so
+    a month end acted on from all cash is checked against nothing (Phase 2 Decisions)."""
     for instrument, series in bars.items():
         close = price_money(instrument, series[-1].close)
         quote = quotes[instrument]
@@ -406,9 +408,10 @@ def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instr
 
 def _verify_signal_closes(ledger: Ledger, bars: Mapping[Instrument, Sequence[Bar]], signal_day: date) -> None:
     """On the first run after the month end the latest close is the signal-day close, and it
-    has just passed the cross-check: store it. A later run may only act on the same closes
-    (within CLOSE_RESCALE_TOLERANCE). If they were never verified, the month end is skipped:
-    one alert, then later runs only reconcile and mark until the next month end."""
+    has just passed the cross-check (for held funds; see `_cross_check`): store it. A later
+    run may only act on the same closes (within CLOSE_RESCALE_TOLERANCE). If they were never
+    verified, the month end is skipped: one alert, then later runs only reconcile and mark
+    until the next month end."""
     closes = {
         i: price_money(i, next(b for b in reversed(s) if b.day == signal_day).close) for i, s in bars.items()
     }

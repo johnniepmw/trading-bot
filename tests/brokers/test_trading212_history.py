@@ -53,9 +53,15 @@ def page(*orders: dict[str, object], following: str | None = None) -> dict[str, 
 
 
 def test_one_page_reaching_past_the_window_is_enough() -> None:
-    pages = Pages({FIRST: page(raw_order(2, 1), raw_order(1, 30))})
+    pages = Pages({FIRST: page(raw_order(2, 1), raw_order(1, 45))})
     assert [o.order_id for o in recent_orders(pages, TICKERS, NOW)] == ["2"]
-    assert pages.asked == [(FIRST, "history"), ("/equity/orders", "orders")]
+    assert pages.asked == [("/equity/orders", "orders"), (FIRST, "history")]
+
+
+def test_the_window_covers_a_month_end_acted_on_late() -> None:
+    # a run may act on a month end up to 35 days on; its intents can stay open that long
+    pages = Pages({FIRST: page(raw_order(2, 36), raw_order(1, 45))})
+    assert [o.order_id for o in recent_orders(pages, TICKERS, NOW)] == ["2"]
 
 
 def test_pages_are_followed_until_the_window_is_reached() -> None:
@@ -63,7 +69,7 @@ def test_pages_are_followed_until_the_window_is_reached() -> None:
     pages = Pages(
         {
             FIRST: page(raw_order(3, 1), following="/api/v0" + second),
-            second: page(raw_order(2, 2), raw_order(1, 9)),
+            second: page(raw_order(2, 2), raw_order(1, 41)),
         }
     )
     assert [o.order_id for o in recent_orders(pages, TICKERS, NOW)] == ["2", "3"]
@@ -83,13 +89,18 @@ def test_too_many_pages_inside_the_window_is_an_error() -> None:
         recent_orders(pages, TICKERS, NOW)
 
 
-def test_working_orders_come_from_the_active_list_and_win() -> None:
-    pages = Pages(
-        {FIRST: page(raw_order(5, 0.1, status="CANCELLED"), raw_order(1, 30))},
-        active=(raw_order(5, 0.1, status="NEW"),),
-    )
+def test_working_orders_come_from_the_active_list() -> None:
+    pages = Pages({FIRST: page(raw_order(1, 45))}, active=(raw_order(5, 0.1, status="NEW"),))
     (only,) = recent_orders(pages, TICKERS, NOW)
     assert only.status is OrderStatus.PENDING
+
+
+def test_an_order_that_finished_between_the_reads_shows_as_finished() -> None:
+    finished = Pages(
+        {FIRST: page(raw_order(5, 0.1), raw_order(1, 45))}, active=(raw_order(5, 0.1, status="NEW"),)
+    )
+    (only,) = recent_orders(finished, TICKERS, NOW)
+    assert only.status is OrderStatus.FILLED
 
 
 def test_other_instruments_are_left_out() -> None:
@@ -122,7 +133,7 @@ def test_an_active_list_that_is_not_a_list_is_an_error() -> None:
 
 
 def test_find_order_looks_in_the_history() -> None:
-    pages = Pages({FIRST: page(raw_order(7, 1), raw_order(1, 30))})
+    pages = Pages({FIRST: page(raw_order(7, 1), raw_order(1, 45))})
     found = find_order(pages, TICKERS, "7", NOW)
     assert found is not None and found.status is OrderStatus.FILLED
     assert find_order(pages, TICKERS, "8", NOW) is None
