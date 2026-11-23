@@ -96,6 +96,26 @@ def test_a_refusal_is_a_broker_error_naming_the_code_but_not_the_body() -> None:
     assert str(error.value) == "POST /equity/orders/market: HTTP 400 (InsufficientFunds)"
 
 
+def test_a_problem_document_names_its_error_type() -> None:
+    body = b'{"type": "/api-errors/quantity-precision-mismatch", "detail": "987.65", "traceId": "t"}'
+    with pytest.raises(BrokerError) as error:
+        client(Recorder((400, body))).post("/equity/orders/market", {}, "market")
+    assert str(error.value) == "POST /equity/orders/market: HTTP 400 (quantity-precision-mismatch)"
+
+
+@pytest.mark.parametrize("kind", ["https://evil/api-errors/x", "/api-errors/has space", 5])
+def test_an_unexpected_problem_type_is_left_out(kind: object) -> None:
+    with pytest.raises(BrokerError) as error:
+        client(Recorder((400, json.dumps({"type": kind}).encode()))).get("/x", "order")
+    assert str(error.value) == "GET /x: HTTP 400"
+
+
+def test_a_body_that_is_not_an_object_names_no_code() -> None:
+    with pytest.raises(BrokerError) as error:
+        client(Recorder((400, b"[1]"))).get("/x", "order")
+    assert str(error.value) == "GET /x: HTTP 400"
+
+
 def test_a_code_that_is_not_a_short_identifier_is_left_out() -> None:
     with pytest.raises(BrokerError) as error:
         client(Recorder((400, b'{"code": "cash 987.65"}'))).get("/x", "order")

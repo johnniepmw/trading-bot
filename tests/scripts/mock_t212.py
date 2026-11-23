@@ -124,6 +124,8 @@ class H(BaseHTTPRequestHandler):
         kind = p.rsplit("/", 1)[1]
         if body.get("ticker") not in PRICE:
             return self._send(400, {"code": "InstrumentNotFound", "clarification": "unknown ticker"})
+        if round(body["quantity"], 4) != body["quantity"]:  # Trading 212 refuses a fifth decimal
+            return self._send(400, {"type": "/api-errors/quantity-precision-mismatch", "status": 400})
         oid = next(ids)
         order = {
             "id": oid,

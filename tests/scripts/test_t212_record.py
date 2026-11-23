@@ -88,8 +88,9 @@ def test_read_only_run_prints_shapes_without_values(mock_api: str) -> None:
 def test_the_order_check_reports_the_step_and_leaves_nothing_behind(mock_api: str) -> None:
     res = _run(mock_api, "--order", "ISF_EQ")
     assert res.returncode == 0, res.stdout
-    assert "asked for 0.12345, the order records 0.12345" in res.stdout
-    assert "Quantity step: filled 0.12345" in res.stdout
+    assert "Quantity step: 0.12345 refused (precision)" in res.stdout
+    assert "asked for 0.1234, the order records 0.1234" in res.stdout
+    assert "Quantity step: filled 0.1234" in res.stdout
     assert "Sold it back: FILLED" in res.stdout
     assert "No pending order from this run: yes" in res.stdout
     assert "ISF_EQ position unchanged since the start: yes" in res.stdout
@@ -115,3 +116,9 @@ def test_live_is_refused() -> None:
     res = _run("https://live.trading212.com/api/v0")
     assert res.returncode != 0
     assert "Refusing" in res.stderr
+
+
+def test_a_refusal_other_than_precision_stops_the_ladder(mock_api: str) -> None:
+    res = _run(mock_api, "--order", "NOT_A_TICKER")
+    assert "refused for another reason" in res.stdout
+    assert "(buy 0.1234)" not in res.stdout  # stopped at the first quantity

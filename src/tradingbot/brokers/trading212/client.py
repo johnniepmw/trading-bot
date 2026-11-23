@@ -47,6 +47,7 @@ MIN_INTERVAL: Mapping[str, float] = {
     "market": 1.3,
 }
 
+_PROBLEM = "/api-errors/"
 _CODE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,59}")
 
 # (method, url, headers, body) -> (status, body); raises BrokerTimeoutError on a network failure
@@ -97,12 +98,18 @@ def read_credentials(path: Path | None = None) -> str:
 
 
 def _code(body: bytes) -> str:
-    """Trading 212's error code, when it is a short identifier; never the body itself."""
+    """Trading 212's error code, when it is a short identifier; never the body itself. Errors
+    are problem documents (`{"type": "/api-errors/<code>", ...}`); older ones had `code`."""
     try:
         parsed = json.loads(body)
     except ValueError:
         return ""
-    code = parsed.get("code") if isinstance(parsed, dict) else None
+    if not isinstance(parsed, dict):
+        return ""
+    code = parsed.get("code")
+    kind = parsed.get("type")
+    if code is None and isinstance(kind, str) and kind.startswith(_PROBLEM):
+        code = kind.removeprefix(_PROBLEM)
     return f" ({code})" if isinstance(code, str) and _CODE.fullmatch(code) else ""
 
 
