@@ -108,7 +108,9 @@ class Client:
         """Return {'status', 'data', 'ratelimit', 'error'}; never raises on HTTP errors."""
         for attempt in range(2):
             self._wait(bucket)
-            url = self.base + path  # always the demo host (or the localhost mock in tests)
+            url = (
+                self.base + path
+            )  # this script: always demo (or the localhost mock); t212_record's live mode: one read
             data = json.dumps(body).encode() if body is not None else None
             req = urllib.request.Request(url, data=data, method=method)  # noqa: S310 - fixed base
             req.add_header("Authorization", self._auth)

@@ -14,13 +14,14 @@ priced in pence (SGLN) for the units verdict.
 DEMO ACCOUNT, except `--live-transactions`: it reads only the live account's transaction
 list (to see how deposits and withdrawals look), refuses any other request, and follows no
 redirects or proxies. Run it on your own machine (never in a cloud or agent session) with a
-dedicated live key that has read permissions only, and delete that key afterwards. Otherwise it uses the same demo key and secret as
-phase0_api_check.py:
+dedicated live key that has read permissions only, and delete that key afterwards.
+Otherwise it uses the same demo key and secret as phase0_api_check.py:
     read -rs T212_API_KEY && export T212_API_KEY
     read -rs T212_API_SECRET && export T212_API_SECRET
     python3 scripts/t212_record.py                       # read-only
     python3 scripts/t212_record.py --order SGLNl_EQ      # plus the quantity-step check
                                                          # (London market hours only)
+    python3 scripts/t212_record.py --live-transactions   # LIVE key, read-only permissions
 """
 
 from __future__ import annotations
@@ -290,13 +291,16 @@ def reference_kind(value: object) -> str:
     return f"text({len(value)})"
 
 
-def live_transactions(client: TransactionsOnly) -> None:
+def live_transactions(client: TransactionsOnly) -> bool:
     """Every transaction kind on the live account (up to LIVE_PAGES pages), with the shape of
-    one page, and what references look like: no amounts, dates or references."""
+    one page, and what references look like: no amounts, dates or references. True when a
+    page couldn't be read."""
     path: str | None = f"{LIVE_PATH}?limit=50"
     items: list[object] = []
+    failed = False
     for page_number in range(1, LIVE_PAGES + 1):
         res = client.call("GET", path or "", "history")
+        failed = failed or res["status"] != 200
         if page_number == 1:
             show(f"GET {LIVE_PATH}?limit=50 (live)", res)
         else:
@@ -317,7 +321,9 @@ def live_transactions(client: TransactionsOnly) -> None:
     for ref in refs:
         shapes[reference_kind(ref)] = shapes.get(reference_kind(ref), 0) + 1
     print(f"References: {', '.join(f'{k} x{n}' for k, n in sorted(shapes.items())) or '(none)'}")
-    print(f"References unique: {'yes' if len(set(map(str, refs))) == len(refs) else 'NO'}")
+    present = [r for r in refs if isinstance(r, str) and r]
+    print(f"References unique: {'yes' if len(set(present)) == len(present) else 'NO'}")
+    return failed
 
 
 def _live_base() -> str:
@@ -347,8 +353,7 @@ def main() -> int:
         lock_down_http()
         live = TransactionsOnly(Client(key, secret, target, fast=fast))
         print(f"Reading transaction kinds from {target} (read-only; transactions only)")
-        live_transactions(live)
-        return 0
+        return 1 if live_transactions(live) else 0
     base = _base_url()
     client = Client(key, secret, base, fast=fast)
     print(f"Recording response shapes from {'demo' if 'demo.' in base else 'a local test server'}")

@@ -29,7 +29,8 @@ alert. Phase 0 has the package skeleton, the `Money` type and a smoke entry poin
 | `src/tradingbot/backtest` | day-by-day simulation sharing `strategy`, `portfolio` and `risk` with live code; own fill simulator (next open plus costs) | import `execution`, brokers or HTTP; be imported by the pure core |
 | `research/` | validation statistics (Sharpe, Deflated Sharpe, block bootstrap, rolling windows, 1/N benchmark, trial log, CSV loader); real data lives outside the repo (`research/data/` is gitignored) | be imported by `src` |
 | `tests/` | unit, property, e2e (`tests/e2e` runs the job entry point) | use real account data |
-| `scripts/phase0_api_check.py` | owner-run demo API check (stdlib only) | touch the live API |
+| `scripts/phase0_api_check.py` | owner-run demo API check (stdlib only); its `Client` is also used by `t212_record.py`'s live mode | touch the live API itself |
+| `scripts/t212_record.py` | owner-run response-shape recorder: demo, except `--live-transactions`, which sends only `GET /history/transactions` to the live host (no redirects or proxies; a read-only key on the owner's machine) | send anything else to live, or any order |
 | `infra/` | OpenTofu for GCP (ADR-0004; job module in Phase 2) | contain secret values |
 | `scripts/` | repo tooling used by make and CI | contain business logic |
 

@@ -19,6 +19,7 @@ from t212_record import (
     _NoRedirects,
     kinds,
     live_transactions,
+    lock_down_http,
     reference_kind,
     shape,
 )  # scripts/ is on the path (conftest)
@@ -274,3 +275,31 @@ def test_a_leftover_test_server_setting_is_refused_in_live_mode(monkeypatch: pyt
     monkeypatch.delenv("T212_TEST_FAST", raising=False)
     with pytest.raises(SystemExit, match="unset it"):
         _live_base()
+
+
+def test_a_failed_live_read_is_a_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    class Refused:
+        def call(self, method: str, path: str, bucket: str, body: dict | None = None) -> dict:
+            return {"status": 403, "data": {"code": "Forbidden"}}
+
+    assert live_transactions(TransactionsOnly(Refused())) is True  # type: ignore[arg-type]
+
+
+def test_missing_references_dont_count_as_duplicates(capsys: pytest.CaptureFixture[str]) -> None:
+    pager = Pager()
+    pager.call = lambda *a, **k: {
+        "status": 200,
+        "data": {"items": [{"type": "FEE"}, {"type": "FEE"}], "nextPagePath": None},
+    }  # type: ignore[method-assign]
+    assert live_transactions(TransactionsOnly(pager)) is False  # type: ignore[arg-type]
+    assert "References unique: yes" in capsys.readouterr().out
+
+
+def test_live_mode_installs_an_opener_without_redirects_or_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
+    installed: list[urllib.request.OpenerDirector] = []
+    monkeypatch.setattr(urllib.request, "install_opener", installed.append)
+    lock_down_http()
+    (opener,) = installed
+    names = {type(h).__name__ for h in opener.handlers}  # type: ignore[attr-defined]
+    assert "_NoRedirects" in names and "HTTPRedirectHandler" not in names
+    assert not any(getattr(h, "proxies", None) for h in opener.handlers)  # type: ignore[attr-defined]
