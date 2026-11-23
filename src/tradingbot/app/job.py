@@ -9,9 +9,10 @@ wiring, which comes from env vars:
 - `CLOUD_RUN_EXECUTION` (set by Cloud Run), `APP_VERSION`, `FLAGS_BUCKET` (see flags).
 
 Local, test and staging run on fakes for good: a fake broker whose account is saved next to
-the ledger, and synthetic prices. Prod refuses to start until the Trading 212 adapter (step 4)
-and the live price source (step 3) exist, and while the config's instrument data is
-unverified. No live broker can be built in Phase 2, whatever the `operator` secret says.
+the ledger, and synthetic prices. Prod uses the Trading 212 demo account (step 4) and EODHD
+prices (step 3), and refuses to start while the config's instrument data is unverified. No
+live broker can be built in Phase 2, whatever the `operator` secret says: the adapter
+refuses any host but Trading 212's demo.
 """
 
 from __future__ import annotations
@@ -41,7 +42,10 @@ from tradingbot.app.remote_ledger import (
 )
 from tradingbot.app.storage import GcsObjectStore, ObjectStore, metadata_token, urllib_transport
 from tradingbot.brokers.fake.broker import FakeBroker
-from tradingbot.brokers.port import read_only
+from tradingbot.brokers.port import Broker, BrokerError, read_only
+from tradingbot.brokers.trading212.broker import Trading212Broker
+from tradingbot.brokers.trading212.client import Trading212Client, read_credentials
+from tradingbot.brokers.trading212.client import urllib_transport as broker_transport
 from tradingbot.config.load import load_config
 from tradingbot.config.types import BotConfig
 from tradingbot.data.prices import PriceHistory
@@ -128,12 +132,9 @@ def _fake_now(env: Mapping[str, str], app_env: str) -> datetime | None:
 
 
 def check_prod_ready(wiring: Wiring, config: BotConfig) -> None:
-    """Prod refuses fakes, unverified instruments and anything not built yet (AC4)."""
-    if wiring.app_env != "prod":
-        return
-    if not config.instruments_verified:
+    """Prod refuses unverified instrument data (AC4)."""
+    if wiring.app_env == "prod" and not config.instruments_verified:
         raise JobConfigError("prod refuses to trade: the config's instrument data is unverified")
-    raise JobConfigError("prod needs the Trading 212 adapter (step 4)")
 
 
 def warn_if_live_requested(config: BotConfig, wiring: Wiring) -> None:
@@ -219,6 +220,18 @@ class Job:
         if self.wiring.app_env not in FAKE_ENVS:
             raise JobConfigError("synthetic prices are for local, test and staging only")
         return SyntheticHistory()
+
+    def broker(self) -> Broker:
+        """Trading 212's demo account in prod (step 4); elsewhere the saved fake account, saved
+        again after every order (a real broker's records are durable once it accepts one).
+        Setup builds its fake account itself (`_setup_locked`)."""
+        if self.wiring.app_env == "prod":
+            client = Trading212Client(broker_transport(), read_credentials())
+            return Trading212Broker(client, frozenset(self.config.universe), self.clock)
+        account = self.fake_account()
+        fake = account.load()
+        fake.after_place = lambda: account.save(fake)
+        return fake
 
     def fake_account(self) -> FakeAccount:
         if self.wiring.app_env not in FAKE_ENVS:
@@ -312,13 +325,10 @@ class Job:
     def _run_locked(self, remote: RemoteLedger, run_id: str, signal_day: date, now: datetime) -> int:
         try:
             ledger = remote.open()
-            account = self.fake_account()
-            broker = account.load()
-        except (LedgerStorageError, OSError, ValueError) as error:
+            broker = self.broker()
+        except (LedgerStorageError, BrokerError, OSError, ValueError) as error:
             log.error("cycle stopped: %s", error)
             return EXIT_STOPPED
-        # a real broker's records are durable the moment it accepts an order; so is the fake's
-        broker.after_place = lambda: account.save(broker)
 
         pause = PauseRequests(self.store, self.wiring.pause_bucket)
         if pause.present():
@@ -352,9 +362,9 @@ class Job:
             try:
                 calendar = self._calendar()
                 signal_day = calendar.signal_day(now.date())
-                reader = read_only(self.fake_account().load())
+                reader = read_only(self.broker())
                 ledger = self._remote(Path(scratch)).open_scratch()
-            except (CalendarError, LedgerStorageError, OSError, ValueError) as error:
+            except (CalendarError, LedgerStorageError, BrokerError, OSError, ValueError) as error:
                 log.warning("dry run stopped: %s", error)
                 return EXIT_STOPPED
             try:
@@ -395,17 +405,21 @@ class Job:
                 remote.release()
 
     def _setup_locked(self, remote: RemoteLedger, stated: Money, now: datetime, *, reset: bool) -> int:
-        account = self.fake_account()
         try:
-            if reset:
+            if reset:  # never prod: setup refuses before this
                 remote.clear_for_reset()
-                account.clear()
+                self.fake_account().clear()
                 log.warning(
                     "staging ledger reset: the ledger, reference mark and fake account start afresh",
                     extra={"alert": "ledger_reset"},
                 )
-            broker = account.load(new=True)
-            actual = broker.account().equity
+            account, fake = None, None
+            if self.wiring.app_env == "prod":
+                actual = self.broker().account().equity
+            else:  # the fake account starts here, and is saved only once the ledger is
+                account = self.fake_account()
+                fake = account.load(new=True)
+                actual = fake.account().equity
             if abs(actual.amount - stated.amount) > actual.amount * SETUP_EQUITY_TOLERANCE:
                 log.error(
                     "setup refused: the broker's equity doesn't match the figure given (check the account)"
@@ -415,8 +429,9 @@ class Job:
             ledger.seed_high_water_mark(actual, now)
             ledger.record_equity(now.date(), actual)
             remote.checkpoint()
-            account.save(broker)
-        except (LedgerStorageError, OSError, ValueError) as error:
+            if account is not None and fake is not None:
+                account.save(fake)
+        except (LedgerStorageError, BrokerError, OSError, ValueError) as error:
             log.error("setup refused: %s", error)
             return EXIT_STOPPED
         log.info("setup completed: ledger created and high-water mark seeded")

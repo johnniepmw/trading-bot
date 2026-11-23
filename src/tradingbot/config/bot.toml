@@ -2,11 +2,12 @@
 # anything here needs the owner's approval. Per-environment wiring (APP_ENV, buckets, the
 # broker's base URL) comes from env vars; secrets are files under /secrets/.
 
-# Currencies were checked against EODHD's prices on 2026-11-22 (scripts/eodhd_check.py: IGLT and
-# INXG are quoted in pounds, the rest as listed). Quantity steps, and the broker's own units,
-# stay UNVERIFIED until the owner's Phase 0 API check;
-# prod refuses to trade while this is false. Staging runs on fakes and doesn't care.
-instruments_verified = false
+# Verified 2026-11-23. Currencies: EODHD's prices (scripts/eodhd_check.py, 2026-11-22: IGLT and
+# INXG in pounds) and Trading 212's instrument list agree with every fund below. Quantity
+# step: Trading 212 refuses more than 3 decimal places (scripts/t212_record.py: 0.12345 and
+# 0.1234 refused as quantity-precision-mismatch, 0.123 filled). Prod refuses to trade while
+# this is false. Staging runs on fakes and doesn't care.
+instruments_verified = true
 
 # Weekdays, Europe/London: before the open, after the data source publishes the previous
 # close (ADR-0018 confirms the time). The scheduler and the deploy window use it.
@@ -34,34 +35,34 @@ holidays = [
 [[instrument]]
 ticker = "VWRP"
 currency = "GBP"
-quantity_step = "0.0001"
+quantity_step = "0.001"
 
 [[instrument]]
 ticker = "VUKE"
 currency = "GBP"
-quantity_step = "0.0001"
+quantity_step = "0.001"
 
 [[instrument]]
 ticker = "EMIM"
 currency = "GBX"
-quantity_step = "0.0001"
+quantity_step = "0.001"
 
 [[instrument]]
 ticker = "IGLT"
 currency = "GBP"
-quantity_step = "0.0001"
+quantity_step = "0.001"
 
 [[instrument]]
 ticker = "VAGP"
 currency = "GBP"
-quantity_step = "0.0001"
+quantity_step = "0.001"
 
 [[instrument]]
 ticker = "INXG"
 currency = "GBP"
-quantity_step = "0.0001"
+quantity_step = "0.001"
 
 [[instrument]]
 ticker = "SGLN"
 currency = "GBX"
-quantity_step = "0.0001"
+quantity_step = "0.001"

@@ -21,7 +21,7 @@ from decimal import Decimal
 from types import MappingProxyType
 
 from tradingbot.app.alerts import drawdown_crossings
-from tradingbot.brokers.port import Broker, BrokerReader
+from tradingbot.brokers.port import Broker, BrokerReader, NoQuoteError
 from tradingbot.data.prices import PriceHistory, validate_history
 from tradingbot.domain.market import BENCHMARK_ONLY, Bar, Instrument, base_ticker, price_money
 from tradingbot.domain.money import Currency, Money
@@ -267,7 +267,7 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
         return None
 
     bars = _checked_history(history, config.universe, signal_day, now.date())
-    quotes = {i: broker.quote(i) for i in config.universe}
+    quotes = {i: _quote(broker, i, bars[i]) for i in config.universe}
     _cross_check(bars, quotes)
     _verify_signal_closes(ledger, bars, signal_day)
     in_trend = signals(bars, signal_day)
@@ -379,6 +379,17 @@ def _checked_history(
             raise CycleStopError(f"history too short for {instrument.ticker}: {len(upto_signal)} bars")
         bars[instrument] = series
     return bars
+
+
+def _quote(broker: BrokerReader, instrument: Instrument, series: Sequence[Bar]) -> Money:
+    """The broker's live price; for a fund it doesn't price (Trading 212 prices held positions
+    only), the data source's latest close, which then cross-checks against itself. The order
+    still goes out as a market order: the price only sizes it."""
+    try:
+        return broker.quote(instrument)
+    except NoQuoteError:
+        log.info("no broker price for %s (not held): sizing from the latest close", instrument.ticker)
+        return price_money(instrument, series[-1].close)
 
 
 def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instrument, Money]) -> None:

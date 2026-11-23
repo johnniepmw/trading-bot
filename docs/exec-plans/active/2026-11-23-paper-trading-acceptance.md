@@ -84,4 +84,6 @@ each. You see an alert email for every adjustment.
 ## Evidence log
 | Date | Test | Run or execution | Result |
 |---|---|---|---|
+| 2026-11-23 | A2 | owner run of `scripts/t212_record.py` (demo) | pass: currencies match Trading 212 and EODHD; quantity step 0.001; `instruments_verified = true` in the step 4 PR |
+| 2026-11-23 | A3 | `make secret-set NAME=t212-demo-key ENV=prod`; infra run 45141804879 (re-run) | pass: prod apply green |
 | | | | |

@@ -6,9 +6,9 @@ idempotency lives in the ledger (record intent, then send, then reconcile), not 
 broker. Price history is not here (`data.prices.PriceHistory`); `quote` is the live
 price used for sizing.
 
-Unverified assumption (owner's API check): `quote` for an instrument we don't hold.
-Trading 212's public API may only show prices for held positions; if so, the price for a
-first buy must come from elsewhere (plan, open question 4).
+`quote` for an instrument not held may raise `NoQuoteError`: Trading 212's public API shows
+prices only for held positions (owner's API check, 2026-11-23), so the cycle sizes a first
+buy from the data source's latest close (Phase 1 open question 4).
 """
 
 from __future__ import annotations
@@ -33,6 +33,11 @@ class BrokerError(Exception):
 class BrokerTimeoutError(BrokerError):
     """The outcome is unknown: no answer in time, a connection reset after sending, a 5xx
     from a gateway. The request may or may not have taken effect."""
+
+
+class NoQuoteError(BrokerError):
+    """The broker has no live price for this instrument (Trading 212 shows prices only for
+    held positions). The cycle then sizes a first buy from the data source's latest close."""
 
 
 class OrderStatus(StrEnum):

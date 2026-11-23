@@ -19,7 +19,7 @@ import pytest
 from tests.bars import weekdays
 from tradingbot.app.cycle import CycleConfig, CycleReport, run_cycle
 from tradingbot.brokers.fake.broker import FakeBroker
-from tradingbot.brokers.port import AccountSnapshot, BrokerError
+from tradingbot.brokers.port import AccountSnapshot, BrokerError, NoQuoteError
 from tradingbot.domain.market import Bar, Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
 from tradingbot.ledger.store import IntentState, Ledger, LedgerError
@@ -112,6 +112,29 @@ def test_a_month_end_buys_the_trending_fund_and_leaves_the_other_in_cash(
     [order] = broker.recent_orders()
     assert (order.order.instrument, order.order.side) == (UP, Side.BUY)
     assert order.order.quantity * Decimal(repr(close_on(UP, SIGNAL_DAY))) <= Decimal(250)  # the 25% sleeve
+    assert errors(caplog) == []
+
+
+class HeldQuotesOnly(FakeBroker):
+    """Like Trading 212: prices only for held positions."""
+
+    def quote(self, instrument: Instrument) -> Money:
+        if not any(p.instrument == instrument for p in self.positions()):
+            raise NoQuoteError(f"not held: {instrument.ticker}")
+        return super().quote(instrument)
+
+
+def test_a_first_buy_is_sized_from_the_latest_close_when_the_broker_has_no_price(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    held_only = HeldQuotesOnly(gbp(1000), broker.quotes)
+    held_only.now = lambda: NOW
+    caplog.set_level(logging.INFO)
+    report = cycle(held_only, ledger)
+    assert (report.sent, report.stopped) == (1, None)
+    [order] = held_only.recent_orders()
+    assert (order.order.instrument, order.order.side) == (UP, Side.BUY)
+    assert "no broker price for UP" in caplog.text
     assert errors(caplog) == []
 
 
