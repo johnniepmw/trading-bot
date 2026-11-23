@@ -26,14 +26,7 @@ from tradingbot.data.prices import DataError, PriceHistory, validate_history
 from tradingbot.domain.market import BENCHMARK_ONLY, Bar, Instrument, base_ticker, price_money
 from tradingbot.domain.money import Currency, Money
 from tradingbot.execution.executor import execute, reconcile
-from tradingbot.ledger.store import (
-    DecisionRecord,
-    Ledger,
-    LedgerError,
-    PositionRecord,
-    PreviewRecord,
-    SignalRecord,
-)
+from tradingbot.ledger.store import DecisionRecord, Ledger, PositionRecord, PreviewRecord, SignalRecord
 from tradingbot.portfolio.weights import daily_returns, orders_for, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
 from tradingbot.risk.review import AccountState, Decision, review
@@ -128,10 +121,10 @@ class DryRunReport:
     business: bool = False  # stopped for a reason the world gave (BUSINESS_STOPS), not a bug
 
 
-# Stops the account or the outside world causes (a drawdown, stale or missing data, the
-# broker, the ledger's state), as opposed to a bug in the code. A deploy's check accepts these
-# (ADR-0019 amendment): the image works, the account is deliberately stopped.
-BUSINESS_STOPS: tuple[type[Exception], ...] = (CycleStopError, BrokerError, DataError, LedgerError)
+# Stops the account or the outside world causes (a cycle stop, stale or missing data, the
+# broker), as opposed to a bug in the code. A deploy's check accepts these (ADR-0019
+# amendment). LedgerError is not here: most of it guards programming invariants.
+BUSINESS_STOPS: tuple[type[Exception], ...] = (CycleStopError, BrokerError, DataError)
 
 
 def dry_run_cycle(  # noqa: PLR0913 - as run_cycle, minus sending

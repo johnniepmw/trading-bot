@@ -63,11 +63,15 @@ Option 2.
 
 ## Amendment (2026-11-23): business stops pass the prod check; window refusals aren't incidents
 - Prod's check execution is `run --dry-run --deploy-check`. A dry run that stops for a reason
-  the account or the outside world gives (`cycle.BUSINESS_STOPS`: a cycle stop such as the
-  drawdown stop, a broker or data error, the ledger's state, a missing ledger before setup,
-  calendar or wiring states the job reports as "dry run stopped") exits 0 there and logs
-  "deploy check: a business stop". An unexpected exception (a bug in the image) still exits
-  1, so the deploy goes back to the previous image. Without the flag, a dry run still exits
+  the account or the outside world gives exits 0 there and logs "deploy check: a business
+  stop": a cycle stop (`CycleStopError`), a broker or price-data error, a calendar stop, or
+  no ledger yet (`LedgerMissingError`, before setup). Everything else exits 1 and the deploy
+  goes back to the previous image: unexpected exceptions, ledger invariant errors, a ledger
+  that won't open (e.g. a schema change that fails on prod's older ledger), and any
+  `OSError` or `ValueError` while wiring.
+- Residual risk, accepted: a bug that surfaces as one of the business types (a guard inside
+  the cycle such as "signal day too old", an adapter parse failure, a valuation mismatch)
+  deploys. The real run then stops closed and alerts, so no wrong order is sent. Without the flag, a dry run still exits
   1 on any stop (AC6), so an owner's own dry run reports a stop as a failure.
 - Why: a fix-forward must be deployable while prod is deliberately stopped (the first prod
   deploy runs before the ledger exists, and a drawdown stop may last weeks).

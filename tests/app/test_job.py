@@ -34,7 +34,7 @@ from tradingbot.brokers.trading212.broker import Trading212Broker
 from tradingbot.brokers.trading212.client import DEMO_BASE, Trading212Client
 from tradingbot.config.load import load_config
 from tradingbot.data.prices import DataError
-from tradingbot.ledger.store import IntentState, Ledger
+from tradingbot.ledger.store import IntentState, Ledger, LedgerError
 
 SETUP_DAY = datetime(2026, 11, 30, 7, 15, tzinfo=UTC)  # a Monday
 RUN_DAY = datetime(2026, 12, 1, 7, 15, tzinfo=UTC)  # the first run after November's month end
@@ -375,22 +375,57 @@ def test_a_dry_run_that_stops_exits_non_zero_without_cycle_stopped(
 
 
 # --- the deploy pipeline's check (ADR-0019) -----------------------------------------
-def test_a_deploy_check_passes_on_a_business_stop(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_a_deploy_check_passes_before_prod_has_a_ledger(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    job = job_at(tmp_path, RUN_DAY)
+    job.fake_account().save(job.fake_account().load(new=True))  # a broker, but no ledger yet
     with caplog.at_level(logging.INFO):
-        assert job_at(tmp_path, RUN_DAY).dry_run(deploy_check=True) == EXIT_OK  # no ledger yet
-    assert "dry run stopped" in caplog.text
+        assert job.dry_run(deploy_check=True) == EXIT_OK
+    assert "ledger missing" in caplog.text
     assert "a business stop, not a fault in this image" in caplog.text
 
 
-def test_a_deploy_check_passes_when_the_cycle_stops_for_the_account(
-    set_up: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "stop",
+    [CycleStopError("signal-day close missing"), DataError("EODHD answered 503")],
+    ids=["cycle", "data"],
+)
+def test_a_deploy_check_passes_when_the_cycle_stops_for_the_world(
+    set_up: Path, monkeypatch: pytest.MonkeyPatch, stop: Exception
 ) -> None:
-    def drawdown(*_: object, **__: object) -> None:
-        raise CycleStopError("drawdown stop")
+    def stopped(*_: object, **__: object) -> None:
+        raise stop
 
-    monkeypatch.setattr("tradingbot.app.cycle._decide", drawdown)
+    monkeypatch.setattr("tradingbot.app.cycle._decide", stopped)
     assert job_at(set_up, RUN_DAY).dry_run(deploy_check=True) == EXIT_OK
     assert job_at(set_up, RUN_DAY).dry_run() == EXIT_STOPPED  # an owner's own dry run still says so
+
+
+def test_a_deploy_check_fails_on_a_ledger_invariant_error(
+    set_up: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def invariant(*_: object, **__: object) -> None:
+        raise LedgerError("equity is in GBP")
+
+    monkeypatch.setattr("tradingbot.app.cycle._decide", invariant)
+    assert job_at(set_up, RUN_DAY).dry_run(deploy_check=True) == EXIT_STOPPED
+
+
+def test_a_deploy_check_fails_on_a_wiring_value_error(set_up: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(*_: object, **__: object) -> None:
+        raise ValueError("day is out of range for month")
+
+    monkeypatch.setattr("tradingbot.app.calendar.TradingCalendar.signal_day", broken)
+    assert job_at(set_up, RUN_DAY).dry_run(deploy_check=True) == EXIT_STOPPED
+
+
+def test_a_deploy_check_fails_on_a_ledger_that_wont_open(set_up: Path) -> None:
+    s = store(set_up)
+    info = s.info("ledger", LEDGER_OBJECT)
+    assert info is not None
+    s.write("ledger", LEDGER_OBJECT, b"not sqlite", if_generation_match=info.generation)
+    assert job_at(set_up, RUN_DAY).dry_run(deploy_check=True) == EXIT_STOPPED
 
 
 def test_a_deploy_check_fails_on_a_bug(set_up: Path, monkeypatch: pytest.MonkeyPatch) -> None:

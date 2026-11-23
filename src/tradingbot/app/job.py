@@ -35,6 +35,7 @@ from tradingbot.app.local_store import LocalObjectStore
 from tradingbot.app.operator import read_operator
 from tradingbot.app.pause import PauseRequests
 from tradingbot.app.remote_ledger import (
+    LedgerMissingError,
     LedgerStorageError,
     LockHeldError,
     LockHolder,
@@ -367,9 +368,12 @@ class Job:
                 reader = read_only(self.broker())
                 history = self.history()
                 ledger = self._remote(Path(scratch)).open_scratch()
-            except (CalendarError, LedgerStorageError, BrokerError, DataError, OSError, ValueError) as error:
+            except (CalendarError, LedgerMissingError, BrokerError, DataError) as error:  # before ValueError
                 log.warning("dry run stopped: %s", error)
                 return self._business_stop(deploy_check)
+            except (LedgerStorageError, OSError, ValueError) as error:  # can be a fault in this image
+                log.warning("dry run stopped: %s", error)
+                return EXIT_STOPPED
             try:
                 report = dry_run_cycle(
                     broker=reader,

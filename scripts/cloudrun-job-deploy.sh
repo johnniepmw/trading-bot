@@ -5,7 +5,8 @@
 #
 # Changes only the job's image (OpenTofu owns everything else). Then runs a check
 # execution and reads only its status, never its logs (ADR-0014): staging runs `smoke`,
-# prod runs `run --dry-run` against prod's own ledger and broker. Any way out other than a
+# prod runs `run --dry-run --deploy-check` against prod's own ledger and broker (a business
+# stop passes; a fault in the image fails). Any way out other than a
 # passed check (failure, timeout, cancellation of this script) puts the previous image
 # back. Prod first checks the deploy window: no execution running, and the scheduler
 # either paused or its next run more than 30 minutes away.
