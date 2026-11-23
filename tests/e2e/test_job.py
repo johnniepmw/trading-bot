@@ -27,21 +27,24 @@ def log_lines(result: subprocess.CompletedProcess[str]) -> list[dict[str, str]]:
     return [json.loads(line) for line in result.stderr.splitlines() if line.strip()]
 
 
-def test_setup_then_run_then_dry_run(run_job: RunJob, tmp_path: Path) -> None:
-    setup = run_job("setup", "--equity", "1000", env=wiring(tmp_path))
+SETUP_DAY = "2026-11-30T07:15:00+00:00"  # a Monday, the last trading day of November
+RUN_DAY = "2026-12-01T07:15:00+00:00"  # the first run after the month end
+
+
+def test_setup_then_a_month_end_run_then_a_dry_run(run_job: RunJob, tmp_path: Path) -> None:
+    # fixed dates (FAKE_NOW, local and test only), so the outcome is the same on any day
+    setup = run_job("setup", "--equity", "1000", env={**wiring(tmp_path), "FAKE_NOW": SETUP_DAY})
     assert setup.returncode == 0, setup.stderr
     assert "setup completed" in [line["message"] for line in log_lines(setup)][-1]
 
-    run = run_job("run", env=wiring(tmp_path))
-    assert run.returncode == 0, run.stderr  # today's real date: a run, or "not a trading day"
-    # on a trading day, buys made the same day as setup are vetoed at ERROR ("no day-start
-    # equity", ledger-setup.md): expected, so this checks only that the run didn't stop
-    assert all("cycle stopped" not in line["message"] for line in log_lines(run))
+    run = run_job("run", env={**wiring(tmp_path), "FAKE_NOW": RUN_DAY})
+    assert run.returncode == 0, run.stderr
+    assert any(line["message"].startswith("run completed") for line in log_lines(run))
 
-    dry = run_job("run", "--dry-run", env=wiring(tmp_path))
-    assert dry.returncode in {0, 1}, dry.stderr
-    assert any("dry run" in line["message"] for line in log_lines(dry))
-    assert all("cycle stopped" not in line["message"] for line in log_lines(dry))
+    dry = run_job("run", "--dry-run", env={**wiring(tmp_path), "FAKE_NOW": RUN_DAY})
+    assert dry.returncode == 0, dry.stderr
+    assert any(line["message"].startswith("dry run: ") for line in log_lines(dry))
+    assert all(line["severity"] != "ERROR" for line in log_lines(dry))
 
 
 def test_a_missing_ledger_fails_closed(run_job: RunJob, tmp_path: Path) -> None:

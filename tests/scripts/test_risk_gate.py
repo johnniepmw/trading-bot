@@ -173,3 +173,80 @@ def test_main_fails_closed_without_a_status_token(monkeypatch: Any) -> None:
     with pytest.raises(SystemExit) as exc:
         risk_gate.main()
     assert exc.value.code != 0
+
+
+# --- tech debt batch 2 -----------------------------------------------------------------------
+DOWNGRADE = f"-      - uses: actions/checkout@{OLD} # v7.0.1\n+      - uses: actions/checkout@{NEW} # v6.9.9"
+
+
+def test_dependabot_downgrade_is_high_even_when_the_tag_resolves() -> None:
+    # an older release can carry a known vulnerability: only upgrades are routine
+    resolve = tags({("actions/checkout", "v6.9.9"): NEW})
+    result = classify_pr(pr(), [{"filename": WF, "patch": DOWNGRADE}], resolve)
+    assert result["risk"] == "high"
+    assert "not newer" in result["reason"]
+
+
+def test_dependabot_bump_to_the_same_version_is_high() -> None:
+    same = f"-      - uses: actions/checkout@{OLD} # v7.0.1\n+      - uses: actions/checkout@{NEW} # v7.0.1"
+    resolve = tags({("actions/checkout", "v7.0.1"): NEW})
+    assert classify_pr(pr(), [{"filename": WF, "patch": same}], resolve)["risk"] == "high"
+
+
+def test_a_downgrade_hidden_behind_a_second_pin_of_the_same_action_is_high() -> None:
+    two = (
+        f"-      - uses: actions/checkout@{OLD} # v7.0.1\n-      - uses: actions/checkout@{OLD} # v6.0.0\n"
+        f"+      - uses: actions/checkout@{NEW} # v7.0.0\n+      - uses: actions/checkout@{NEW} # v6.0.1"
+    )  # v7.0.1 -> v7.0.0 is a downgrade, even though both new tags beat the last old one
+    resolve = tags({("actions/checkout", "v7.0.0"): NEW, ("actions/checkout", "v6.0.1"): NEW})
+    assert classify_pr(pr(), [{"filename": WF, "patch": two}], resolve)["risk"] == "high"
+
+
+def test_version_order_is_numeric_not_textual() -> None:
+    ten = f"-      - uses: actions/checkout@{OLD} # v7.9\n+      - uses: actions/checkout@{NEW} # v7.10"
+    resolve = tags({("actions/checkout", "v7.10"): NEW})
+    assert classify_pr(pr(), [{"filename": WF, "patch": ten}], resolve)["risk"] == "standard"
+
+
+class FakeApi:
+    """gh_api stand-in: the PR (twice, so the head can move), its files and comments; records statuses."""
+
+    def __init__(self, heads: list[str], comments: list[dict[str, Any]]) -> None:
+        self.heads, self.comments, self.statuses = list(heads), comments, []
+
+    def __call__(self, path: str, *args: str, paginate: bool = False, token: str | None = None) -> Any:
+        if path.endswith("/files"):
+            return [{"filename": "src/tradingbot/risk/limits.py", "patch": "+x"}]
+        if path.endswith("/comments") and "-X" not in args:
+            return self.comments
+        if "/statuses/" in path:
+            self.statuses.append((path.rsplit("/", 1)[1], args))
+            return {}
+        if path.endswith("/comments"):
+            return {}
+        head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
+        return {"head": {"sha": head}, "state": "open", "user": {"login": "someone"}, "changed_files": 1}
+
+
+def run_main(monkeypatch: Any, api: FakeApi) -> None:
+    monkeypatch.setenv("STATUS_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR", "1")
+    monkeypatch.setenv("APPROVER", OWNER)
+    monkeypatch.setattr(risk_gate, "gh_api", api)
+    assert risk_gate.main() == 0
+
+
+def test_an_approval_counts_when_the_head_stayed_put(monkeypatch: Any) -> None:
+    api = FakeApi([SHA, SHA], [comment()])
+    run_main(monkeypatch, api)
+    assert [s for s, _ in api.statuses] == [SHA]
+    assert "state=success" in api.statuses[0][1]
+
+
+def test_no_status_is_set_when_the_head_moved_during_the_check(monkeypatch: Any) -> None:
+    # approved SHA A; a new commit lands while files and comments are read: A must not pass
+    moved = "1111111111111111111111111111111111111111"
+    api = FakeApi([SHA, moved], [comment()])
+    run_main(monkeypatch, api)
+    assert api.statuses == []  # the push's own run decides for the new head

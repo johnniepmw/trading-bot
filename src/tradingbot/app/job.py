@@ -74,6 +74,7 @@ class Wiring:
     local_store_dir: Path | None
     execution: str
     version: str
+    fake_now: datetime | None = None
 
 
 def wiring_from(env: Mapping[str, str]) -> Wiring:
@@ -105,7 +106,24 @@ def wiring_from(env: Mapping[str, str]) -> Wiring:
         local_store_dir=Path(local) if local else None,
         execution=env.get("CLOUD_RUN_EXECUTION") or "local",
         version=env.get("APP_VERSION", "dev"),
+        fake_now=_fake_now(env, app_env),
     )
+
+
+def _fake_now(env: Mapping[str, str], app_env: str) -> datetime | None:
+    """`FAKE_NOW` fixes the clock for local and test runs (e2e on any day); refused elsewhere."""
+    raw = env.get("FAKE_NOW")
+    if not raw:
+        return None
+    if app_env not in {"local", "test"}:
+        raise JobConfigError("FAKE_NOW is for local and test runs only")
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError as error:
+        raise JobConfigError("FAKE_NOW must be an ISO date-time in UTC") from error
+    if when.utcoffset() != timedelta(0):
+        raise JobConfigError("FAKE_NOW must be an ISO date-time in UTC")
+    return when.astimezone(UTC)
 
 
 def check_prod_ready(wiring: Wiring, config: BotConfig) -> None:
@@ -389,5 +407,6 @@ class Job:
 
 def build_job(env: Mapping[str, str], flags: Flags, clock: Callable[[], datetime] | None = None) -> Job:
     wiring = wiring_from(env)
-    now = clock or (lambda: datetime.now(UTC))
+    fixed = wiring.fake_now
+    now = clock or ((lambda: fixed) if fixed is not None else (lambda: datetime.now(UTC)))
     return Job(wiring=wiring, config=load_config(), store=build_store(wiring, now), flags=flags, clock=now)

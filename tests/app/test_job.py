@@ -516,3 +516,27 @@ def test_no_calendar_warning_while_far_from_the_end(set_up: Path, caplog: pytest
     with caplog.at_level(logging.WARNING):
         job_at(set_up, datetime(2026, 11, 30, 7, 15, tzinfo=UTC)).run()  # a Monday, 13 months out
     assert not [r for r in caplog.records if getattr(r, "alert", None) == "calendar_ending"]
+
+
+@pytest.mark.parametrize("app_env", ["staging", "prod"])
+def test_a_fake_clock_is_refused_outside_local_and_test(app_env: str) -> None:
+    env = {
+        "APP_ENV": app_env,
+        "LEDGER_BUCKET": f"p-ledger-{app_env}",
+        "LOCK_BUCKET": f"p-locks-{app_env}",
+        "PAUSE_BUCKET": f"p-pause-{app_env}",
+        "FAKE_NOW": "2026-12-01T07:15:00+00:00",
+    }
+    with pytest.raises(JobConfigError, match="FAKE_NOW"):
+        wiring_from(env)
+
+
+def test_a_fake_clock_drives_a_local_run(tmp_path: Path) -> None:
+    env = env_for(tmp_path, FAKE_NOW="2026-12-01T07:15:00+00:00")
+    assert build_job(env, build_flags(env)).clock() == RUN_DAY
+
+
+@pytest.mark.parametrize("value", ["tomorrow", "2026-12-01T07:15:00"])  # unreadable, or not UTC
+def test_a_bad_fake_clock_is_refused(tmp_path: Path, value: str) -> None:
+    with pytest.raises(JobConfigError, match="FAKE_NOW"):
+        wiring_from(env_for(tmp_path, FAKE_NOW=value))
