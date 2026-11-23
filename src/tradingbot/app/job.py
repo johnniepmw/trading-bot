@@ -29,6 +29,7 @@ from pathlib import Path
 
 from tradingbot.app.calendar import CalendarError, TradingCalendar
 from tradingbot.app.cycle import CycleConfig, dry_run_cycle, run_cycle
+from tradingbot.app.daily_email import EmailError, compose, glance_input, read_sender, send
 from tradingbot.app.eodhd import EodhdHistory, read_key
 from tradingbot.app.flags import Flags
 from tradingbot.app.local_store import LocalObjectStore
@@ -53,6 +54,7 @@ from tradingbot.data.prices import DataError, PriceHistory
 from tradingbot.data.synthetic import SyntheticHistory, synthetic_close
 from tradingbot.domain.market import price_money
 from tradingbot.domain.money import Currency, Money
+from tradingbot.ledger.store import Ledger
 from tradingbot.risk.limits import Limits
 
 log = logging.getLogger(__name__)
@@ -81,6 +83,7 @@ class Wiring:
     execution: str
     version: str
     fake_now: datetime | None = None
+    email_to: str | None = None  # the daily email's recipient (EMAIL_TO, set by OpenTofu)
 
 
 def wiring_from(env: Mapping[str, str]) -> Wiring:
@@ -113,6 +116,7 @@ def wiring_from(env: Mapping[str, str]) -> Wiring:
         execution=env.get("CLOUD_RUN_EXECUTION") or "local",
         version=env.get("APP_VERSION", "dev"),
         fake_now=_fake_now(env, app_env),
+        email_to=env.get("EMAIL_TO") or None,
     )
 
 
@@ -198,6 +202,10 @@ class FakeAccount:
         self._generation = self._store.write(
             self._bucket, FAKE_ACCOUNT_OBJECT, body, if_generation_match=self._generation
         ).generation
+
+
+def _email_failed(error: Exception) -> None:
+    log.warning("daily email not sent: %s: %s", type(error).__name__, error, extra={"alert": "email_failed"})
 
 
 @dataclass(frozen=True)
@@ -310,10 +318,12 @@ class Job:
             except LedgerStorageError as error:
                 log.error("cycle stopped: %s", error)
                 return EXIT_STOPPED
+            outbox: list[tuple[str, str]] = []
             try:
-                return self._run_locked(remote, run_id, signal_day, now)
+                return self._run_locked(remote, run_id, signal_day, now, outbox)
             finally:
                 remote.release()
+                self._deliver(outbox)  # after the lock: a slow mail server can't leave it stale
 
     def _warn_if_calendar_ends_soon(self, today: date) -> None:
         """Weekly (Mondays) once the holiday list has under 60 days left: past it, runs stop."""
@@ -326,12 +336,24 @@ class Job:
                 extra={"alert": "calendar_ending"},
             )
 
-    def _run_locked(self, remote: RemoteLedger, run_id: str, signal_day: date, now: datetime) -> int:
+    def _run_locked(
+        self,
+        remote: RemoteLedger,
+        run_id: str,
+        signal_day: date,
+        now: datetime,
+        outbox: list[tuple[str, str]],
+    ) -> int:
         try:
             ledger = remote.open()
-            broker = self.broker()
-        except (LedgerStorageError, BrokerError, OSError, ValueError) as error:
+        except (LedgerStorageError, OSError, ValueError) as error:
             log.error("cycle stopped: %s", error)
+            return EXIT_STOPPED
+        try:
+            broker = self.broker()
+        except (BrokerError, OSError, ValueError) as error:
+            log.error("cycle stopped: %s", error)
+            self._compose_daily_email(ledger, run_id, now, outbox, stopped=f"broker unavailable: {error}")
             return EXIT_STOPPED
 
         pause = PauseRequests(self.store, self.wiring.pause_bucket)
@@ -354,8 +376,48 @@ class Job:
         )
         if report.stopped is None:
             log.info("run completed: %d order(s) sent", report.sent)
-            return EXIT_OK
-        return EXIT_STOPPED
+        self._compose_daily_email(ledger, run_id, now, outbox, stopped=report.stopped)
+        return EXIT_OK if report.stopped is None else EXIT_STOPPED
+
+    def _compose_daily_email(
+        self,
+        ledger: Ledger,
+        run_id: str,
+        now: datetime,
+        outbox: list[tuple[str, str]],
+        *,
+        stopped: str | None,
+    ) -> None:
+        """The glance from the ledger, while it is open (daily email spec); `_deliver` sends
+        it once the lock is released. Never changes the run's outcome: any failure is a
+        WARNING the alert policy mails as email_failed."""
+        try:
+            if not self.flags.is_enabled("daily-email"):
+                return
+            facts = glance_input(
+                ledger,
+                run_id,
+                today=now.date(),
+                calendar=self._calendar(),
+                universe=self.config.universe,
+                limits=Limits(**vars(self.config.limits)),
+                now=self.clock(),
+                stopped=stopped,
+            )
+            outbox.append(compose(facts, self.wiring.app_env))
+        except Exception as error:  # noqa: BLE001 - the email must never change the run
+            _email_failed(error)
+
+    def _deliver(self, outbox: list[tuple[str, str]]) -> None:
+        for subject, body in outbox:
+            try:
+                if self.wiring.email_to is None:
+                    raise EmailError("EMAIL_TO is not set")
+                send(read_sender(), self.wiring.email_to, subject, body)
+            except Exception as error:  # noqa: BLE001 - the email must never change the run
+                _email_failed(error)
+                continue
+            log.info("daily email sent")
 
     def _dry_run(self, *, deploy_check: bool) -> int:
         check_prod_ready(self.wiring, self.config)

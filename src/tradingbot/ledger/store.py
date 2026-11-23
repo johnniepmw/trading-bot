@@ -404,6 +404,13 @@ class Ledger:
         ).fetchone()
         return None if row is None else Money(Decimal(row[0]), Currency.GBP)
 
+    def equity_on(self, day: date) -> Money | None:
+        """The equity recorded for `day` itself (the latest run's), if any."""
+        row = self._conn.execute(
+            "SELECT amount FROM daily_equity WHERE day = ?", (day.isoformat(),)
+        ).fetchone()
+        return None if row is None else Money(Decimal(row[0]), Currency.GBP)
+
     # --- month-end signals -----------------------------------------------------------
     def store_verified_closes(self, signal_day: date, closes: Mapping[Instrument, Money]) -> None:
         """The signal-day closes that passed the cross-check against the broker's prices."""
@@ -456,6 +463,11 @@ class Ledger:
         if equity.currency is not Currency.GBP:
             raise LedgerError("the high-water mark is in GBP")
         self._conn.execute("INSERT INTO marks (amount, at) VALUES (?, ?)", (str(equity.amount), _utc(at)))
+
+    def first_high_water_mark(self) -> Money | None:
+        """The mark setup seeded (the account's starting equity), if any."""
+        row = self._conn.execute("SELECT amount FROM marks ORDER BY id LIMIT 1").fetchone()
+        return None if row is None else Money(Decimal(row[0]), Currency.GBP)
 
     def high_water_mark(self) -> Money | None:
         """The current mark, or None if never recorded. A mark lower than any earlier one

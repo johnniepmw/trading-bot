@@ -174,3 +174,10 @@ def test_both_environments_mount_the_daily_email_sender() -> None:
 def test_the_daily_email_goes_to_the_bootstraps_alert_address() -> None:
     block = resource("google_cloud_run_v2_job", "this")
     assert re.search(r'name\s*=\s*"EMAIL_TO"[^\n]*\n\s*value\s*=\s*var\.alert_email', block)
+
+
+def test_the_owners_address_is_never_printed_by_a_plan() -> None:
+    # Actions logs are public (ADR-0014): tofu masks sensitive values in plans and applies
+    variables = (MODULE / "variables.tf").read_text()
+    block = variables[variables.index('variable "alert_email"') :].split("\n}", 1)[0]
+    assert re.search(r"sensitive\s*=\s*true", block)

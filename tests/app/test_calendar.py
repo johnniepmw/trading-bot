@@ -88,3 +88,16 @@ def test_the_bundled_calendar_picks_the_signal_day(today: date, signal_day: date
 def test_the_bundled_calendar_refuses_2028() -> None:
     with pytest.raises(CalendarError):
         BUNDLED.signal_day(date(2028, 1, 4))
+
+
+@pytest.mark.parametrize(
+    ("today", "expected"),
+    [
+        (date(2026, 11, 23), date(2026, 11, 30)),
+        (date(2026, 11, 30), date(2026, 11, 30)),
+        (date(2026, 12, 1), date(2026, 12, 31)),
+        (date(2026, 12, 31), date(2026, 12, 31)),
+    ],
+)
+def test_the_next_month_end(today: date, expected: date) -> None:
+    assert BUNDLED.next_month_end(today) == expected

@@ -11,7 +11,8 @@ output "app_name" {
 }
 
 output "alert_email" {
-  value = var.alert_email
+  value     = var.alert_email
+  sensitive = true # never printed in logs (the repo is public)
 }
 
 output "state_bucket" {

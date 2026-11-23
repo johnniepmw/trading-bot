@@ -63,4 +63,6 @@ src/tradingbot/execution/**
 src/tradingbot/ledger/**
 src/tradingbot/config/**
 src/tradingbot/app/**
+# What leaves for the owner's mailbox (the daily email's body: no links, no figures in URLs)
+src/tradingbot/report/**
 flags.json

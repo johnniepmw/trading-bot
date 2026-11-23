@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -247,3 +247,17 @@ def test_a_failed_fill_write_leaves_the_intent_open(ledger: Ledger) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         ledger.settle(intent, IntentState.FILLED, "o-1", Decimal("1.5"), average_price=gbp("100"))
     assert [i.intent_id for i in ledger.open_intents()] == [intent]  # state and fill together, or neither
+
+
+# --- reads for the daily email -------------------------------------------------------
+def test_equity_on_a_day_is_that_days_record(ledger: Ledger) -> None:
+    ledger.record_equity(NOW.date(), gbp("1010"))
+    assert ledger.equity_on(NOW.date()) == gbp("1010")
+    assert ledger.equity_on(date(2026, 11, 22)) is None
+
+
+def test_the_first_mark_is_the_seeded_one(ledger: Ledger) -> None:
+    assert ledger.first_high_water_mark() is None
+    ledger.seed_high_water_mark(gbp("1000"), NOW)
+    ledger.update_high_water_mark(gbp("1100"), NOW)
+    assert ledger.first_high_water_mark() == gbp("1000")

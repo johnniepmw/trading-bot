@@ -92,8 +92,9 @@ variable "soft_delete_days" {
 }
 
 variable "alert_email" {
-  description = "The owner's email for alerts (from the bootstrap)."
+  description = "The owner's email for alerts and the daily email (from the bootstrap). Sensitive, so plans and applies in the public repo's Actions logs never print it."
   type        = string
+  sensitive   = true
 }
 
 variable "push_channels" {
