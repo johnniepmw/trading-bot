@@ -21,12 +21,19 @@ from decimal import Decimal
 from types import MappingProxyType
 
 from tradingbot.app.alerts import drawdown_crossings
-from tradingbot.brokers.port import Broker, BrokerReader, NoQuoteError
-from tradingbot.data.prices import PriceHistory, validate_history
+from tradingbot.brokers.port import Broker, BrokerError, BrokerReader, NoQuoteError
+from tradingbot.data.prices import DataError, PriceHistory, validate_history
 from tradingbot.domain.market import BENCHMARK_ONLY, Bar, Instrument, base_ticker, price_money
 from tradingbot.domain.money import Currency, Money
 from tradingbot.execution.executor import execute, reconcile
-from tradingbot.ledger.store import DecisionRecord, Ledger, PositionRecord, PreviewRecord, SignalRecord
+from tradingbot.ledger.store import (
+    DecisionRecord,
+    Ledger,
+    LedgerError,
+    PositionRecord,
+    PreviewRecord,
+    SignalRecord,
+)
 from tradingbot.portfolio.weights import daily_returns, orders_for, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
 from tradingbot.risk.review import AccountState, Decision, review
@@ -118,6 +125,13 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
 class DryRunReport:
     would_send: int  # orders the risk layer approved, which a run would send now
     stopped: str | None
+    business: bool = False  # stopped for a reason the world gave (BUSINESS_STOPS), not a bug
+
+
+# Stops the account or the outside world causes (a drawdown, stale or missing data, the
+# broker, the ledger's state), as opposed to a bug in the code. A deploy's check accepts these
+# (ADR-0019 amendment): the image works, the account is deliberately stopped.
+BUSINESS_STOPS: tuple[type[Exception], ...] = (CycleStopError, BrokerError, DataError, LedgerError)
 
 
 def dry_run_cycle(  # noqa: PLR0913 - as run_cycle, minus sending
@@ -140,7 +154,7 @@ def dry_run_cycle(  # noqa: PLR0913 - as run_cycle, minus sending
     except Exception as error:  # noqa: BLE001 - every stop is reported, never raised
         reason = str(error) if isinstance(error, CycleStopError) else f"{type(error).__name__}: {error}"
         log.warning("dry run stopped: %s", reason)
-        return DryRunReport(0, reason)
+        return DryRunReport(0, reason, business=isinstance(error, BUSINESS_STOPS))
     would_send = sum(d.approved is not None for d in decisions or [])
     log.info("dry run: %d order(s) would be sent", would_send)
     return DryRunReport(would_send, None)

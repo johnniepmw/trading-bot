@@ -96,3 +96,23 @@ def test_setup_accepts_reset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("tradingbot.app.__main__.build_job", lambda env, flags: FakeJob())
     assert run(["setup", "--equity", "1000", "--reset"], env={})[0] == 0
     assert seen == [("1000", True)]
+
+
+def test_run_passes_the_deploy_check_to_the_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[bool] = []
+
+    class FakeJob:
+        def dry_run(self, *, deploy_check: bool = False) -> int:
+            seen.append(deploy_check)
+            return 0
+
+    monkeypatch.setattr("tradingbot.app.__main__.build_job", lambda env, flags: FakeJob())
+    assert run(["run", "--dry-run", "--deploy-check"], env={})[0] == 0
+    assert seen == [True]
+
+
+def test_the_deploy_check_needs_a_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tradingbot.app.__main__.build_job", lambda env, flags: object())
+    with pytest.raises(SystemExit) as exc:
+        run(["run", "--deploy-check"], env={})
+    assert exc.value.code == 2

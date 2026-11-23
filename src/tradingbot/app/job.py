@@ -48,7 +48,7 @@ from tradingbot.brokers.trading212.client import Trading212Client, read_credenti
 from tradingbot.brokers.trading212.client import urllib_transport as broker_transport
 from tradingbot.config.load import load_config
 from tradingbot.config.types import BotConfig
-from tradingbot.data.prices import PriceHistory
+from tradingbot.data.prices import DataError, PriceHistory
 from tradingbot.data.synthetic import SyntheticHistory, synthetic_close
 from tradingbot.domain.market import price_money
 from tradingbot.domain.money import Currency, Money
@@ -259,10 +259,13 @@ class Job:
             log.exception("cycle stopped: %s: %s", type(error).__name__, error)
             return EXIT_STOPPED
 
-    def dry_run(self) -> int:
-        """The cycle up to sending, on a scratch copy: no lock, no upload, no sending (AC6)."""
+    def dry_run(self, *, deploy_check: bool = False) -> int:
+        """The cycle up to sending, on a scratch copy: no lock, no upload, no sending (AC6).
+        Any stop exits 1, except with `deploy_check` (the deploy pipeline's prod check): a
+        business stop then exits 0, so a deploy goes ahead while the account is deliberately
+        stopped, and only an unexpected error (a bug in the image) fails it (ADR-0019)."""
         try:
-            return self._dry_run()
+            return self._dry_run(deploy_check=deploy_check)
         except JobConfigError:
             raise
         except Exception as error:  # noqa: BLE001 - reported, never an alert (the real run alerts)
@@ -353,8 +356,7 @@ class Job:
             return EXIT_OK
         return EXIT_STOPPED
 
-    def _dry_run(self) -> int:
-        """The cycle up to sending, on a scratch copy: no lock, no upload, no sending (AC6)."""
+    def _dry_run(self, *, deploy_check: bool) -> int:
         check_prod_ready(self.wiring, self.config)
         now = self.clock()
         run_id = f"{self.wiring.execution}-dry-{uuid.uuid4().hex[:12]}"
@@ -363,15 +365,16 @@ class Job:
                 calendar = self._calendar()
                 signal_day = calendar.signal_day(now.date())
                 reader = read_only(self.broker())
+                history = self.history()
                 ledger = self._remote(Path(scratch)).open_scratch()
-            except (CalendarError, LedgerStorageError, BrokerError, OSError, ValueError) as error:
+            except (CalendarError, LedgerStorageError, BrokerError, DataError, OSError, ValueError) as error:
                 log.warning("dry run stopped: %s", error)
-                return EXIT_STOPPED
+                return self._business_stop(deploy_check)
             try:
                 report = dry_run_cycle(
                     broker=reader,
                     ledger=ledger,
-                    history=self.history(),
+                    history=history,
                     config=self._cycle_config(),
                     signal_day=signal_day,
                     clock=self.clock,
@@ -379,7 +382,16 @@ class Job:
                 )
             finally:
                 ledger.close()
-        return EXIT_OK if report.stopped is None else EXIT_STOPPED
+        if report.stopped is None:
+            return EXIT_OK
+        return self._business_stop(deploy_check) if report.business else EXIT_STOPPED
+
+    @staticmethod
+    def _business_stop(deploy_check: bool) -> int:
+        if deploy_check:
+            log.info("deploy check: a business stop, not a fault in this image; the deploy may go ahead")
+            return EXIT_OK
+        return EXIT_STOPPED
 
     def _setup(self, equity: str, *, reset: bool) -> int:
         """The owner's ledger setup (AC9): create the ledger, seed the high-water mark from the

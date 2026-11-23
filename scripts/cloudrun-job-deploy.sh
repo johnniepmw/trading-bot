@@ -63,7 +63,7 @@ trap 'exit 1' INT TERM
 gc run jobs update "$job" --region "$region" --image "$image"
 
 check_args="smoke"
-[ "$env" = prod ] && check_args="run,--dry-run"
+[ "$env" = prod ] && check_args="run,--dry-run,--deploy-check"  # a business stop passes (ADR-0019)
 if ! timeout "$CHECK_TIMEOUT" gcloud run jobs execute "$job" --region "$region" --args "$check_args" --wait \
     --project "$project" --quiet; then
   echo "deploy: the check execution failed or timed out" >&2

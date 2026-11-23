@@ -22,6 +22,10 @@ Then each deploy:
 workflow → `drill: true`. It deploys a deliberately broken copy to staging and passes only
 if staging ends up back on the good image. Never touches prod.
 
-**Before `DEPLOY_PROD=true`** (Phase 2 plan, carried items): decide whether a prod dry run
-that stops for a business reason (drawdown stop, stale data) should fail a deploy, and
-split the window check into its own step so a refusal doesn't open an incident issue.
+**Business stops** (ADR-0019 amendment): prod's check is `run --dry-run --deploy-check`. A
+dry run that stops for a business reason (no ledger yet, drawdown stop, stale data, broker
+down) passes it ("deploy check: a business stop" in the logs), so fixes can still be
+deployed. Only a fault in the image fails the deploy and rolls it back.
+
+**Window refusal** (exit 75: a run is executing or due within 30 minutes): the job fails with
+a warning and nothing changes; no incident issue. Re-run the `production` job later.

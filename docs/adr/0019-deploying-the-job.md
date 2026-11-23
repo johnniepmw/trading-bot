@@ -61,6 +61,19 @@ Option 2.
   timeout, retries, mounts, the wiring env vars). `APP_VERSION` is baked into the image at
   build time.
 
+## Amendment (2026-11-23): business stops pass the prod check; window refusals aren't incidents
+- Prod's check execution is `run --dry-run --deploy-check`. A dry run that stops for a reason
+  the account or the outside world gives (`cycle.BUSINESS_STOPS`: a cycle stop such as the
+  drawdown stop, a broker or data error, the ledger's state, a missing ledger before setup,
+  calendar or wiring states the job reports as "dry run stopped") exits 0 there and logs
+  "deploy check: a business stop". An unexpected exception (a bug in the image) still exits
+  1, so the deploy goes back to the previous image. Without the flag, a dry run still exits
+  1 on any stop (AC6), so an owner's own dry run reports a stop as a failure.
+- Why: a fix-forward must be deployable while prod is deliberately stopped (the first prod
+  deploy runs before the ledger exists, and a drawdown stop may last weeks).
+- A window refusal (exit 75: an execution running or the next run within 30 minutes) fails
+  the job with a warning but opens no incident issue; nothing changed. Re-run it later.
+
 ## Consequences
 - Good:
   - A broken image never stays on a job: staging catches start-up failures, and prod's

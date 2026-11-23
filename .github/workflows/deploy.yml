@@ -137,15 +137,25 @@ jobs:
           service_account: ${{ vars.SA_DEPLOYER }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       - name: Deploy to the prod job (window, dry-run execution, rollback on failure)
+        id: deploy
         env:
           IMAGE: ${{ needs.build.outputs.image }}
-        run: bash scripts/cloudrun-job-deploy.sh prod "$IMAGE"
+        run: |
+          set +e
+          bash scripts/cloudrun-job-deploy.sh prod "$IMAGE"
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = 75 ]; then
+            echo "::warning::Prod deploy refused by the window (a run is due soon or running); nothing changed. Re-run this job later."
+          fi
+          exit "$code"
       - name: Open an incident issue on failure
-        if: failure()
+        # a window refusal (75) changed nothing: not an incident
+        if: failure() && steps.deploy.outputs.code != '75'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh issue create --label incident \
             --title "Production deploy of ${GITHUB_SHA::7} failed" \
-            --body "The prod deploy failed for ${GITHUB_SHA}: refused by the deploy window, or its dry-run execution failed and the job went back to its previous image. Run: ${RUN_URL}. Execution logs are in Cloud Logging only (ADR-0014). Next step: the incident skill."
+            --body "The prod deploy failed for ${GITHUB_SHA}: its dry-run execution failed (a fault in the image, not a business stop) and the job went back to its previous image. Run: ${RUN_URL}. Execution logs are in Cloud Logging only (ADR-0014). Next step: the incident skill."
