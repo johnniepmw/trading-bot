@@ -245,6 +245,16 @@ resource "google_cloud_run_v2_job" "this" {
   ]
 }
 
+# The deploy identity updates this job's image and runs check executions here (ADR-0019);
+# its project-wide Cloud Run role narrows to read-only once this exists (bootstrap).
+resource "google_cloud_run_v2_job_iam_member" "deployer" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_job.this.name
+  role     = "roles/run.developer"
+  member   = "serviceAccount:${var.deployer_sa}"
+}
+
 # ---------- the schedule (created paused; only the owner turns it on) ------------------------
 resource "google_cloud_run_v2_job_iam_member" "scheduler_runs" {
   project  = var.project_id
