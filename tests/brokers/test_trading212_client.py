@@ -128,6 +128,11 @@ def test_a_server_error_or_request_timeout_leaves_the_outcome_unknown(status: in
     assert "987" not in str(error.value)
 
 
+def test_a_redirect_on_an_order_leaves_the_outcome_unknown() -> None:
+    with pytest.raises(BrokerTimeoutError, match="redirect refused"):
+        client(Recorder((303, b""))).post("/equity/orders/market", {}, "market")
+
+
 def test_a_redirect_is_refused() -> None:
     with pytest.raises(BrokerError, match="redirect refused"):
         client(Recorder((302, b""))).get("/equity/positions", "positions")

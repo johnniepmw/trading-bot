@@ -114,9 +114,10 @@ def test_a_non_positive_price_is_refused() -> None:
         broker(Canned({"/equity/positions": [position(currentPrice=0)]})).quote(VWRP)
 
 
-def test_an_order_id_must_be_a_number() -> None:
+@pytest.mark.parametrize("order_id", ["../account", "١٢", "", "1" * 21])
+def test_an_order_id_must_be_a_number(order_id: str) -> None:
     with pytest.raises(BrokerError, match="number"):
-        broker(Canned({})).order("../account")
+        broker(Canned({})).order(order_id)
 
 
 def test_a_finished_order_is_found_in_the_history() -> None:
@@ -154,9 +155,9 @@ def test_a_quantity_finer_than_the_step_is_never_sent() -> None:
     assert canned.sent == []
 
 
-@pytest.mark.parametrize("reply", [{}, {"id": True}, [1]])
+@pytest.mark.parametrize("reply", [{}, {"id": True}, [1], {"id": "abc"}, {"id": "١٢"}])
 def test_an_accepted_order_without_an_id_is_an_unknown_outcome(reply: object) -> None:
-    with pytest.raises(BrokerTimeoutError, match="no order ID"):
+    with pytest.raises(BrokerTimeoutError, match="no usable order ID"):
         broker(Canned({"/equity/orders/market": reply})).place(
             ApprovedOrder(Order(VWRP, Side.BUY, Decimal(1)))
         )

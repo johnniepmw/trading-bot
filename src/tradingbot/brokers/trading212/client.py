@@ -10,7 +10,7 @@ How failures map onto the broker port:
 - a 4xx other than 408 means the request was refused and nothing happened: `BrokerError`;
 - a timeout, a dropped connection, a 408 or a 5xx leaves the outcome unknown:
   `BrokerTimeoutError` (for an order, it may have been placed);
-- a redirect is refused: `BrokerError`.
+- a redirect is refused: `BrokerError` for a read, an unknown outcome for an order.
 Reads that hit the rate limit (429) wait and try once more; an order that hits it is
 refused (`BrokerError`): Trading 212 rejects it before looking at it.
 """
@@ -175,7 +175,9 @@ class Trading212Client:
             except ValueError as error:
                 raise BrokerTimeoutError(f"{where}: HTTP {status} with a body that is not JSON") from error
         if 300 <= status < 400:  # noqa: PLR2004 - HTTP status
-            raise BrokerError(f"{where}: redirect refused (HTTP {status})")
+            # not followed; for an order it doesn't prove nothing was placed
+            refused = BrokerTimeoutError if method == "POST" else BrokerError
+            raise refused(f"{where}: redirect refused (HTTP {status})")
         if status == 408 or status >= 500:  # noqa: PLR2004 - HTTP status
             raise BrokerTimeoutError(f"{where}: HTTP {status}{_code(body)}")
         if status == 404:  # noqa: PLR2004 - HTTP status

@@ -13,6 +13,7 @@ Trading 212 prices only held positions, so `quote` for anything else is a `NoQuo
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from decimal import Decimal
@@ -31,6 +32,7 @@ from tradingbot.domain.approval import ApprovedOrder
 from tradingbot.domain.market import Instrument, Position, Side
 from tradingbot.domain.money import Currency, Money
 
+_ORDER_ID = re.compile(r"[0-9]{1,20}")
 STEP = Decimal("0.001")  # finer quantities are refused (owner's demo run, 2026-11-23)
 
 
@@ -90,7 +92,7 @@ class Trading212Broker:
         raise NoQuoteError(f"no Trading 212 price for {instrument.ticker}: not held")
 
     def order(self, order_id: str) -> BrokerOrder:
-        if not order_id.isdigit():
+        if not _ORDER_ID.fullmatch(order_id):
             raise BrokerError("a Trading 212 order ID is a number")
         try:
             parsed = parse_order(self._client.get(f"/equity/orders/{order_id}", "order"), self._tickers)
@@ -113,6 +115,10 @@ class Trading212Broker:
         body = {"ticker": self._tickers.broker(o.instrument), "quantity": quantity, "extendedHours": False}
         reply = self._client.post("/equity/orders/market", body, "market")
         order_id = reply.get("id") if isinstance(reply, dict) else None
-        if isinstance(order_id, bool) or not isinstance(order_id, int | str):
-            raise BrokerTimeoutError("Trading 212 accepted the order but sent no order ID")
+        if (
+            isinstance(order_id, bool)
+            or not isinstance(order_id, int | str)
+            or not _ORDER_ID.fullmatch(str(order_id))
+        ):
+            raise BrokerTimeoutError("Trading 212 accepted the order but sent no usable order ID")
         return str(order_id)

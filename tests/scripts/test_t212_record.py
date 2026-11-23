@@ -18,7 +18,7 @@ SCRIPT = ROOT / "scripts" / "t212_record.py"
 
 
 def test_numbers_and_free_text_are_hidden() -> None:
-    raw = {"id": 58500460886, "cash": {"availableToTrade": 987.65}, "name": "Vanguard", "ok": True}
+    raw = {"id": 1234567, "cash": {"availableToTrade": 987.65}, "name": "Vanguard", "ok": True}
     assert shape(raw) == {
         "id": "<number>",
         "cash": {"availableToTrade": "<number>"},
