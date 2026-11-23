@@ -32,7 +32,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from collections.abc import Callable
 
-from risk_classify import DEFAULT_PATTERNS, DEPENDABOT, added_pins, classify, load_patterns
+from risk_classify import (
+    DEFAULT_PATTERNS,
+    DEPENDABOT,
+    added_pins,
+    classify,
+    load_patterns,
+    removed_pins,
+    version,
+)
 
 CONTEXT = "risk-gate"
 # The full 40-hex head SHA, matched exactly: a 7-char prefix can be brute-forced in seconds.
@@ -117,7 +125,12 @@ def classify_pr(
         return result
     if result["risk"] == "standard" and author in DEPENDABOT and result["matches"]:
         for m in result["matches"]:
+            old_tags = {action: tag for action, _, tag in removed_pins(patches.get(m["path"]))}
             for action, sha, tag in added_pins(patches.get(m["path"])):
+                if action in old_tags and version(tag) <= version(old_tags[action]):
+                    result["risk"] = "high"
+                    result["reason"] = f"{action} {tag} is not newer than {old_tags[action]}"
+                    return result
                 if resolve(action, tag) != sha:
                     result["risk"] = "high"
                     result["reason"] = f"{action}@{sha[:12]} is not tag {tag} of that repo"
@@ -160,11 +173,16 @@ def main() -> int:
         return 0
 
     result = classify_pr(pr, gh_api(f"repos/{repo}/pulls/{pr_number}/files", paginate=True))
+    comments = gh_api(f"repos/{repo}/issues/{pr_number}/comments", paginate=True)
+    # A push between reading the head and reading files and comments must not let this run
+    # pass the old SHA's result onto the new head, or the new head's onto the old: stop, and
+    # let the push's own run decide.
+    if gh_api(f"repos/{repo}/pulls/{pr_number}")["head"]["sha"] != sha:  # type: ignore[index]
+        print("risk-gate: the PR head moved during the check; the new push's run decides")
+        return 0
     if result["risk"] == "standard":
         set_status(repo, sha, "success", f"Standard risk: {result['reason']}")
         return 0
-
-    comments = gh_api(f"repos/{repo}/issues/{pr_number}/comments", paginate=True)
     if find_approval(comments, approver, sha):
         set_status(repo, sha, "success", f"High risk, approved by {approver} for {sha[:7]}")
         return 0

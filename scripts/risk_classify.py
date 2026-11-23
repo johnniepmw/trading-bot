@@ -42,6 +42,21 @@ def added_pins(patch: str | None) -> list[tuple[str, str, str]]:
     return pins
 
 
+def removed_pins(patch: str | None) -> list[tuple[str, str, str]]:
+    """(action, sha, tag) for each removed pinned `uses:` line of a patch."""
+    pins = []
+    for line in (patch or "").splitlines():
+        m = PINNED_USES.match(line)
+        if m and line.startswith("-"):
+            pins.append((m.group(1), m.group(2), m.group(3)))
+    return pins
+
+
+def version(tag: str) -> tuple[int, ...]:
+    """`v7.10.1` -> (7, 10, 1), compared numerically."""
+    return tuple(int(part) for part in tag.lstrip("v").split("."))
+
+
 def is_pin_bump(patch: str | None) -> bool:
     """True if every added or removed line of a unified diff hunk is a pinned `uses:` line,
     and the same actions (in order) are removed as added. A missing or empty patch is False."""

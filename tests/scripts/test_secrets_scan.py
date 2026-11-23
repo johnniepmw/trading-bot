@@ -71,14 +71,14 @@ def args(tmp_path: Path) -> list[str]:
 def test_default_range_is_head(repo: Path, tmp_path: Path) -> None:
     proc = run(repo, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    assert "--log-opts=HEAD" in args(tmp_path)
+    assert "--log-opts=-m HEAD" in args(tmp_path)  # -m: merge commits scanned too
     assert not any("--all" in a for a in args(tmp_path))
 
 
 def test_range_is_passed_through(repo: Path, tmp_path: Path) -> None:
     proc = run(repo, tmp_path, SECRETS_SCAN_RANGE="HEAD~0..HEAD")
     assert proc.returncode == 0, proc.stderr
-    assert "--log-opts=HEAD~0..HEAD" in args(tmp_path)
+    assert "--log-opts=-m HEAD~0..HEAD" in args(tmp_path)
 
 
 def test_unresolvable_range_fails_closed(repo: Path, tmp_path: Path) -> None:

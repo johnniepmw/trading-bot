@@ -27,4 +27,5 @@ if ! git rev-list --quiet "$range" -- >/dev/null; then
 fi
 
 echo "secrets-scan: scanning $range"
-exec gitleaks git --no-banner --redact --config .gitleaks.toml --log-opts="$range" .
+# -m: also scan what merge commits change, so a secret added only in a merge is caught
+exec gitleaks git --no-banner --redact --config .gitleaks.toml --log-opts="-m $range" .

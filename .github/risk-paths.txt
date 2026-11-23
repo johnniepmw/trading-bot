@@ -31,6 +31,8 @@ pytest.toml
 .pytest.toml
 conftest.py
 tests/risk/**
+# Tests that pin the gates' own behaviour (risk-gate, secret scan, GitHub setup, deploy scripts)
+tests/scripts/**
 # The frozen strategy's pinned backtest result (docs/strategies): changing it needs the owner
 tests/backtest/regression.json
 # The traded universe, data sources and hold-out start date
