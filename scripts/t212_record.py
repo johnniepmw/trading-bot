@@ -259,7 +259,9 @@ class TransactionsOnly:
 
     def call(self, method: str, path: str, bucket: str, body: dict | None = None) -> dict:
         if method != "GET" or body is not None or not path.startswith(LIVE_PATH + "?"):
-            sys.exit(f"Refusing {method} {path.split('?', maxsplit=1)[0]} on the live account: transactions only")
+            sys.exit(
+                f"Refusing {method} {path.split('?', maxsplit=1)[0]} on the live account: transactions only"
+            )
         return self._client.call(method, path, bucket)
 
 
