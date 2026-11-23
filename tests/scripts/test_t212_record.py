@@ -73,3 +73,8 @@ def test_the_order_check_reports_the_recorded_quantity_and_sells_back(mock_api: 
     assert "asked for 0.12345, the order records 0.12345" in res.stdout
     assert "Quantity step: filled 0.12345" in res.stdout
     assert "Sold it back: HTTP 200" in res.stdout
+
+
+def test_the_order_check_shows_the_units_of_prices(mock_api: str) -> None:
+    res = _run(mock_api, "--order", "ISF_EQ")
+    assert "Units: ISF_EQ current price 820.0" in res.stdout

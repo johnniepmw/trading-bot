@@ -6,13 +6,16 @@ by "<string>". Only names the adapter must match are kept as they are: status, t
 currency codes, tickers, error codes and the like. So the output holds no balances,
 quantities, prices or order IDs. With `--order` it also checks the smallest quantity step
 (acceptance test A2): it buys a tiny amount of one fund with five decimal places, prints
-the quantity Trading 212 recorded (that number is ours, not account data), then sells it back.
+the quantity Trading 212 recorded, the fill price, the position's current price and the
+order's value in pounds (all about this one test order and the fund's public price, not
+the account), then sells it back. Use a fund priced in pence (SGLN) to see whether prices
+come back in pence or pounds.
 
 DEMO ACCOUNT ONLY. Uses the same key and secret as phase0_api_check.py:
     read -rs T212_API_KEY && export T212_API_KEY
     read -rs T212_API_SECRET && export T212_API_SECRET
     python3 scripts/t212_record.py                       # read-only
-    python3 scripts/t212_record.py --order VWRPl_EQ      # plus the quantity-step check
+    python3 scripts/t212_record.py --order SGLNl_EQ      # plus the quantity-step check
                                                          # (London market hours only)
 """
 
@@ -112,6 +115,9 @@ def quantity_step(client: Client, ticker: str) -> None:
         if mine and (mine[0]["order"].get("status") not in PENDING):
             show("history item for that order", {"status": hist["status"], "data": mine[0]})
             filled = mine[0]["order"].get("filledQuantity")
+            fill = mine[0].get("fill") or {}
+            value = (fill.get("walletImpact") or {}).get("netValue")
+            print(f"Units: fill price {fill.get('price')}, order value {value} (account currency)")
             break
         time.sleep(2)
     print(f"Quantity step: filled {filled}")
@@ -119,7 +125,14 @@ def quantity_step(client: Client, ticker: str) -> None:
         cres = client.call("DELETE", f"/equity/orders/{oid}", "cancel")
         print(f"Not filled (market closed?): cancel request HTTP {cres['status']}")
         return
-    show("GET /equity/positions while holding it", client.call("GET", "/equity/positions", "positions"))
+    held = client.call("GET", "/equity/positions", "positions")
+    show("GET /equity/positions while holding it", held)
+    for position in held["data"] if isinstance(held["data"], list) else []:
+        if isinstance(position, dict) and ticker in (
+            position.get("ticker"),
+            (position.get("instrument") or {}).get("ticker"),
+        ):
+            print(f"Units: {ticker} current price {position.get('currentPrice')} (the fund's public price)")
     sell = {"ticker": ticker, "quantity": -abs(filled), "extendedHours": False}
     sres = client.call("POST", "/equity/orders/market", "market", sell)
     print(f"\nSold it back: HTTP {sres['status']} (check the demo app shows no {ticker} position)")
