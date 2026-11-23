@@ -38,12 +38,11 @@ incident views (the rest of AC8).
   service agent (no public invoker), so an unsigned request can't reach it. Recorded as a
   possible hardening.
 
-## Owner steps (one-off, before slice 1's infra applies)
-1. Cloud console → Google Auth Platform: create the OAuth consent screen ("External",
-   "Testing", the owner's address as the only test user).
-2. Create an OAuth client (Web application) for IAP and give its ID and secret to IAP's
-   settings (runbook with exact clicks, written with the infra PR).
-3. After the apply: open the staging URL on the phone, sign in, see the glance.
+## Owner steps (one-off, in this order)
+1. Bootstrap PR (the dashboards' identities, the IAP API): `make infra-plan-bootstrap` preview, then `make infra-bootstrap`.
+2. Cloud console: OAuth consent screen (External, Testing, the owner as the only test user) and an OAuth client (Web application) whose redirect URI is `https://iap.googleapis.com/v1/oauth/clientIds/<CLIENT_ID>:handleRedirect` (the owner has done this before for another dashboard).
+3. After the service exists: the owner's `scripts/dashboard-iap.sh <env>` (modelled on the owner's own setup script): `gcloud run services update --iap`, `gcloud iap settings set` with the OAuth client (the secret never enters the repo, state, CI or Secret Manager), the IAP service agent as the only invoker, `roles/iap.httpsResourceAccessor` for the owner only; and it removes any `allUsers` binding.
+4. Staging check on the phone: the owner gets in; another Google account and no sign-in are refused; a direct call to the run.app URL with an ID token is refused.
 
 ## Rollout and rollback
 - Infra PR first (service, identity, IAM, IAP), then the app PR (the `serve` command and
@@ -74,5 +73,6 @@ incident views (the rest of AC8).
 ## Progress log
 
 ## Review
+- Architect, round 1: revise, 10 blocking. Taken: (1) the bootstrap creates the dashboards' identities and enables IAP (owner PR); (2) and (3) IAP settings and the owner's access are set by the owner's own script, never CI or OpenTofu state (the owner's working setup from another project shows IAP on Cloud Run works without an organisation); the staging check includes a direct-call refusal; (4) the dashboard reads the lock bucket too (the reference-mark check), read-only; (5) the glance uses the run's own date, shows a run in progress or one that died; (6) CSP adds `frame-ancestors 'none'; base-uri 'none'`, `X-Frame-Options: DENY`, POSTs fail closed on `Sec-Fetch-Site`/`Origin`; (7) a `pause_requested` alert, create-only write with a unique name and retries, a 303 after the POST, "NOT paused" on failure; (8) the service follows the job's image only after the job's check passes, and a service failure never touches the job; rollback moves both; (9) `serve` is routed before the job's flags and wiring, server in `app/dashboard.py`, HTML in `report/page.py`; (10) an e2e test of the pause flow on a local store. ADR-0020 records the dashboard as a service
 
 ## Outcome
