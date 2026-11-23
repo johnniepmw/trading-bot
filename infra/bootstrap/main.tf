@@ -80,6 +80,16 @@ resource "google_artifact_registry_repository" "images" {
       older_than = "2592000s" # 30 days
     }
   }
+  # The image a deploy replaced is tagged previous-<env> for `ops rollback` (ADR-0019):
+  # keep it however old, so a rollback target is never cleaned up.
+  cleanup_policies {
+    id     = "keep-rollback"
+    action = "KEEP"
+    condition {
+      tag_state    = "TAGGED"
+      tag_prefixes = ["previous-"]
+    }
+  }
   cleanup_policies {
     id     = "keep-recent"
     action = "KEEP"
@@ -148,11 +158,25 @@ resource "google_artifact_registry_repository_iam_member" "push" {
   member     = "serviceAccount:${google_service_account.ci["ci-deployer"].email}"
 }
 
-# Deployer: manage Cloud Run revisions and traffic project-wide (revision listing needs
-# project scope). Acting as each runtime identity is granted per environment.
+# Deployer: read Cloud Run jobs and executions project-wide (listing and waiting need
+# project scope) and cancel an execution its own check left behind. Updating and running a
+# job is granted on each job by the job module (roles/run.developer there), so the deployer
+# can change nothing else in the project. Acting as each runtime identity is granted below.
+resource "google_project_iam_custom_role" "job_deployer_reader" {
+  project = var.project_id
+  role_id = "jobDeployerReader"
+  title   = "Read Cloud Run jobs and executions; cancel executions"
+  permissions = [
+    "run.jobs.get", "run.jobs.list",
+    "run.executions.get", "run.executions.list", "run.executions.cancel",
+    "run.operations.get", "run.operations.list",
+    "run.locations.list",
+  ]
+}
+
 resource "google_project_iam_member" "deployer" {
   project = var.project_id
-  role    = "roles/run.developer"
+  role    = google_project_iam_custom_role.job_deployer_reader.id
   member  = "serviceAccount:${google_service_account.ci["ci-deployer"].email}"
 }
 
