@@ -31,6 +31,7 @@ GOOD = GlanceInput(
     funds_total=7,
     snapshot_checked=True,
     sent_today=0,
+    awaiting_fill=0,
     open_orders=0,
     next_month_end=date(2026, 11, 30),
     in_trend=4,
@@ -61,7 +62,7 @@ def test_the_lines_read_in_pounds_and_percent() -> None:
         "Drawdown: 0.0% (£0.00) below the peak of £1,010.00",
         "Since setup: +£10.00 (+1.0%) on £1,000.00",
         "Holdings: 59% invested in 3 of 7 funds; cash £410.00",
-        "Orders: 0 sent today; 0 open",
+        "Orders: 0 sent today (0 awaiting fill); 0 open from earlier",
         "Next month end: Mon 30 Nov; 4 of 7 funds in trend today (3 held)",
     ]
 
@@ -69,7 +70,6 @@ def test_the_lines_read_in_pounds_and_percent() -> None:
 @pytest.mark.parametrize(
     ("outcome", "reason", "level", "text"),
     [
-        ("skipped", "not a trading day", Level.WARN, "Run: skipped Tue 24 Nov 07:16 UTC (not a trading day)"),
         ("stopped", "not reconciled", Level.STOP, "Run: STOPPED Tue 24 Nov 07:16 UTC: not reconciled"),
         ("stopped", None, Level.STOP, "Run: STOPPED Tue 24 Nov 07:16 UTC: no reason given"),
     ],
@@ -138,8 +138,16 @@ def test_all_cash_is_zero_percent_invested() -> None:
     assert "0% invested" in line(g, 4)[1]
 
 
-def test_open_orders_are_a_stop() -> None:
-    assert line(replace(GOOD, open_orders=1, sent_today=2), 5) == (Level.STOP, "Orders: 2 sent today; 1 open")
+def test_orders_from_earlier_runs_still_open_are_a_stop() -> None:
+    assert line(replace(GOOD, open_orders=1, sent_today=2), 5) == (
+        Level.STOP,
+        "Orders: 2 sent today (0 awaiting fill); 1 open from earlier",
+    )
+
+
+def test_this_runs_orders_awaiting_the_open_are_normal() -> None:
+    # a 07:15 run sends before the 08:00 open: its orders fill later
+    assert line(replace(GOOD, sent_today=3, awaiting_fill=3), 5)[0] is Level.OK
 
 
 def test_no_preview_is_amber() -> None:
@@ -162,7 +170,7 @@ def test_the_subject_says_the_worst_line(g: GlanceInput, label: str) -> None:
 def test_the_body_marks_each_line_and_has_no_links() -> None:
     _, body = render(glance(replace(GOOD, open_orders=1)), as_of=AS_OF, environment="prod")
     assert body.splitlines()[0] == "[OK]   Run: completed Tue 24 Nov 07:16 UTC"
-    assert "[STOP] Orders: 0 sent today; 1 open" in body
+    assert "[STOP] Orders: 0 sent today (0 awaiting fill); 1 open from earlier" in body
     assert "http" not in body
     assert body.endswith(
         "As of 2026-11-24 07:16 UTC. Figures from the bot's ledger; details in Cloud Logging."

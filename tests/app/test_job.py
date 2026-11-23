@@ -811,3 +811,45 @@ def test_dry_runs_and_setup_send_no_email(tmp_path: Path, outbox: list[tuple[str
     assert job_at(tmp_path, SETUP_DAY, **EMAIL).setup("1000") == EXIT_OK
     assert job_at(tmp_path, RUN_DAY, **EMAIL).dry_run() in (EXIT_OK, EXIT_STOPPED)
     assert outbox == []
+
+
+def test_a_failed_email_keeps_a_stopped_run_stopped(set_up: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def stop(*_: object, **__: object) -> None:
+        raise CycleStopError("not reconciled: test")
+
+    def refuse(*_: object) -> None:
+        raise EmailError("sending failed (TimeoutError)")
+
+    monkeypatch.setattr("tradingbot.app.cycle._decide", stop)
+    monkeypatch.setattr("tradingbot.app.job.read_sender", lambda: Sender("bot@example.com", "pw"))
+    monkeypatch.setattr("tradingbot.app.job.send", refuse)
+    assert job_at(set_up, RUN_DAY, **EMAIL).run() == EXIT_STOPPED
+
+
+def test_an_error_gathering_the_glance_never_changes_the_run(
+    set_up: Path,
+    outbox: list[tuple[str, str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def broken(*_: object, **__: object) -> None:
+        raise LedgerError("unexpected")
+
+    monkeypatch.setattr("tradingbot.app.job.glance_input", broken)
+    with caplog.at_level(logging.WARNING):
+        assert job_at(set_up, RUN_DAY, **EMAIL).run() == EXIT_OK
+    assert outbox == []
+    assert "daily email not sent: LedgerError: unexpected" in caplog.text
+
+
+def test_a_broker_that_cant_be_built_still_emails_a_stop(
+    set_up: Path, outbox: list[tuple[str, str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_broker(self: object) -> None:
+        raise BrokerError("Trading 212 key unreadable (FileNotFoundError)")
+
+    monkeypatch.setattr(Job, "broker", no_broker)
+    assert job_at(set_up, RUN_DAY, **EMAIL).run() == EXIT_STOPPED
+    ((_, subject, body),) = outbox
+    assert subject.endswith(": ACTION")
+    assert "broker unavailable: Trading 212 key unreadable" in body

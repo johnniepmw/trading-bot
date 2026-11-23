@@ -29,8 +29,8 @@ class Line:
 @dataclass(frozen=True, slots=True)
 class GlanceInput:
     as_of: datetime  # UTC, the run's end
-    outcome: str  # "completed", "stopped", "skipped"
-    reason: str | None  # why it stopped or was skipped
+    outcome: str  # "completed", or anything else (stopped, died): red
+    reason: str | None  # why it stopped
     equity: Money | None  # recorded today
     day_start: Money | None
     mark: Money | None  # high-water mark
@@ -41,7 +41,8 @@ class GlanceInput:
     funds_total: int
     snapshot_checked: bool | None  # None: no snapshot this run
     sent_today: int
-    open_orders: int
+    awaiting_fill: int  # this run's orders the broker hasn't filled yet (normal before the open)
+    open_orders: int  # left open by earlier runs, or of unknown outcome
     next_month_end: date
     in_trend: int | None  # funds in trend on today's preview; None: no preview
     daily_loss_limit: Decimal  # config: the daily-loss pause, as a fraction
@@ -65,8 +66,6 @@ def _run(g: GlanceInput) -> Line:
     when = g.as_of.strftime("%a %d %b %H:%M UTC")
     if g.outcome == "completed":
         return Line(Level.OK, f"Run: completed {when}")
-    if g.outcome == "skipped":
-        return Line(Level.WARN, f"Run: skipped {when} ({g.reason or 'no reason given'})")
     return Line(Level.STOP, f"Run: STOPPED {when}: {g.reason or 'no reason given'}")
 
 
@@ -116,7 +115,8 @@ def _holdings(g: GlanceInput) -> Line:
 
 
 def _orders(g: GlanceInput) -> Line:
-    text = f"Orders: {g.sent_today} sent today; {g.open_orders} open"
+    today = f"{g.sent_today} sent today ({g.awaiting_fill} awaiting fill)"
+    text = f"Orders: {today}; {g.open_orders} open from earlier"
     return Line(Level.STOP if g.open_orders else Level.OK, text)
 
 

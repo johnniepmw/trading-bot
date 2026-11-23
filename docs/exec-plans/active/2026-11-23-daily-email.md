@@ -14,12 +14,12 @@ account used only by the bot (owner's choice, 2026-11-23).
 ## The seven lines (proposed here; the monitoring spec named the count, not the lines)
 | # | Line | Green | Amber | Red |
 |---|---|---|---|---|
-| 1 | Run: outcome and time | completed | skipped (not a trading day, duplicate) | stopped, with its reason |
+| 1 | Run: outcome and time | completed | — | stopped (or died), with its reason |
 | 2 | Today: equity £, change since day start £ and % | ≥ 0 | a loss under the 2% daily-loss limit | daily-loss pause reached, or no day start |
 | 3 | Drawdown: % and £ below the high-water mark; risk state | < 5% | 5–10% | ≥ 10% (positions halve), ≥ 20% (buy stop) |
 | 4 | Since setup: return £ and % against the seeded equity | ≥ 0 | < 0 | (never red: drawdown covers it) |
 | 5 | Holdings: invested % and cash £; funds held (n of 7) | snapshot checked | — | snapshot unverified (equity check failed) |
-| 6 | Orders: sent today, open from earlier runs | none open | — | any open or unknown |
+| 6 | Orders: sent today (this run's awaiting fill), open from earlier runs | none open from earlier | — | any open from earlier, or unknown |
 | 7 | Next month end: date, and how many funds are in trend on today's preview (vs held) | preview stored | no preview today | — |
 
 Every amount comes from the ledger the run just wrote (no broker or price calls), so the
@@ -70,5 +70,6 @@ email can never disagree with the decision record.
 - 2026-11-23 step 3: `report/glance.py` (pure, contract 8), `app/daily_email.py` (secret, SMTP over TLS, figures from the ledger), the job sends after a run that opened the ledger, behind `daily-email` (off) — evidence: `tests/report/test_glance.py` (every colour of every line), `tests/app/test_daily_email.py` (fake SMTP), `tests/app/test_job.py` email tests (flag off sends nothing; a stopped run still emails; a failed send never changes the run and alerts `email_failed`; dry runs and setup send nothing)
 
 ## Review
+- Round 1 (reviewer): 2 blocking, both fixed: this run's orders awaiting the 08:00 open no longer turn the Orders line red (only earlier runs' open orders and unknown outcomes do); `glance_input` now has a test on a real ledger checking every figure. Non-blocking fixed: the run's own stop reason wins over its record (a failed final save); a broker that can't be built still emails a STOP; the flag check sits inside the guard; the "skipped" amber branch removed (non-trading days and duplicates never open the ledger, so they never email: the alert policy covers missed runs); tests that a failed email keeps a stopped run stopped and that an error gathering figures is caught. Recorded: `invested` leaves out a position with no GBP value (the line is red then anyway)
 
 ## Outcome

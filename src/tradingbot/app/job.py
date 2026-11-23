@@ -333,9 +333,14 @@ class Job:
     def _run_locked(self, remote: RemoteLedger, run_id: str, signal_day: date, now: datetime) -> int:
         try:
             ledger = remote.open()
-            broker = self.broker()
-        except (LedgerStorageError, BrokerError, OSError, ValueError) as error:
+        except (LedgerStorageError, OSError, ValueError) as error:
             log.error("cycle stopped: %s", error)
+            return EXIT_STOPPED
+        try:
+            broker = self.broker()
+        except (BrokerError, OSError, ValueError) as error:
+            log.error("cycle stopped: %s", error)
+            self._send_daily_email(ledger, run_id, now, stopped=f"broker unavailable: {error}")
             return EXIT_STOPPED
 
         pause = PauseRequests(self.store, self.wiring.pause_bucket)
@@ -358,15 +363,15 @@ class Job:
         )
         if report.stopped is None:
             log.info("run completed: %d order(s) sent", report.sent)
-        self._send_daily_email(ledger, run_id, now)
+        self._send_daily_email(ledger, run_id, now, stopped=report.stopped)
         return EXIT_OK if report.stopped is None else EXIT_STOPPED
 
-    def _send_daily_email(self, ledger: Ledger, run_id: str, now: datetime) -> None:
+    def _send_daily_email(self, ledger: Ledger, run_id: str, now: datetime, *, stopped: str | None) -> None:
         """The glance, after a run that opened the ledger (daily email spec). Never changes
         the run's outcome: any failure is a WARNING the alert policy mails as email_failed."""
-        if not self.flags.is_enabled("daily-email"):
-            return
         try:
+            if not self.flags.is_enabled("daily-email"):
+                return
             if self.wiring.email_to is None:
                 raise EmailError("EMAIL_TO is not set")
             facts = glance_input(
@@ -377,6 +382,7 @@ class Job:
                 universe=self.config.universe,
                 limits=Limits(**vars(self.config.limits)),
                 now=self.clock(),
+                stopped=stopped,
             )
             subject, body = compose(facts, self.wiring.app_env)
             send(read_sender(), self.wiring.email_to, subject, body)

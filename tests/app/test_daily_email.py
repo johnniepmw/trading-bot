@@ -4,12 +4,29 @@ from __future__ import annotations
 
 import smtplib
 import ssl
+from collections.abc import Iterator
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
 
 import pytest
 
-from tradingbot.app.daily_email import SMTP_HOST, SMTP_PORT, EmailError, Sender, read_sender, send
+from tradingbot.app.calendar import TradingCalendar
+from tradingbot.app.daily_email import (
+    SMTP_HOST,
+    SMTP_PORT,
+    EmailError,
+    Sender,
+    glance_input,
+    read_sender,
+    send,
+)
+from tradingbot.domain.market import Instrument, Order, Side
+from tradingbot.domain.money import Currency, Money
+from tradingbot.ledger.store import IntentState, Ledger, PositionRecord, PreviewRecord
+from tradingbot.report.glance import GlanceInput
+from tradingbot.risk.limits import Limits
 
 FAKE_SECRET = "bot@example.com:abcd efgh ijkl mnop"  # noqa: S105 - made up
 
@@ -101,3 +118,114 @@ def test_the_recipient_must_be_one_address(to: str) -> None:
     with pytest.raises(EmailError, match="single address"):
         send(SENDER, to, "s", "b", connect=smtp)
     assert smtp.connected is None
+
+
+# --- the glance's figures, read from a real ledger -----------------------------------
+VWRP, SGLN, EMIM = (
+    Instrument("VWRP", Currency.GBP),
+    Instrument("SGLN", Currency.GBX),
+    Instrument("EMIM", Currency.GBX),
+)
+UNIVERSE = {VWRP: Decimal("0.001"), SGLN: Decimal("0.001"), EMIM: Decimal("0.001")}
+TODAY = date(2026, 11, 24)
+START = datetime(2026, 11, 24, 7, 15, tzinfo=UTC)
+END = datetime(2026, 11, 24, 7, 17, tzinfo=UTC)
+CAL = TradingCalendar(frozenset(), until=date(2027, 12, 31))
+
+
+def gbp(x: str) -> Money:
+    return Money(Decimal(x), Currency.GBP)
+
+
+@pytest.fixture
+def ledger(tmp_path: Path) -> Iterator[Ledger]:
+    led = Ledger.create(tmp_path / "ledger.sqlite")
+    led.seed_high_water_mark(gbp("1000"), datetime(2026, 11, 20, 9, tzinfo=UTC))
+    led.update_high_water_mark(gbp("1050"), datetime(2026, 11, 21, 9, tzinfo=UTC))
+    led.record_equity(date(2026, 11, 23), gbp("1040"))  # yesterday: today's day start
+    led.record_equity(TODAY, gbp("1020"))
+    led.start_run("run-2", START, "v")
+    led.record_snapshot(
+        "run-2",
+        START,
+        gbp("400"),
+        [
+            PositionRecord(VWRP, Decimal("3"), Money(Decimal(100), Currency.GBP), gbp("300")),
+            PositionRecord(SGLN, Decimal("8"), Money(Decimal(4000), Currency.GBX), gbp("320")),
+            PositionRecord(EMIM, Decimal("0"), None, None),
+        ],
+        equity_checked=True,
+    )
+    earlier = led.record_intent(
+        "run-1", Order(VWRP, Side.BUY, Decimal(1)), datetime(2026, 11, 23, 7, 15, tzinfo=UTC)
+    )
+    led.mark_sent(earlier, "100")  # still open from yesterday
+    filled = led.record_intent("run-2", Order(SGLN, Side.BUY, Decimal(1)), START)
+    led.settle(filled, IntentState.FILLED, "101", Decimal(1))
+    waiting = led.record_intent("run-2", Order(VWRP, Side.BUY, Decimal(1)), START)
+    led.mark_sent(waiting, "102")  # sent before the open
+    unsent = led.record_intent("run-2", Order(EMIM, Side.BUY, Decimal(1)), START)
+    led.settle(unsent, IntentState.NOT_SENT)
+    led.record_preview(
+        "run-2",
+        [
+            PreviewRecord(TODAY, VWRP, True, 0.25),
+            PreviewRecord(TODAY, SGLN, True, 0.25),
+            PreviewRecord(TODAY, EMIM, False, 0.0),
+        ],
+    )
+    led.finish_run("run-2", END, "completed", None)
+    yield led
+    led.close()
+
+
+def facts(ledger: Ledger, run_id: str = "run-2", stopped: str | None = None) -> GlanceInput:
+    return glance_input(
+        ledger,
+        run_id,
+        today=TODAY,
+        calendar=CAL,
+        universe=UNIVERSE,
+        limits=Limits(),
+        now=END,
+        stopped=stopped,
+    )
+
+
+def test_every_figure_comes_from_the_ledger(ledger: Ledger) -> None:
+    g = facts(ledger)
+    assert (g.as_of, g.outcome, g.reason) == (END, "completed", None)
+    assert (g.equity, g.day_start, g.mark, g.seed) == (gbp("1020"), gbp("1040"), gbp("1050"), gbp("1000"))
+    assert (g.cash, g.invested, g.snapshot_checked) == (gbp("400"), gbp("620"), True)
+    assert (g.funds_held, g.funds_total) == (2, 3)  # the zero position doesn't count
+    assert (g.sent_today, g.awaiting_fill, g.open_orders) == (2, 1, 1)  # NOT_SENT isn't sent
+    assert (g.next_month_end, g.in_trend) == (date(2026, 11, 30), 2)
+    assert (g.daily_loss_limit, g.drawdown_halve, g.drawdown_stop) == (
+        Decimal("0.02"),
+        Decimal("0.10"),
+        Decimal("0.20"),
+    )
+
+
+def test_the_day_start_is_the_risk_layers_five_day_window(ledger: Ledger) -> None:
+    g = glance_input(
+        ledger, "run-2", today=date(2026, 11, 30), calendar=CAL, universe=UNIVERSE, limits=Limits(), now=END
+    )
+    assert g.day_start is None  # nothing in the 5 days before: buys were paused
+
+
+def test_the_runs_own_stop_wins_over_its_record(ledger: Ledger) -> None:
+    g = facts(ledger, stopped="ledger not saved")
+    assert (g.outcome, g.reason) == ("stopped", "ledger not saved")
+
+
+def test_a_run_without_a_snapshot_preview_or_record(ledger: Ledger) -> None:
+    g = facts(ledger, run_id="run-3")
+    assert (g.outcome, g.reason) == ("stopped", "no run record")
+    assert (g.cash, g.invested, g.snapshot_checked, g.funds_held) == (None, None, None, 0)
+    assert g.in_trend is None
+
+
+def test_an_unchecked_snapshot_is_reported(ledger: Ledger) -> None:
+    ledger.record_snapshot("run-4", END, gbp("1"), [], equity_checked=False)
+    assert facts(ledger, run_id="run-4").snapshot_checked is False

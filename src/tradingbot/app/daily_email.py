@@ -101,7 +101,10 @@ def glance_input(  # noqa: PLR0913 - the run's facts and the config the lines co
     universe: Mapping[Instrument, Decimal],
     limits: Limits,
     now: datetime,
+    stopped: str | None = None,
 ) -> GlanceInput:
+    """The glance's figures from the ledger. `stopped` is the run's own stop reason, which
+    wins over the run record (a final save that failed leaves the record "completed")."""
     run = next((r for r in ledger.runs() if r.run_id == run_id), None)
     try:
         mark = ledger.high_water_mark()
@@ -113,14 +116,16 @@ def glance_input(  # noqa: PLR0913 - the run's facts and the config the lines co
         snapshot = None
     held = [p for p in snapshot.positions if p.quantity > 0] if snapshot else []
     preview = ledger.preview(run_id)
-    intents = ledger.open_intents() + ledger.settled()
+    open_intents = ledger.open_intents()
+    intents = open_intents + ledger.settled()
     sent_today = sum(
         1 for i in intents if i.created_at.date() == today and i.state is not IntentState.NOT_SENT
     )
+    awaiting = [i for i in open_intents if i.run_id == run_id and i.state is IntentState.SENT]
     return GlanceInput(
         as_of=run.ended_at if run and run.ended_at else now,
-        outcome=run.outcome if run and run.outcome else "stopped",
-        reason=run.reason if run else "no run record",
+        outcome="stopped" if stopped else (run.outcome if run and run.outcome else "stopped"),
+        reason=stopped or (run.reason if run else "no run record"),
         equity=ledger.equity_on(today),
         day_start=ledger.previous_day_equity(today),
         mark=mark,
@@ -133,7 +138,8 @@ def glance_input(  # noqa: PLR0913 - the run's facts and the config the lines co
         funds_total=len(universe),
         snapshot_checked=snapshot.equity_checked if snapshot else None,
         sent_today=sent_today,
-        open_orders=len(ledger.open_intents()),
+        awaiting_fill=len(awaiting),
+        open_orders=len(open_intents) - len(awaiting),
         next_month_end=calendar.next_month_end(today),
         in_trend=sum(1 for p in preview if p.in_trend) if preview else None,
         daily_loss_limit=limits.daily_loss,
