@@ -148,8 +148,10 @@ def test_a_live_operator_secret_builds_nothing_live(tmp_path: Path, caplog: pyte
 
 
 def test_nothing_imports_a_live_broker() -> None:
-    sources = "\n".join(p.read_text() for p in SRC.rglob("*.py"))
-    assert "brokers.trading212" not in sources  # the adapter arrives in step 4, demo only
+    # the adapter is built in step 4 (demo only); nothing outside it uses it until it is wired in
+    adapter = SRC / "brokers" / "trading212"
+    sources = "\n".join(p.read_text() for p in SRC.rglob("*.py") if adapter not in p.parents)
+    assert "brokers.trading212" not in sources
 
 
 # --- setup (AC9) ----------------------------------------------------------------------
