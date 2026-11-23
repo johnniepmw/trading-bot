@@ -77,10 +77,17 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
     commands.add_parser("smoke")
     run = commands.add_parser("run")
     run.add_argument("--dry-run", action="store_true", help="stop before sending; touch nothing")
+    run.add_argument(
+        "--deploy-check",
+        action="store_true",
+        help="with --dry-run: the deploy pipeline's check; a business stop exits 0",
+    )
     setup = commands.add_parser("setup")
     setup.add_argument("--equity", required=True, help="the account's equity in GBP, as you see it")
     setup.add_argument("--reset", action="store_true", help="staging only: start the ledger afresh")
     args = parser.parse_args(argv)
+    if getattr(args, "deploy_check", False) and not args.dry_run:
+        parser.error("--deploy-check needs --dry-run")
 
     env = env if env is not None else os.environ
     try:
@@ -93,7 +100,7 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
             job = build_job(env, flags)
             if args.command == "setup":
                 return job.setup(args.equity, reset=args.reset)
-            return job.dry_run() if args.dry_run else job.run()
+            return job.dry_run(deploy_check=args.deploy_check) if args.dry_run else job.run()
         except (JobConfigError, ConfigFileError) as exc:
             log.error("refusing to start: %s", exc)
             return EXIT_STOPPED

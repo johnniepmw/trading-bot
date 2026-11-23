@@ -5,7 +5,8 @@
 #
 # Changes only the job's image (OpenTofu owns everything else). Then runs a check
 # execution and reads only its status, never its logs (ADR-0014): staging runs `smoke`,
-# prod runs `run --dry-run` against prod's own ledger and broker. Any way out other than a
+# prod runs `run --dry-run --deploy-check` against prod's own ledger and broker (a business
+# stop passes; a fault in the image fails). Any way out other than a
 # passed check (failure, timeout, cancellation of this script) puts the previous image
 # back. Prod first checks the deploy window: no execution running, and the scheduler
 # either paused or its next run more than 30 minutes away.
@@ -63,7 +64,7 @@ trap 'exit 1' INT TERM
 gc run jobs update "$job" --region "$region" --image "$image"
 
 check_args="smoke"
-[ "$env" = prod ] && check_args="run,--dry-run"
+[ "$env" = prod ] && check_args="run,--dry-run,--deploy-check"  # a business stop passes (ADR-0019)
 if ! timeout "$CHECK_TIMEOUT" gcloud run jobs execute "$job" --region "$region" --args "$check_args" --wait \
     --project "$project" --quiet; then
   echo "deploy: the check execution failed or timed out" >&2

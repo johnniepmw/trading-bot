@@ -2,7 +2,7 @@ name: deploy
 
 # Every push to main: build once → the staging job (image only, then a `smoke` execution,
 # rolled back on failure) → the prod job, only once the owner sets DEPLOY_PROD=true (after
-# Phase 2 steps 3-4): deploy window, image only, a `run --dry-run` execution against prod,
+# Phase 2 steps 3-4): deploy window, image only, a `run --dry-run --deploy-check` execution against prod (a business stop passes),
 # rolled back on failure (ADR-0019). Reads execution status only, never logs (ADR-0014).
 # Runs no repository test code while deployer credentials are present. Inactive until
 # `make gh-vars` has set the cloud variables.
@@ -137,15 +137,25 @@ jobs:
           service_account: ${{ vars.SA_DEPLOYER }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       - name: Deploy to the prod job (window, dry-run execution, rollback on failure)
+        id: deploy
         env:
           IMAGE: ${{ needs.build.outputs.image }}
-        run: bash scripts/cloudrun-job-deploy.sh prod "$IMAGE"
+        run: |
+          set +e
+          bash scripts/cloudrun-job-deploy.sh prod "$IMAGE"
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = 75 ]; then
+            echo "::warning::Prod deploy refused by the window (a run is due soon or running); nothing changed. Re-run this job later."
+          fi
+          exit "$code"
       - name: Open an incident issue on failure
-        if: failure()
+        # a window refusal (75) changed nothing: not an incident
+        if: failure() && steps.deploy.outputs.code != '75'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh issue create --label incident \
             --title "Production deploy of ${GITHUB_SHA::7} failed" \
-            --body "The prod deploy failed for ${GITHUB_SHA}: refused by the deploy window, or its dry-run execution failed and the job went back to its previous image. Run: ${RUN_URL}. Execution logs are in Cloud Logging only (ADR-0014). Next step: the incident skill."
+            --body "The prod deploy failed for ${GITHUB_SHA} (see the run). If its dry-run check failed (a fault in the image, not a business stop), the job went back to its previous image, unless the log says RESTORE FAILED. Run: ${RUN_URL}. Execution logs are in Cloud Logging only (ADR-0014). Next step: the incident skill."

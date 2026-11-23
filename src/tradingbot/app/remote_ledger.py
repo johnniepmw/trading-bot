@@ -50,6 +50,10 @@ class LedgerStorageError(Exception):
     """The remote ledger can't be used safely: no new orders."""
 
 
+class LedgerMissingError(LedgerStorageError):
+    """No ledger object at all: setup hasn't run (or it was deleted)."""
+
+
 class LockHeldError(LedgerStorageError):
     """Another run holds the lock (a duplicate trigger, or a run still going)."""
 
@@ -225,7 +229,7 @@ class RemoteLedger:
     def _download(self) -> Ledger:
         found = self._retry("ledger info", lambda: self._store.info(self._ledger_bucket, LEDGER_OBJECT))
         if found is None:
-            raise LedgerStorageError("ledger missing: it is created only by the owner's setup")
+            raise LedgerMissingError("ledger missing: it is created only by the owner's setup")
         data = self._retry(
             "ledger read", lambda: self._store.read(self._ledger_bucket, LEDGER_OBJECT, found.generation)
         )

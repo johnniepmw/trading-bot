@@ -161,7 +161,7 @@ def test_a_prod_deploy_runs_a_dry_run_against_prod(fake: Path) -> None:
     [execution] = executions(fake)
     assert (
         execution.startswith("run jobs execute trading-bot-prod")
-        and "--args run,--dry-run --wait" in execution
+        and "--args run,--dry-run,--deploy-check --wait" in execution
     )
 
 
