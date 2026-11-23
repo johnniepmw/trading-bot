@@ -1,6 +1,6 @@
 # Automatic high-water-mark adjustment for deposits and withdrawals
 
-- **Status**: active (spec revised after the architect's review; owner asked for it, 2026-11-23)
+- **Status**: deferred until before live (2026-11-23): the Trading 212 demo account can't deposit or withdraw, so paper trading never needs it. It is a precondition of ADR-0009's live switch
 - **Branch / PR**: ccr-7fe1197d-l39xit / (after #58)
 - **Risk class**: high (money and risk limits: the drawdown stop's reference point; ADR-0017's reference mark; setup)
 - **Started**: 2026-11-23
@@ -68,10 +68,12 @@ point of failure"; "an automatic email so we are aware, to guard against a bug")
   and C6 (a cash mismatch) are reworded.
 
 ## Open questions (owner)
-1. Does the Trading 212 demo app let you deposit and withdraw, or only reset the balance? —
-   default: you try a small withdrawal and deposit in the demo app, then run the recorder. If
-   it only resets, AC9 and acceptance stage C use a reset instead, and live's withdrawal shape
-   stays unconfirmed (tech debt; checked before live).
+1. Answered 2026-11-23: the demo app can't deposit or withdraw (only a balance reset). So
+   the transaction shapes are recorded on the live account (owner's proposal, 2026-11-23):
+   small live deposits and withdrawals (no trading), then `scripts/t212_record.py
+   --live-transactions` with a live key that has read permissions only. That mode can only
+   GET `/history/transactions` and prints kinds, signs and reference shapes, never amounts. Pies are not
+   a stand-in: moving cash into a pie is not a flow, and the bot's account must not use pies.
 
 ## Plan
 1. Ledger: `adjust_high_water_mark`, the adjustment and baseline tables, the "falls only by
@@ -87,6 +89,7 @@ point of failure"; "an automatic email so we are aware, to guard against a bug")
 6. Owner: the demo deposit and withdrawal plus a recorder run (AC9), then acceptance stage C.
 
 ## Progress log
+- 2026-11-23 deferred: the demo can't deposit or withdraw (owner). Until this ships, the existing guards fail safe on any flow: a drop in equity counts as a loss (drawdown and daily-loss stops), a rise of more than 10% stops as an implausible new peak, and a smaller one lifts the mark. So no deposits or withdrawals on the account the bot trades, and never on live before this ships
 - 2026-11-23 spec revised after the architect's review (10 blocking: comparison point, fill
   effect, the mark's only-rises rule, setup baseline and cursor, existing ledgers, same-day
   scaling, multi-flow formula, rollback, sequencing, strict parsing; all taken in)

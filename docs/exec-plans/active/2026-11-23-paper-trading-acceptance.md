@@ -38,6 +38,8 @@ touches the live account (ADR-0009).
 | B4 | Fills and fees recorded | Agent: read the ledger copy for B3 | Fill prices and fees match the demo app (monitoring AC4) |
 | B5 | Rebalance band | A month end where weights barely moved | No orders (inside the band) |
 
+> Stage C runs before the live switch, not during paper trading: the demo account can't deposit or withdraw (owner, 2026-11-23). C6 and C7 still run in staging on fakes once the mark adjustment is built.
+
 ## Stage C: deposits and withdrawals (the automatic mark)
 Run each on the demo account, with the schedule paused, then one `run` execution after
 each. You see an alert email for every adjustment.
