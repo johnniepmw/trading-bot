@@ -3,16 +3,24 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
-from tradingbot.brokers.port import BrokerError, OrderStatus
-from tradingbot.brokers.trading212.orders import BROKER_TICKERS, Tickers, parse_order
+from tradingbot.brokers.port import BrokerError, BrokerOrder, OrderStatus
+from tradingbot.brokers.trading212.orders import (
+    BROKER_TICKERS,
+    Fill,
+    Tickers,
+    parse_fill,
+    parse_order,
+    with_fills,
+)
 from tradingbot.domain.market import Instrument, Order, Side
-from tradingbot.domain.money import Currency
+from tradingbot.domain.money import Currency, Money
 
 VWRP = Instrument("VWRP", Currency.GBP)
 SGLN = Instrument("SGLN", Currency.GBX)
@@ -162,3 +170,74 @@ def test_tickers_map_both_ways() -> None:
     assert TICKERS.ours(5) is None
     with pytest.raises(BrokerError, match="universe"):
         TICKERS.broker(Instrument("VUKE", Currency.GBP))
+
+
+# --- fills (monitoring AC4) ----------------------------------------------------------
+def test_a_recorded_fill_has_price_quantity_and_no_fees() -> None:
+    assert parse_fill(SELL_ITEM) == Fill(Decimal("0.25"), Decimal("100.5"), Decimal(0))
+
+
+def test_an_item_without_a_fill_has_none() -> None:
+    assert parse_fill({"order": SELL_ITEM["order"]}) is None
+
+
+def test_taxes_in_pounds_are_the_fees() -> None:
+    item = copy.deepcopy(SELL_ITEM)
+    item["fill"]["walletImpact"]["taxes"] = [{"quantity": Decimal("-0.05"), "currency": "GBP"}]
+    fill = parse_fill(item)
+    assert fill is not None and fill.fees == Decimal("0.05")
+
+
+@pytest.mark.parametrize("taxes", [[{"name": "STAMP_DUTY"}], [{"quantity": 1, "currency": "EUR"}], "none"])
+def test_taxes_of_an_unrecorded_shape_leave_the_fees_unknown(taxes: object) -> None:
+    item = copy.deepcopy(SELL_ITEM)
+    item["fill"]["walletImpact"]["taxes"] = taxes
+    fill = parse_fill(item)
+    assert fill is not None and fill.fees is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"price": 0}, {"quantity": 0}, {"price": "x"}, {"type": "DIVIDEND"}],
+    ids=["no-price", "no-quantity", "unreadable", "not-a-trade"],
+)
+def test_an_unusable_fill_is_skipped_not_an_error(change: dict[str, object]) -> None:
+    assert parse_fill({"fill": {**SELL_ITEM["fill"], **change}}) is None
+
+
+def test_a_fill_that_is_not_an_object_is_skipped() -> None:
+    assert parse_fill({"fill": [1]}) is None
+
+
+def test_a_tax_without_a_currency_is_taken_in_the_wallets_pounds() -> None:
+    item = copy.deepcopy(SELL_ITEM)
+    item["fill"]["walletImpact"]["taxes"] = [{"quantity": Decimal("0.02")}]
+    fill = parse_fill(item)
+    assert fill is not None and fill.fees == Decimal("0.02")
+
+
+def filled(quantity: str) -> BrokerOrder:
+    parsed = parse_order(order(quantity=-Decimal(quantity), filledQuantity=-Decimal(quantity)), TICKERS)
+    assert parsed is not None
+    return parsed
+
+
+def test_several_fills_give_a_weighted_average_and_total_fees() -> None:
+    priced = with_fills(
+        filled("4"),
+        [Fill(Decimal(1), Decimal(100), Decimal("0.1")), Fill(Decimal(3), Decimal(104), Decimal("0.2"))],
+    )
+    assert priced.average_price == Money(Decimal(103), Currency.GBP)
+    assert priced.fees == Money(Decimal("0.3"), Currency.GBP)
+
+
+def test_one_fill_with_unknown_fees_leaves_the_total_unknown() -> None:
+    priced = with_fills(
+        filled("2"), [Fill(Decimal(1), Decimal(100), Decimal(0)), Fill(Decimal(1), Decimal(100), None)]
+    )
+    assert priced.average_price is not None and priced.fees is None
+
+
+def test_an_order_without_fills_is_unchanged() -> None:
+    parsed = parse_order(SELL_ITEM["order"], TICKERS)
+    assert parsed is not None and with_fills(parsed, []) is parsed

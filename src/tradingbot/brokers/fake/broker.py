@@ -22,8 +22,12 @@ from tradingbot.domain.market import Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
 
 
+def _average(raw: object, instrument: Instrument) -> Money | None:
+    return None if raw is None else Money(Decimal(str(raw)), instrument.currency)
+
+
 class FakeBroker:
-    """Fills market orders at the current quote, with no costs.
+    """Fills market orders at the current quote, with no costs (fees reported as £0).
 
     Knobs for drills, each as awkward as the real broker can be:
     - `market_open = False`: market orders queue as PENDING until `open_market()`;
@@ -99,7 +103,20 @@ class FakeBroker:
         self._held[o.instrument] = held + sign * quantity
         filled = current.filled_quantity + quantity
         status = OrderStatus.FILLED if filled == o.quantity else OrderStatus.PARTIALLY_FILLED
-        self._orders[order_id] = replace(current, status=status, filled_quantity=filled)
+        if quantity == 0:  # accepted, nothing filled yet
+            return
+        quote = FakeBroker.quote(self, o.instrument)
+        before = (
+            current.average_price.amount * current.filled_quantity if current.average_price else Decimal(0)
+        )
+        average = Money((before + quote.amount * quantity) / filled, quote.currency)
+        self._orders[order_id] = replace(
+            current,
+            status=status,
+            filled_quantity=filled,
+            average_price=average,
+            fees=Money(Decimal(0), Currency.GBP),
+        )
 
     def open_market(self) -> None:
         """Fill every working order in full."""
@@ -137,6 +154,7 @@ class FakeBroker:
                     "status": o.status.value,
                     "filled": str(o.filled_quantity),
                     "created_at": o.created_at.isoformat(),
+                    "average_price": None if o.average_price is None else str(o.average_price.amount),
                 }
                 for o in self._orders.values()
             ],
@@ -160,5 +178,7 @@ class FakeBroker:
                 OrderStatus(raw["status"]),
                 Decimal(raw["filled"]),
                 datetime.fromisoformat(raw["created_at"]),
+                average_price=_average(raw.get("average_price"), order.instrument),
+                fees=None if raw.get("average_price") is None else Money(Decimal(0), Currency.GBP),
             )
         return broker

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from tradingbot.brokers.port import BrokerError, BrokerOrder
-from tradingbot.brokers.trading212.orders import Tickers, parse_order, timestamp
+from tradingbot.brokers.trading212.orders import Fill, Tickers, parse_fill, parse_order, timestamp, with_fills
 
 API_PREFIX = "/api/v0"
 HISTORY = "/equity/history/orders"
@@ -59,6 +59,7 @@ def recent_orders(client: Reader, tickers: Tickers, now: datetime) -> list[Broke
         parsed = parse_order(raw, tickers)
         if parsed is not None:
             found[parsed.order_id] = parsed
+    fills: dict[str, list[Fill]] = {}
     since = now - LOOK_BACK
     reached = False
     for count, items in enumerate(history_pages(client), start=1):
@@ -68,13 +69,18 @@ def recent_orders(client: Reader, tickers: Tickers, now: datetime) -> list[Broke
                 reached = True
                 continue
             parsed = parse_order(raw, tickers)
-            if parsed is not None:
-                found[parsed.order_id] = parsed  # finished: newer than any active copy
+            if parsed is None:
+                continue
+            found[parsed.order_id] = parsed  # finished: newer than any active copy
+            fill = parse_fill(item)
+            if fill is not None:  # one history item per fill
+                fills.setdefault(parsed.order_id, []).append(fill)
         if reached:
             break
         if count == MAX_PAGES:
             raise BrokerError(f"order history goes past {MAX_PAGES} pages within {LOOK_BACK.days} days")
-    return sorted(found.values(), key=lambda o: (o.created_at, o.order_id))
+    priced = [with_fills(o, fills.get(o.order_id, [])) for o in found.values()]
+    return sorted(priced, key=lambda o: (o.created_at, o.order_id))
 
 
 def find_order(client: Reader, tickers: Tickers, order_id: str, now: datetime) -> BrokerOrder | None:

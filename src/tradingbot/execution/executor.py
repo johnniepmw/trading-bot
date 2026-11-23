@@ -113,7 +113,14 @@ def execute(  # noqa: PLR0913, PLR0911 - the order path's explicit dependencies;
 
 def _settle(ledger: Ledger, intent: Intent, order: BrokerOrder, result: ReconcileResult) -> None:
     if order.status in _SETTLED:
-        ledger.settle(intent.intent_id, _SETTLED[order.status], order.order_id, order.filled_quantity)
+        ledger.settle(
+            intent.intent_id,
+            _SETTLED[order.status],
+            order.order_id,
+            order.filled_quantity,
+            average_price=order.average_price,
+            fees=order.fees,
+        )
         if order.status is not OrderStatus.FILLED:
             o = order.order
             result.shortfalls.append(

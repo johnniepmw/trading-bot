@@ -104,6 +104,12 @@ CREATE TABLE IF NOT EXISTS snapshot_positions (
     quote TEXT,
     value_gbp TEXT
 );
+CREATE TABLE IF NOT EXISTS fills (
+    intent_id INTEGER PRIMARY KEY,
+    average_price TEXT,
+    price_currency TEXT,
+    fees TEXT
+);
 CREATE TABLE IF NOT EXISTS previews (
     run_id TEXT NOT NULL,
     as_of TEXT NOT NULL,
@@ -206,6 +212,12 @@ class Intent:
     filled_quantity: Decimal | None  # known once settled from the broker
 
 
+@dataclass(frozen=True, slots=True)
+class Fill:
+    average_price: Money | None  # per unit, in the instrument's quote currency
+    fees: Money | None  # GBP
+
+
 def _utc(at: datetime) -> str:
     # UTC itself, not just a zero offset: a London clock would pass all winter
     if at.tzinfo is not UTC:
@@ -296,16 +308,49 @@ class Ledger:
     def mark_unknown(self, intent_id: int) -> None:
         self._set(intent_id, IntentState.UNKNOWN)
 
-    def settle(
+    def settle(  # noqa: PLR0913 - one settled order's facts
         self,
         intent_id: int,
         state: IntentState,
         broker_order_id: str | None = None,
         filled_quantity: Decimal | None = None,
+        *,
+        average_price: Money | None = None,
+        fees: Money | None = None,
     ) -> None:
+        """Settle an intent; the fill price and fees too, when the broker reported them
+        (monitoring AC4: never estimated)."""
         if state in OPEN:
             raise LedgerError(f"{state} is not a settled state")
-        self._set(intent_id, state, broker_order_id, filled_quantity)
+        if fees is not None and fees.currency is not Currency.GBP:
+            raise LedgerError("fees are in GBP")
+        self._conn.execute("BEGIN")  # the state and its fill together, or neither
+        try:
+            self._set(intent_id, state, broker_order_id, filled_quantity)
+            if average_price is not None or fees is not None:
+                self._conn.execute(
+                    "INSERT INTO fills (intent_id, average_price, price_currency, fees) VALUES (?, ?, ?, ?)",
+                    (
+                        intent_id,
+                        None if average_price is None else str(average_price.amount),
+                        None if average_price is None else average_price.currency.value,
+                        None if fees is None else str(fees.amount),
+                    ),
+                )
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        self._conn.execute("COMMIT")
+
+    def fill(self, intent_id: int) -> Fill:
+        """A settled intent's fill price and fees, as far as the broker reported them."""
+        row = self._conn.execute(
+            "SELECT average_price, price_currency, fees FROM fills WHERE intent_id = ?", (intent_id,)
+        ).fetchone()
+        if row is None:
+            return Fill(None, None)
+        price = None if row[0] is None else Money(Decimal(row[0]), Currency(row[1]))
+        return Fill(price, None if row[2] is None else Money(Decimal(row[2]), Currency.GBP))
 
     def _intents(self, sql: str) -> list[Intent]:
         rows = self._conn.execute(sql, tuple(s.value for s in OPEN)).fetchall()

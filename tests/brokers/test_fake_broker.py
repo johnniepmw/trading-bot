@@ -146,3 +146,51 @@ def test_broker_orders_carry_their_creation_time() -> None:
     b = broker()
     b.now = lambda: NOW
     assert b.order(b.place(approved(Side.BUY, "1"))).created_at == NOW
+
+
+# --- monitoring AC4: fill price and fees ---------------------------------------------
+def test_a_fill_reports_its_average_price_and_zero_fees() -> None:
+    b = broker()
+    state = b.order(b.place(approved(Side.BUY, "5", SGLN)))
+    assert state.average_price == Money(Decimal(4000), Currency.GBX)
+    assert state.fees == gbp(0)
+
+
+def test_an_order_filled_in_two_parts_averages_its_prices() -> None:
+    b = broker()
+    b.partial_fill_next = Decimal("0.5")
+    order_id = b.place(approved(Side.BUY, "2"))  # 1 at £100
+    b.quotes[VWRP] = gbp(110)
+    b.open_market()  # 1 at £110
+    assert b.order(order_id).average_price == gbp(105)
+
+
+def test_an_unfilled_order_has_no_price() -> None:
+    b = broker()
+    b.market_open = False
+    state = b.order(b.place(approved(Side.BUY, "1")))
+    assert (state.average_price, state.fees) == (None, None)
+
+
+def test_fill_prices_survive_saving_the_account() -> None:
+    b = broker()
+    order_id = b.place(approved(Side.BUY, "1"))
+    loaded = FakeBroker.load(b.dump(), b.quotes)
+    assert loaded.order(order_id).average_price == gbp(100)
+    assert loaded.order(order_id).fees == gbp(0)
+
+
+def test_an_account_saved_before_fill_prices_still_loads() -> None:
+    b = broker()
+    order_id = b.place(approved(Side.BUY, "1"))
+    state = b.dump()
+    del state["orders"][0]["average_price"]  # type: ignore[index]
+    loaded = FakeBroker.load(state, b.quotes).order(order_id)
+    assert (loaded.average_price, loaded.fees) == (None, None)
+
+
+def test_a_fill_of_nothing_leaves_the_order_waiting() -> None:
+    b = broker()
+    b.partial_fill_next = Decimal(0)
+    state = b.order(b.place(approved(Side.BUY, "1")))
+    assert (state.status, state.average_price) == (OrderStatus.PENDING, None)

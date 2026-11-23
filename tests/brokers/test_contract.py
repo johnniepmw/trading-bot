@@ -171,3 +171,22 @@ def test_orders_carry_their_creation_time(h: Harness) -> None:
     created = h.broker.order(h.broker.place(approved(Side.BUY, "1"))).created_at
     assert created.tzinfo is not None
     assert abs((created - NOW).total_seconds()) < 60
+
+
+# --- monitoring AC4: fill price and fees ---------------------------------------------
+def test_a_filled_order_reports_its_price_in_the_quote_currency_and_its_fees(h: Harness) -> None:
+    state = h.broker.order(h.broker.place(approved(Side.BUY, "5", SGLN)))
+    assert state.average_price == Money(SGLN_PRICE, Currency.GBX)  # pence, as recorded
+    assert state.fees == gbp(0)
+
+
+def test_a_working_order_has_no_fill_price(h: Harness) -> None:
+    h.close_market()
+    state = h.broker.order(h.broker.place(approved(Side.BUY, "1")))
+    assert (state.average_price, state.fees) == (None, None)
+
+
+def test_recent_orders_carry_fill_prices(h: Harness) -> None:
+    h.broker.place(approved(Side.BUY, "1"))
+    (order,) = h.broker.recent_orders()
+    assert order.average_price == gbp(100)
