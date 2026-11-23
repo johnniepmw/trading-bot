@@ -137,3 +137,24 @@ def test_find_order_looks_in_the_history() -> None:
     found = find_order(pages, TICKERS, "7", NOW)
     assert found is not None and found.status is OrderStatus.FILLED
     assert find_order(pages, TICKERS, "8", NOW) is None
+
+
+def test_an_order_filled_in_parts_averages_its_fills() -> None:
+    def item(price: str, quantity: str) -> dict[str, object]:
+        fill = {
+            "quantity": Decimal(quantity),
+            "price": Decimal(price),
+            "walletImpact": {"currency": "GBP", "taxes": []},
+        }
+        return {"order": raw_order(4, 1), "fill": fill}
+
+    pages = Pages(
+        {
+            FIRST: {
+                "items": [item("102", "0.25"), item("100", "0.25"), {"order": raw_order(1, 45)}],
+                "nextPagePath": None,
+            }
+        }
+    )
+    (only,) = recent_orders(pages, TICKERS, NOW)
+    assert only.average_price is not None and only.average_price.amount == Decimal(101)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -194,3 +195,47 @@ def test_a_rejected_decision_and_a_pence_quote_round_trip(ledger: Ledger) -> Non
     ]
     ledger.record_decisions("run-1", rows)
     assert ledger.decisions("run-1") == rows
+
+
+# --- monitoring AC4: fill price and fees ---------------------------------------------
+def test_a_settled_order_keeps_its_fill_price_and_fees(ledger: Ledger) -> None:
+    intent = ledger.record_intent("run-1", Order(SGLN, Side.BUY, Decimal(2)), NOW)
+    ledger.settle(
+        intent,
+        IntentState.FILLED,
+        "o-1",
+        Decimal(2),
+        average_price=Money(Decimal("4012.5"), Currency.GBX),
+        fees=gbp("0.04"),
+    )
+    fill = ledger.fill(intent)
+    assert fill.average_price == Money(Decimal("4012.5"), Currency.GBX)
+    assert fill.fees == gbp("0.04")
+
+
+def test_a_fill_the_broker_did_not_price_stays_empty(ledger: Ledger) -> None:
+    intent = ledger.record_intent("run-1", BUY, NOW)
+    ledger.settle(intent, IntentState.REJECTED, "o-1", Decimal(0))
+    fill = ledger.fill(intent)
+    assert (fill.average_price, fill.fees) == (None, None)
+
+
+def test_fees_must_be_in_pounds(ledger: Ledger) -> None:
+    intent = ledger.record_intent("run-1", BUY, NOW)
+    with pytest.raises(LedgerError, match="GBP"):
+        ledger.settle(intent, IntentState.FILLED, "o-1", Decimal("1.5"), fees=Money(Decimal(4), Currency.GBX))
+    assert ledger.open_intents()[0].intent_id == intent  # nothing settled
+
+
+def test_a_ledger_from_before_fills_were_recorded_gains_the_table(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite"
+    Ledger.create(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE fills")
+    conn.commit()
+    conn.close()
+    reopened = Ledger.open(path)
+    intent = reopened.record_intent("run-1", BUY, NOW)
+    reopened.settle(intent, IntentState.FILLED, "o-1", Decimal("1.5"), average_price=gbp("100"))
+    assert reopened.fill(intent).average_price == gbp("100")
+    reopened.close()

@@ -64,6 +64,9 @@ class BrokerOrder:
     status: OrderStatus
     filled_quantity: Decimal
     created_at: datetime  # UTC, as the broker records it
+    # Monitoring AC4: when the broker reports them, else None (never estimated)
+    average_price: Money | None = None  # per unit, in the instrument's quote currency
+    fees: Money | None = None  # in GBP; zero when the broker reports none
 
 
 class BrokerReader(Protocol):

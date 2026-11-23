@@ -9,11 +9,13 @@ reconcile stops rather than guess.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
 from tradingbot.brokers.port import BrokerError, BrokerOrder, OrderStatus
 from tradingbot.domain.market import Instrument, Order, Side
+from tradingbot.domain.money import Currency, Money
 
 # Trading 212's tickers for our funds, checked in the owner's API check (2026-11-23): each
 # is the London listing; currencies match bot.toml. SSAC is the benchmark, never traded.
@@ -117,3 +119,49 @@ def parse_order(raw: object, tickers: Tickers) -> BrokerOrder | None:
         filled_quantity=abs(filled),
         created_at=timestamp(raw, "createdAt"),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Fill:
+    quantity: Decimal  # unsigned
+    price: Decimal  # per unit, in the instrument's quote currency (pence for GBX: recorded)
+    fees: Decimal | None  # GBP; None when Trading 212 lists taxes in a shape not yet recorded
+
+
+def parse_fill(item: object) -> Fill | None:
+    """A history item's `fill`, if it has one. Recorded shape: `{quantity, price,
+    walletImpact: {currency: "GBP", taxes: []}}`. Fees are the taxes; an empty list is £0.
+    Taxes have never been recorded non-empty, so any are summed only from a numeric
+    `quantity` in GBP; otherwise fees stay unknown (never estimated: monitoring AC4)."""
+    raw = item.get("fill") if isinstance(item, dict) else None
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise BrokerError("Trading 212 sent a fill that is not an object")
+    price, quantity = decimal(raw, "price"), abs(decimal(raw, "quantity"))
+    if price <= 0 or quantity == 0:
+        raise BrokerError("Trading 212 sent a fill with no price or quantity")
+    impact = raw.get("walletImpact")
+    taxes = impact.get("taxes") if isinstance(impact, dict) and impact.get("currency") == "GBP" else None
+    fees: Decimal | None = None
+    if isinstance(taxes, list):
+        amounts = [
+            abs(Decimal(t["quantity"]))
+            for t in taxes
+            if isinstance(t, dict)
+            and isinstance(t.get("quantity"), Decimal | int)
+            and t.get("currency", "GBP") == "GBP"
+        ]
+        fees = sum(amounts, Decimal(0)) if len(amounts) == len(taxes) else None
+    return Fill(quantity, price, fees)
+
+
+def with_fills(order: BrokerOrder, fills: list[Fill]) -> BrokerOrder:
+    """The order with its average fill price and total fees, when its fills are known."""
+    if not fills:
+        return order
+    quantity = sum((f.quantity for f in fills), Decimal(0))
+    average = sum((f.quantity * f.price for f in fills), Decimal(0)) / quantity
+    known = [f.fees for f in fills if f.fees is not None]
+    fees = Money(sum(known, Decimal(0)), Currency.GBP) if len(known) == len(fills) else None
+    return replace(order, average_price=Money(average, order.order.instrument.currency), fees=fees)

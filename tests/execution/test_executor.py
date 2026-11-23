@@ -181,6 +181,23 @@ def test_sent_orders_are_settled_from_the_brokers_state(broker: FakeBroker, ledg
     assert [i.state for i in ledger.settled()] == [IntentState.FILLED, IntentState.REJECTED]
 
 
+def test_reconcile_records_the_fill_price_and_fees(broker: FakeBroker, ledger: Ledger) -> None:
+    execute(
+        [approved(Side.BUY, "1")],
+        broker,
+        ledger,
+        run_id="run-1",
+        now=NOW,
+        may_send=allowed,
+        checkpoint=nothing,
+    )
+    reconcile(broker, ledger)
+    (settled,) = ledger.settled()
+    fill = ledger.fill(settled.intent_id)
+    assert fill.average_price == broker.quote(VWRP)
+    assert fill.fees == Money(Decimal(0), Currency.GBP)
+
+
 def test_one_broker_order_is_matched_to_at_most_one_intent(broker: FakeBroker, ledger: Ledger) -> None:
     broker.place(approved(Side.BUY, "1"))  # placed once
     for _ in range(2):
