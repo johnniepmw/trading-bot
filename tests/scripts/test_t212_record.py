@@ -13,9 +13,12 @@ from pathlib import Path
 import pytest
 from t212_record import (
     LIVE_BASE,
+    LIVE_PAGES,
     TransactionsOnly,
     _live_base,
+    _NoRedirects,
     kinds,
+    live_transactions,
     reference_kind,
     shape,
 )  # scripts/ is on the path (conftest)
@@ -207,11 +210,67 @@ def test_live_transactions_lists_kinds_and_reference_shapes_only(mock_api: str) 
     assert "  WITHDRAW - x1" in res.stdout
     assert "References: text(5) x3" in res.stdout
     assert "References unique: yes" in res.stdout
-    assert "ref-1" not in res.stdout
     assert "positions" not in res.stdout and "summary" not in res.stdout
+    for value in ("1000", "-10", "2026-11-23", "ref-1", "ref-2", "ref-3"):  # no amounts, dates or references
+        assert value not in res.stdout
 
 
 def test_live_mode_never_places_the_quantity_check(mock_api: str) -> None:
     res = _run(mock_api, "--live-transactions", "--order", "ISF_EQ")
     assert res.returncode != 0
     assert "demo only" in res.stderr
+
+
+class Pager:
+    """Returns the scripted next-page links in turn."""
+
+    def __init__(self, *links: object) -> None:
+        self.links = list(links)
+        self.calls: list[str] = []
+
+    def call(self, method: str, path: str, bucket: str, body: dict | None = None) -> dict:
+        self.calls.append(path)
+        following = self.links.pop(0) if self.links else None
+        return {
+            "status": 200,
+            "data": {"items": [{"type": "DEPOSIT", "amount": 1}], "nextPagePath": following},
+        }
+
+
+def test_live_mode_follows_next_pages_within_the_endpoint() -> None:
+    pager = Pager("/api/v0/history/transactions?cursor=2&limit=50")
+    live_transactions(TransactionsOnly(pager))  # type: ignore[arg-type]
+    assert pager.calls == ["/history/transactions?limit=50", "/history/transactions?cursor=2&limit=50"]
+
+
+def test_live_mode_stops_after_its_page_limit(capsys: pytest.CaptureFixture[str]) -> None:
+    pager = Pager(*["/api/v0/history/transactions?cursor=same"] * 10)
+    live_transactions(TransactionsOnly(pager))  # type: ignore[arg-type]
+    assert len(pager.calls) == LIVE_PAGES
+    assert "older transactions not read" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "/api/v0/equity/orders/market",
+        "https://evil.example/history/transactions?x",
+        "/api/v0/history/transactionsX?x",
+    ],
+)
+def test_live_mode_refuses_a_next_page_outside_the_endpoint(link: str) -> None:
+    pager = Pager(link)
+    with pytest.raises(SystemExit, match="Refusing"):
+        live_transactions(TransactionsOnly(pager))  # type: ignore[arg-type]
+    assert len(pager.calls) == 1
+
+
+def test_live_mode_follows_no_redirects() -> None:
+    assert _NoRedirects().redirect_request() is None  # type: ignore[call-arg, func-returns-value]
+
+
+def test_a_leftover_test_server_setting_is_refused_in_live_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("T212_TEST_BASE_URL", "http://127.0.0.1:1/api/v0")
+    monkeypatch.delenv("T212_TEST_FAST", raising=False)
+    with pytest.raises(SystemExit, match="unset it"):
+        _live_base()

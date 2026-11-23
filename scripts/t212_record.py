@@ -12,8 +12,9 @@ change in that fund's position. Anything left is a WARNING and exit code 1. Use 
 priced in pence (SGLN) for the units verdict.
 
 DEMO ACCOUNT, except `--live-transactions`: it reads only the live account's transaction
-list (to see how deposits and withdrawals look) and refuses any other request. Use a live
-key with read permissions only. Otherwise it uses the same demo key and secret as
+list (to see how deposits and withdrawals look), refuses any other request, and follows no
+redirects or proxies. Run it on your own machine (never in a cloud or agent session) with a
+dedicated live key that has read permissions only, and delete that key afterwards. Otherwise it uses the same demo key and secret as
 phase0_api_check.py:
     read -rs T212_API_KEY && export T212_API_KEY
     read -rs T212_API_SECRET && export T212_API_SECRET
@@ -30,6 +31,7 @@ import os
 import re
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -249,6 +251,18 @@ LIVE_PATH = "/history/transactions"
 LIVE_PAGES = 5
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_: object, **__: object) -> None:
+        return None  # a 3xx becomes an HTTP error: the live key never follows a redirect
+
+
+def lock_down_http() -> None:
+    """Live mode: no redirects and no proxies for every request this process makes."""
+    urllib.request.install_opener(
+        urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirects())
+    )
+
+
 class TransactionsOnly:
     """The live account, read through one door: GET /history/transactions and nothing else.
     Any other method or path ends the script before a request is made (ADR-0009: no orders
@@ -285,12 +299,16 @@ def live_transactions(client: TransactionsOnly) -> None:
         res = client.call("GET", path or "", "history")
         if page_number == 1:
             show(f"GET {LIVE_PATH}?limit=50 (live)", res)
+        else:
+            print(f"page {page_number}: HTTP {res['status']}")
         data = res["data"] if isinstance(res["data"], dict) else {}
         items += data.get("items", []) if isinstance(data.get("items"), list) else []
         following = data.get("nextPagePath")
         path = following.removeprefix("/api/v0") if isinstance(following, str) else None
         if path is None:
             break
+    else:
+        print(f"(stopped after {LIVE_PAGES} pages: older transactions not read)")
     print("Transaction kinds (type, sign of amount, count):")
     for line in kinds({"items": items}):
         print(f"  {line}")
@@ -303,7 +321,9 @@ def live_transactions(client: TransactionsOnly) -> None:
 
 
 def _live_base() -> str:
-    """Live, or the localhost test server (phase0's rule: only localhost may override)."""
+    """Live, or the localhost test server for offline tests only (both test variables set)."""
+    if os.environ.get("T212_TEST_BASE_URL") and not os.environ.get("T212_TEST_FAST"):
+        sys.exit("T212_TEST_BASE_URL is set in this shell: unset it before reading the live account")
     return _base_url() if os.environ.get("T212_TEST_BASE_URL") else LIVE_BASE
 
 
@@ -323,8 +343,10 @@ def main() -> int:
         sys.exit("Set T212_API_KEY and T212_API_SECRET in your shell first.")
     fast = bool(os.environ.get("T212_TEST_BASE_URL")) and bool(os.environ.get("T212_TEST_FAST"))
     if args.live_transactions:
-        live = TransactionsOnly(Client(key, secret, _live_base(), fast=fast))
-        print("Reading transaction kinds from the LIVE account (read-only; transactions only)")
+        target = _live_base()
+        lock_down_http()
+        live = TransactionsOnly(Client(key, secret, target, fast=fast))
+        print(f"Reading transaction kinds from {target} (read-only; transactions only)")
         live_transactions(live)
         return 0
     base = _base_url()
