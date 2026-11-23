@@ -23,7 +23,8 @@ _STYLE = (
     "li{padding:8px 0;border-bottom:1px solid #eee;overflow-wrap:anywhere}"
     "b.m{display:inline-block;min-width:3.2em;font-size:13px}"
     "table{width:100%;border-collapse:collapse;font-size:14px}"
-    "td{padding:4px 2px;vertical-align:top;overflow-wrap:anywhere}"
+    "td{padding:4px 6px 4px 0;vertical-align:top;white-space:nowrap}"
+    "td.r{white-space:normal;overflow-wrap:anywhere}"
     "button{font:inherit;padding:10px 14px;border-radius:8px;border:1px solid #b3261e;"
     "background:#fff;color:#b3261e}"
     "button.go{background:#b3261e;color:#fff}form{margin:16px 0}a{color:#0b57d0}"
@@ -58,7 +59,7 @@ def glance_page(
     )
     rows = "".join(
         f"<tr><td>{r.started_at:%d %b %H:%M}</td><td>{escape(r.outcome or 'running')}</td>"
-        f"<td>{escape(r.reason or '')}</td></tr>"
+        f"<td class=r>{escape(r.reason or '')}</td></tr>"
         for r in runs
     )
     state = (
