@@ -146,3 +146,9 @@ def test_the_bundled_units_match_the_data_sources_quotes() -> None:
         "INXG": "GBP",
         "SGLN": "GBX",
     }
+
+
+@pytest.mark.parametrize("spelling", ["ssac", "SSACl"])
+def test_the_benchmark_is_refused_in_any_spelling(tmp_path: Path, spelling: str) -> None:
+    with pytest.raises(ConfigFileError, match="benchmark"):
+        load_config(write(tmp_path, GOOD.replace('ticker = "SGLN"', f'ticker = "{spelling}"', 1)))

@@ -16,6 +16,7 @@ at ERROR. An alert email names the **kind**; read the line itself with `make log
 | `account_veto` | Risk blocked buys for the whole account (daily loss, drawdown stop, no day-start equity) | Table below |
 | `drawdown` | Equity fell through 5, 10, 15 or 20% below the peak (once per crossing; 10% halves new positions, 20% stops buys) | Read it; nothing to do unless you want to step in |
 | `paused` | A pause request exists, so no new orders | Expected if you paused; `ops` → `clear-pause` to resume |
+| `calendar_ending` | Mondays, once the holiday list in `config/bot.toml` has under 60 days left; past it, runs stop | Ask the agent to add next year's LSE holidays |
 | `pause_unreadable` | The pause bucket can't be read, so no new orders | Tell the agent |
 | `refused_to_start` / `setup_refused` / `lock_release` / `error` | Configuration or storage trouble | Tell the agent with the time of the alert |
 

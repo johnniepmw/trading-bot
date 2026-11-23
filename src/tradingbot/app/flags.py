@@ -19,11 +19,12 @@ import os
 import threading
 import time
 import urllib.parse
-import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, get_args
+
+from tradingbot.app.storage import Transport, metadata_token, urllib_transport
 
 log = logging.getLogger(__name__)
 
@@ -153,25 +154,22 @@ class Flags:
 
 
 class GcsSource:
-    """Remote overrides from gs://<bucket>/flags.json using the Cloud Run identity."""
+    """Remote overrides from gs://<bucket>/flags.json using the Cloud Run identity, over the
+    same transport as the ledger (`app/storage.py`): redirects refused, so the token never
+    leaves Google; no proxies from the environment. Anything but the object is a failure."""
 
-    _METADATA_URL = (
-        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
-    )
-
-    def __init__(self, bucket: str, timeout: float = 2.0) -> None:
+    def __init__(self, bucket: str, timeout: float = 2.0, transport: Transport | None = None) -> None:
         self._bucket = bucket
-        self._timeout = timeout
+        self._send = transport or urllib_transport(timeout)
 
     def fetch_overrides(self) -> dict[str, bool]:
-        token_req = urllib.request.Request(self._METADATA_URL, headers={"Metadata-Flavor": "Google"})  # noqa: S310
-        with urllib.request.urlopen(token_req, timeout=self._timeout) as resp:  # noqa: S310 - fixed URL
-            token = json.load(resp)["access_token"]
+        token = metadata_token(self._send)
         url = (
             "https://storage.googleapis.com/storage/v1/b/"
             f"{urllib.parse.quote(self._bucket, safe='')}/o/flags.json?alt=media"
         )
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})  # noqa: S310
+        status, body = self._send("GET", url, {"Authorization": f"Bearer {token}"}, None)
         # A missing object (404) is a failed read, not "no overrides": infra seeds it.
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 - fixed host
-            return parse_overrides(json.load(resp))
+        if status != 200:  # noqa: PLR2004
+            raise ValueError(f"flags read: HTTP {status}")
+        return parse_overrides(json.loads(body))

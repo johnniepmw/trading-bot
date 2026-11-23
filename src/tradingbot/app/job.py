@@ -58,6 +58,7 @@ FAKE_ACCOUNT_OBJECT = "fake-broker.json"  # staging and local only: the fake bro
 FAKE_STARTING_CASH = Money(Decimal(1000), Currency.GBP)
 SETUP_EQUITY_TOLERANCE = Decimal("0.02")  # the owner's figure vs the broker's equity
 EXIT_OK, EXIT_STOPPED, EXIT_SKIPPED = 0, 1, 3
+CALENDAR_WARNING_DAYS = 60
 
 
 class JobConfigError(Exception):
@@ -245,6 +246,7 @@ class Job:
         check_prod_ready(self.wiring, self.config)
         now = self.clock()
         run_id = f"{self.wiring.execution}-{uuid.uuid4().hex[:12]}"  # a new ID per attempt (AC4)
+        self._warn_if_calendar_ends_soon(now.date())
         try:
             if not self._calendar().is_trading_day(now.date()):
                 log.info("not a trading day: nothing to do")
@@ -266,6 +268,17 @@ class Job:
                 return self._run_locked(remote, run_id, signal_day, now)
             finally:
                 remote.release()
+
+    def _warn_if_calendar_ends_soon(self, today: date) -> None:
+        """Weekly (Mondays) once the holiday list has under 60 days left: past it, runs stop."""
+        left = (self.config.calendar_until - today).days
+        if 0 <= left < CALENDAR_WARNING_DAYS and today.weekday() == 0:
+            log.warning(
+                "calendar ends on %s (%d days): add next year's LSE holidays to config/bot.toml",
+                self.config.calendar_until.isoformat(),
+                left,
+                extra={"alert": "calendar_ending"},
+            )
 
     def _run_locked(self, remote: RemoteLedger, run_id: str, signal_day: date, now: datetime) -> int:
         try:

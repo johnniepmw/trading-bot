@@ -109,6 +109,9 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
         "paused": paused,
     }
     out.write(json.dumps(report) + "\n")
+    log.info(  # the same, as a message `make logs` shows
+        "smoke: new_orders=%s paused=%s version=%s", report["new_orders"], report["paused"], report["version"]
+    )
     return 0
 
 

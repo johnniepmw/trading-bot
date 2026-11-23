@@ -495,3 +495,24 @@ def test_the_dry_runs_broker_has_no_place_at_run_time() -> None:
     reader = read_only(FakeBroker(Money(Decimal(1000), Currency.GBP), {}))
     assert not hasattr(reader, "place")
     assert reader.account().cash == Money(Decimal(1000), Currency.GBP)
+
+
+def test_a_calendar_about_to_run_out_warns_on_mondays(set_up: Path, caplog: pytest.LogCaptureFixture) -> None:
+    monday = datetime(2027, 11, 15, 7, 15, tzinfo=UTC)  # 46 days before the calendar ends
+    with caplog.at_level(logging.WARNING):
+        job_at(set_up, monday).run()
+    [line] = [r for r in caplog.records if getattr(r, "alert", None) == "calendar_ending"]
+    assert "2027-12-31" in line.getMessage()
+
+
+def test_the_calendar_warning_is_weekly_not_daily(set_up: Path, caplog: pytest.LogCaptureFixture) -> None:
+    tuesday = datetime(2027, 11, 16, 7, 15, tzinfo=UTC)
+    with caplog.at_level(logging.WARNING):
+        job_at(set_up, tuesday).run()
+    assert not [r for r in caplog.records if getattr(r, "alert", None) == "calendar_ending"]
+
+
+def test_no_calendar_warning_while_far_from_the_end(set_up: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        job_at(set_up, datetime(2026, 11, 30, 7, 15, tzinfo=UTC)).run()  # a Monday, 13 months out
+    assert not [r for r in caplog.records if getattr(r, "alert", None) == "calendar_ending"]

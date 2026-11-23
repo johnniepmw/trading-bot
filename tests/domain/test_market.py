@@ -85,3 +85,17 @@ def test_price_money_accepts_float_subclasses_with_odd_reprs() -> None:
             return f"np.float64({float(self)})"
 
     assert price_money(VWRP, Scalar(101.5)) == Money(Decimal("101.5"), Currency.GBP)
+
+
+@pytest.mark.parametrize("ticker", ["SSAC", "ssac", "SSAC.L", "SSACl_EQ", "ssac.uk"])
+def test_every_spelling_of_the_benchmark_is_recognised(ticker: str) -> None:
+    from tradingbot.domain.market import is_benchmark_only  # noqa: PLC0415
+
+    assert is_benchmark_only(ticker)
+
+
+@pytest.mark.parametrize("ticker", ["VWRP", "SGLN", "VWRPl_EQ", "S"])
+def test_traded_funds_are_not_the_benchmark(ticker: str) -> None:
+    from tradingbot.domain.market import is_benchmark_only  # noqa: PLC0415
+
+    assert not is_benchmark_only(ticker)
