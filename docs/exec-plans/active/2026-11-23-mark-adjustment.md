@@ -1,56 +1,100 @@
 # Automatic high-water-mark adjustment for deposits and withdrawals
 
-- **Status**: active (spec; owner asked for it, 2026-11-23)
-- **Branch / PR**: ccr-7fe1197d-l39xit / (next after #58)
-- **Risk class**: high (money and risk limits: the drawdown stop's reference point; ADR-0017's reference mark)
+- **Status**: active (spec revised after the architect's review; owner asked for it, 2026-11-23)
+- **Branch / PR**: ccr-7fe1197d-l39xit / (after #58)
+- **Risk class**: high (money and risk limits: the drawdown stop's reference point; ADR-0017's reference mark; setup)
 - **Started**: 2026-11-23
 
 ## Goal
-A deposit or withdrawal on the account the bot trades never changes the drawdown %, never
-trips the "implausible new peak" or drawdown stops, and needs no owner step. The owner gets
-an alert for every adjustment ("manual steps are a point of failure"; "an automatic
-email so we are aware, to guard against a bug").
+A deposit or withdrawal on the account the bot trades never changes the drawdown % or the
+daily-loss check. It never trips the "implausible new peak" stop or a drawdown alert, and it
+needs no owner step. The owner gets an alert for every adjustment ("manual steps are a
+point of failure"; "an automatic email so we are aware, to guard against a bug").
+
+## Definitions
+- **Flow**: a broker cash transaction that moves money in or out. Deposits are positive,
+  withdrawals negative. Each has the broker's unique reference and time.
+- **Baseline**: the cash and transaction cursor as of the last run that checked its flows,
+  or setup. Kept in the ledger and moved on only in the same write as that run's adjustments.
+- **Cursor**: the newest flow time seen (broker time), plus every reference in a 7-day
+  overlap window before it.
+- **Residual**: cash now − baseline cash − Σ new flows − cash effect of fills since the
+  baseline. The fill effect uses `filled_quantity` × average price (÷100 for GBX), buys
+  negative and sells positive, minus fees, for the intents recorded by the baseline's run
+  or later. Reconcile guarantees those are all settled by the time this check runs.
 
 ## Acceptance criteria
 | # | Criterion (observable, pass/fail) | Evidence |
 |---|---|---|
-| AC1 | The broker port reports cash flows since a time: deposits positive, withdrawals negative, each with the broker's reference and time; the fake supports `deposit()` and `withdraw()`; the Trading 212 adapter reads `/history/transactions` (recorded shape: `type`, `amount`, `currency`, `reference`, `dateTime`) and pages it | contract tests on both brokers |
-| AC2 | Each new flow scales the high-water mark by equity after ÷ equity before the flow, so the drawdown % is unchanged; a flow is applied once (by reference), and only flows after the ledger's setup count | cycle tests: deposit, withdrawal, two flows, a re-run |
-| AC3 | A flow is accepted only if the cash change since the previous run's snapshot matches it: the flows plus the cash effect of fills settled since, within 2% of equity (cash, unlike equity, doesn't move with markets). A mismatch stops the run with an alert, and the mark is unchanged | cycle tests: a flow with no cash change; one whose amount disagrees |
-| AC4 | Each adjustment is recorded in the ledger (reference, time, amount, mark before and after, equity) and logged at WARNING with the alert kind `mark_adjusted`, naming the flow's direction, not amounts | ledger and alert tests |
-| AC5 | The "implausible new peak" check and the drawdown alerts use the adjusted mark, so a deposit of any size passes and a withdrawal never alerts as a drawdown | cycle tests |
-| AC6 | The reference mark (ADR-0017) follows recorded adjustments: it stores the adjustment count, and a ledger with fewer adjustments, or as many with a lower mark, is refused as restored. A withdrawal's lower mark is not refused | remote-ledger tests and drills |
-| AC7 | A transaction type the bot doesn't know stops the run with an alert (fail closed); fees are not flows (a loss, like a market move) | adapter tests |
-| AC8 | `scripts/t212_record.py` lists every transaction type it sees, so the owner's demo deposit and withdrawal confirm the names and signs before prod relies on them | script test; the owner's run |
+| AC1 | The broker port lists flows since a broker time, paged (at most 10 pages, else a stop). The fake has `deposit()` and `withdraw()`. The Trading 212 adapter reads `/history/transactions` and stops on: an unknown type; a sign that disagrees with the type; a non-GBP currency; an empty reference; or one reference seen with different details. `FEE` is not a flow | contract and adapter tests |
+| AC2 | Setup stores the baseline (its cash and the cursor). A ledger without one (from before this change) has its baseline recorded by its next run, with nothing applied and a WARNING | setup and cycle tests |
+| AC3 | Every run checks the residual against 2% of the current checked equity. Beyond it the run stops with an alert, the baseline stays put, and no mark changes. A later run passes once the cash and the list agree (a deposit listed before its cash arrives, or the reverse). A fill with no average price stops the run (never estimated) | cycle tests: mismatch then pass; the race between the `account()` and flow reads; unknown fill price |
+| AC4 | Flows scale the mark: new mark = mark × E ÷ (E − ΣF). Each flow's record chains in broker-time order (reference as tie-break). The run stops if E − ΣF ≤ 0. A pure function in `risk`, with 100% branch coverage and a Hypothesis property: the drawdown % is unchanged, whatever the order of the flows | risk tests |
+| AC5 | Day-start equity and the last recorded equity are scaled by the same factor as the mark, for every adjustment applied today (UTC). So the daily-loss check and drawdown alerts see the market-only change, same-day re-runs included. The MAX_NEW_PEAK check uses the adjusted mark | cycle tests: same-day re-run after a withdrawal; withdrawal in a drawdown raises no drawdown alert; a 30% deposit passes |
+| AC6 | The ledger records each adjustment (reference, broker time, amount, mark before and after, equity), the new baseline and the cursor, then the mark, in one transaction. `adjust_high_water_mark` refuses when no mark exists; only `app/cycle.py` calls it. The mark may fall only through a recorded adjustment: "the mark only rises since the last adjustment, and adjustments chain to the marks" | ledger tests; an import test like the seed one |
+| AC7 | Each adjustment logs a WARNING with the alert kind `mark_adjusted`, naming the direction, not amounts. A dry run reports at WARNING with no kind | alert tests |
+| AC8 | The reference mark (ADR-0017 → ADR-0020) stores the latest mark and the adjustment count. A downloaded ledger is refused if it has fewer adjustments, or as many with a lower mark. More adjustments are accepted, and the reference catches up at the next checkpoint. `checkpoint()` writes when the mark or the count changes | remote-ledger tests; drills: death before checkpoint (applied once on the re-run), death between ledger upload and reference write (accepted, caught up), a restore from before an adjustment (refused) |
+| AC9 | `scripts/t212_record.py` lists each transaction type with its sign (done in #58). The owner's demo deposit and withdrawal confirm the names, signs and unique references before prod setup | the owner's run |
 
 ## Non-goals
-- Dividends and interest as flows: they are returns. They show up as small unexplained cash, inside AC3's 2%.
+- Dividends and interest as flows: they are returns, a few pence a day against the 2%. If live
+  shows types for them, they are added deliberately (tech debt), not guessed.
 - A manual owner command to set the mark.
 
 ## Rollout and rollback
-- Flag / kill switch: none new. `new-orders` and pause requests still stop orders. An unknown transaction type or a mismatch stops the run.
-- Data changes: expand only. A new `cash_flows` table, created on open; the reference mark gains an `adjustments` count, read as 0 when absent.
-- Rollback: revert the PR. A ledger with adjustments then fails the old code's check (mark below the reference), so prod would stop with an alert. That is fail-safe; the owner restores with the agent.
+- Order of work: each step leaves main shippable, and the cycle applies nothing before step 4.
+- Flag / kill switch: none new. `new-orders` and pause requests still stop orders.
+- Data changes: expand only. New tables (`cash_flows`, `baseline`); the reference mark gains
+  `adjustments`, read as 0 when absent.
+- Rollback: reverting after a withdrawal leaves a mark row below an earlier one. The old
+  code's `high_water_mark()` then raises inside the download: prod stops with an alert,
+  which fails safe. The old code also rewrites `reference-mark.json` without `adjustments`
+  when the mark next rises, so the count reads 0 until the next adjustment.
 
 ## Decisions
-- **Cash, not equity, checks a flow** (changes the Phase 2 plan's "equity change must match within 2%"). Equity moves with markets, so a 3% market day next to a deposit would stop the run. It would also keep stopping: the comparison point doesn't move until a run completes. Cash moves only with flows, fills, fees, dividends and interest. The last three are small against 2% of equity for a monthly long-only ETF bot.
-- **Proportional scaling**: new mark = mark × equity ÷ (equity − flow). It uses this run's figures only, so a market move between runs can't distort it.
-- **Withdrawals and the risk layer**: after scaling, the drawdown stop sees the same % as before. The daily-loss check also gets its day-start equity shifted by the flow, so a withdrawal is not a "loss".
-- **Fees**: Trading 212's `FEE` transactions are losses, not flows. They are ignored here and show up as cash.
-- **Unknown types** stop the run with an alert until the code knows them. `TRANSFER` stays unknown until its sign is recorded.
+- **Cash, not equity, checks the flows**: equity moves with markets. A fixed baseline makes
+  a mismatch heal itself, because cash doesn't drift. Checked on every run, it also catches
+  a withdrawal that leaves cash before it is listed, a type wrongly treated as a fee, money
+  moved into a Pie, and the owner's own trades in the bot's funds.
+- **Proportional scaling**, applied to the mark, the day start and the last recorded equity.
+  During a drawdown it lowers the mark by more than the withdrawal's £ amount; that is
+  intended, since the drawdown % is what the stop measures.
+- **A cursor in broker time** with a 7-day overlap of known references, so the bot's clock
+  never decides which flows count.
+- **Fail closed** on anything unrecorded: unknown types, odd signs, missing references.
+- **ADR-0020** amends ADR-0017. The reference mark becomes "the latest mark plus an
+  adjustment count", and the ledger's mark may fall only through a recorded adjustment.
+- The Phase 2 plan's Decisions bullet is updated to match. The acceptance plan's C5 (cursor)
+  and C6 (a cash mismatch) are reworded.
 
-## Open questions
-- How Trading 212 names and signs a withdrawal (`WITHDRAW`? negative amount?). Default: type `WITHDRAW`, sign taken from the type, with `abs(amount)`. The owner's demo withdrawal (AC8) confirms it before prod setup.
+## Open questions (owner)
+1. Does the Trading 212 demo app let you deposit and withdraw, or only reset the balance? —
+   default: you try a small withdrawal and deposit in the demo app, then run the recorder. If
+   it only resets, AC9 and acceptance stage C use a reset instead, and live's withdrawal shape
+   stays unconfirmed (tech debt; checked before live).
 
 ## Plan
-1. Port and brokers: `cash_flows(since)`, the fake's knobs, the Trading 212 reader and recorder change (AC1, AC7, AC8). Check: contract tests.
-2. Ledger: `cash_flows` table, adjustment record, adjustment count (AC4). Check: ledger tests.
-3. Cycle: detect, check against cash, scale the mark and the day start, alert (AC2, AC3, AC5). Check: cycle tests and drills.
-4. Remote ledger: the reference mark follows adjustments (AC6). Check: remote-ledger tests and drills; ADR-0017 amendment.
-5. Owner: a small demo deposit and withdrawal, then the recorder run (AC8); acceptance plan stage C after prod setup.
+1. Ledger: `adjust_high_water_mark`, the adjustment and baseline tables, the "falls only by
+   adjustment" rule, one-transaction write (AC6). Remote ledger: the reference follows the
+   count (AC8). Check: ledger and remote-ledger tests, drills.
+2. `risk`: the scaling function (AC4). Check: unit and property tests, 100% branch coverage.
+3. Port and brokers: `cash_flows(since)`, the fake's knobs, the Trading 212 reader (AC1).
+   Setup stores the baseline (AC2). Check: contract tests; setup tests.
+4. Cycle: residual check, scaling, day start, alerts, legacy baseline (AC2, AC3, AC5, AC7).
+   Check: cycle tests, drills, an e2e on fakes (a deposit between two runs).
+5. Docs: ADR-0020, ARCHITECTURE invariants, runbooks (ledger-setup, cycle-alerts,
+   closing-positions), acceptance plan, tech debt.
+6. Owner: the demo deposit and withdrawal plus a recorder run (AC9), then acceptance stage C.
 
 ## Progress log
+- 2026-11-23 spec revised after the architect's review (10 blocking: comparison point, fill
+  effect, the mark's only-rises rule, setup baseline and cursor, existing ledgers, same-day
+  scaling, multi-flow formula, rollback, sequencing, strict parsing; all taken in)
 
 ## Review
+- Architect, round 1: revise, 10 blocking and 7 suggestions. All 10 blocking points are
+  folded into the definitions, ACs and decisions above. Suggestions 1 (check every run),
+  3 (tolerance named), 4 (dry runs), 5 (e2e), 6 (docs) and 7 (in AC8's refusals) are taken;
+  2 is open question 1.
 
 ## Outcome
