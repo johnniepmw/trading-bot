@@ -32,6 +32,8 @@ def test_the_deployers_project_role_reads_and_cancels_only() -> None:
         "run.operations.get",
         "run.operations.list",
         "run.locations.list",
+        "run.services.get",
+        "run.services.list",
     }
 
 

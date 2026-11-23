@@ -64,6 +64,19 @@ restore() {
   gc run jobs update "$job" --region "$region" --image "$previous" \
     || echo "deploy: RESTORE FAILED: $job may be on an unchecked image; roll back with ops" >&2
 }
+# The dashboard service (ADR-0020) follows the job's image, only after the job's check passed.
+# Cloud Run keeps serving the old revision if the new one never becomes ready. A dashboard
+# failure fails this script but never touches the job: trading never depends on the dashboard.
+follow_dashboard() {
+  local service="${app}-dashboard-${env}" names
+  names="$(gc run services list --region "$region" --format='value(metadata.name)')" \
+    || { echo "deploy: warning: couldn't list services, so no dashboard was updated; the job is unaffected" >&2; return 0; }
+  grep -qx "$service" <<<"$names" || { echo "deploy: no $service yet; skipped"; return 0; }
+  gc run services update "$service" --region "$region" --image "$1" \
+    || { echo "deploy: DASHBOARD NOT UPDATED: $service keeps its last good revision; the job is unaffected" >&2; exit 1; }
+  echo "deploy: $service now runs ${1##*@}"
+}
+
 trap restore EXIT
 trap 'exit 1' INT TERM
 gc run jobs update "$job" --region "$region" --image "$image"
@@ -83,3 +96,5 @@ if [[ "$previous" == "${registry}@sha256:"* && "$previous" != "$image" ]]; then
     || echo "deploy: warning: could not tag the previous image for rollback; name its digest instead" >&2
 fi
 echo "deploy: $job now runs ${image##*@}"
+
+follow_dashboard "$image"

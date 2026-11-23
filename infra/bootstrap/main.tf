@@ -167,9 +167,10 @@ resource "google_artifact_registry_repository_iam_member" "push" {
 resource "google_project_iam_custom_role" "job_deployer_reader" {
   project = var.project_id
   role_id = "jobDeployerReader"
-  title   = "Read Cloud Run jobs and executions; cancel executions"
+  title   = "Read Cloud Run jobs, executions and services; cancel executions"
   permissions = [
     "run.jobs.get", "run.jobs.list",
+    "run.services.get", "run.services.list", # finds the dashboard service (ADR-0020); updates need its own grant
     "run.executions.get", "run.executions.list", "run.executions.cancel",
     "run.operations.get", "run.operations.list",
     "run.locations.list",
