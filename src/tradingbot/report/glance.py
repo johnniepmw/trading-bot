@@ -29,7 +29,7 @@ class Line:
 @dataclass(frozen=True, slots=True)
 class GlanceInput:
     as_of: datetime  # UTC, the run's end
-    outcome: str  # "completed", or anything else (stopped, died): red
+    outcome: str  # "completed"; "running" (amber); anything else (stopped, died): red
     reason: str | None  # why it stopped
     equity: Money | None  # recorded today
     day_start: Money | None
@@ -66,6 +66,10 @@ def _run(g: GlanceInput) -> Line:
     when = g.as_of.strftime("%a %d %b %H:%M UTC")
     if g.outcome == "completed":
         return Line(Level.OK, f"Run: completed {when}")
+    if g.outcome == "running":
+        return Line(Level.WARN, f"Run: in progress since {when}")
+    if g.outcome == "died":
+        return Line(Level.STOP, f"Run: did not finish (started {when}); the next run reports it")
     return Line(Level.STOP, f"Run: STOPPED {when}: {g.reason or 'no reason given'}")
 
 

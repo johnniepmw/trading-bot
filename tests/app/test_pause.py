@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,8 @@ from tradingbot.app.__main__ import main
 from tradingbot.app.flags import Flags, FlagSpec
 from tradingbot.app.job import EXIT_STOPPED, JobConfigError, wiring_from
 from tradingbot.app.local_store import LocalObjectStore
-from tradingbot.app.pause import PauseRequests
-from tradingbot.app.storage import StorageError
+from tradingbot.app.pause import PauseRequestError, PauseRequests, request_pause
+from tradingbot.app.storage import ObjectInfo, PreconditionFailedError, StorageError, TransientStorageError
 
 REGISTRY = {"new-orders": FlagSpec(type="kill-switch", default=True)}
 
@@ -128,3 +129,75 @@ def test_the_local_store_ignores_cleared_requests(tmp_path: Path) -> None:
     assert PauseRequests(local, "pause").present() is True
     local.delete("pause", "requests/x", if_generation_match=written.generation)
     assert PauseRequests(local, "pause").present() is False
+
+
+# --- writing a pause request (the dashboard's button) ----------------------------------
+NOW_UTC = datetime(2026, 11, 24, 9, 30, tzinfo=UTC)
+
+
+class Flaky(LocalObjectStore):
+    """Fails the first `fail` writes; `landed` makes the first failure land anyway."""
+
+    def __init__(
+        self, root: Path, fail: int, *, landed: bool = False, error: Exception | None = None
+    ) -> None:
+        super().__init__(root)
+        self.fail, self.landed, self.error, self.writes = fail, landed, error, 0
+
+    def write(self, bucket: str, name: str, data: bytes, *, if_generation_match: int) -> ObjectInfo:
+        self.writes += 1
+        if self.fail:
+            self.fail -= 1
+            if self.landed:
+                self.landed = False
+                super().write(bucket, name, data, if_generation_match=if_generation_match)
+            raise self.error or TransientStorageError("timeout")
+        return super().write(bucket, name, data, if_generation_match=if_generation_match)
+
+
+def test_a_pause_request_is_one_new_object_and_an_alert(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = LocalObjectStore(tmp_path)
+    with caplog.at_level(logging.WARNING):
+        name = request_pause(store, "pause", NOW_UTC, sleep=lambda _: None)
+    assert name.startswith("dashboard-20261124T093000Z-")
+    assert store.has_objects("pause")
+    (record,) = [r for r in caplog.records if r.getMessage().startswith("pause requested")]
+    assert getattr(record, "alert", None) == "pause_requested"
+
+
+def test_two_presses_make_two_requests(tmp_path: Path) -> None:
+    store = LocalObjectStore(tmp_path)
+    assert request_pause(store, "pause", NOW_UTC) != request_pause(store, "pause", NOW_UTC)
+
+
+def test_a_timeout_is_retried(tmp_path: Path) -> None:
+    store = Flaky(tmp_path, fail=1)
+    request_pause(store, "pause", NOW_UTC, sleep=lambda _: None)
+    assert (store.writes, store.has_objects("pause")) == (2, True)
+
+
+def test_a_retry_that_finds_its_own_write_is_success(tmp_path: Path) -> None:
+    store = Flaky(tmp_path, fail=1, landed=True)
+    request_pause(store, "pause", NOW_UTC, sleep=lambda _: None)
+    assert store.has_objects("pause")
+
+
+def test_storage_down_is_an_error_not_a_pause(tmp_path: Path) -> None:
+    store = Flaky(tmp_path, fail=3)
+    with pytest.raises(PauseRequestError, match="unavailable"):
+        request_pause(store, "pause", NOW_UTC, sleep=lambda _: None)
+    assert not store.has_objects("pause")
+
+
+def test_a_refused_write_is_an_error(tmp_path: Path) -> None:
+    store = Flaky(tmp_path, fail=1, error=StorageError("403"))
+    with pytest.raises(PauseRequestError, match="refused"):
+        request_pause(store, "pause", NOW_UTC, sleep=lambda _: None)
+
+
+def test_a_name_clash_without_an_earlier_attempt_is_an_error(tmp_path: Path) -> None:
+    store = Flaky(tmp_path, fail=1, error=PreconditionFailedError("412"))
+    with pytest.raises(PauseRequestError, match="already exists"):
+        request_pause(store, "pause", NOW_UTC, sleep=lambda _: None)
