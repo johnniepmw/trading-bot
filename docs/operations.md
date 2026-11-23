@@ -58,3 +58,12 @@ path. A rebuild drill runs quarterly; anything manual discovered in the drill be
 Stabilise first (rollback or kill), then tell the owner, diagnose, fix forward with a
 regression test, and write a postmortem in `docs/postmortems/`. The `incident` skill runs
 this.
+
+## The dashboard (ADR-0020)
+- A Cloud Run service per environment, `trading-bot-dashboard-<env>`, behind IAP (owner only;
+  docs/runbooks/dashboard-access.md). The trading job never depends on it.
+- Deploys move it after the job's check passes; rollbacks move it with the job. A dashboard
+  failure fails the workflow (and, in staging, holds back the prod deploy) but never touches
+  the job: fix forward or re-run. Rolling back to an image older than the dashboard (no
+  `serve` command) leaves the dashboard on its revision and `ops rollback` reports a failure
+  although the job rolled back.

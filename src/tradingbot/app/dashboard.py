@@ -16,23 +16,26 @@ from __future__ import annotations
 import logging
 import tempfile
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from tradingbot.app.calendar import TradingCalendar
 from tradingbot.app.glance_facts import glance_input
-from tradingbot.app.pause import PauseRequestError, PauseRequests, request_pause
+from tradingbot.app.job import JobConfigError, build_store, wiring_from
+from tradingbot.app.pause import PauseRequestError, request_pause
 from tradingbot.app.remote_ledger import (
     LOCK_OBJECT,
+    STALE_AFTER,
     LedgerStorageError,
     RemoteLedger,
     RestoredLedgerError,
 )
 from tradingbot.app.storage import ObjectStore, StorageError
+from tradingbot.config.load import load_config
 from tradingbot.config.types import BotConfig
 from tradingbot.report.glance import glance
 from tradingbot.report.page import RunRow, confirm_page, error_page, glance_page, paused_page
@@ -105,20 +108,32 @@ class Dashboard:
             finally:
                 ledger.close()
         rows = [RunRow(r.started_at, r.outcome, r.reason) for r in reversed(runs[-RECENT_RUNS:])]
+        rows[0] = RunRow(latest.started_at, facts.outcome, facts.reason)  # running or died, as above
         page = glance_page(
             glance(facts),
             as_of=facts.as_of,
             environment=self.environment,
             runs=rows,
-            paused=PauseRequests(self.store, self.pause_bucket).present(),
+            paused=self._paused(),
         )
         return Response(HTTPStatus.OK, page)
 
     def _lock_held(self) -> bool:
+        """A run holds a fresh lock; one older than STALE_AFTER belongs to a run that died."""
         try:
-            return self.store.info(self.lock_bucket, LOCK_OBJECT) is not None
+            info = self.store.info(self.lock_bucket, LOCK_OBJECT)
         except StorageError:
             return False
+        return info is not None and self.clock() - info.created <= STALE_AFTER
+
+    def _paused(self) -> bool | None:
+        """Whether a pause request exists; None when the pause location can't be read. Unlike
+        the job (which must fail closed), the page then says "unknown" and keeps the button."""
+        try:
+            return self.store.has_objects(self.pause_bucket)
+        except StorageError as error:
+            log.warning("dashboard: pause location unreadable (%s)", type(error).__name__)
+            return None
 
     def confirm(self) -> Response:
         return Response(HTTPStatus.OK, confirm_page(self.environment))
@@ -175,12 +190,16 @@ def route(  # noqa: PLR0911 - one return per route
 class _Handler(BaseHTTPRequestHandler):
     server: _Server
     server_version = "dashboard"
+    timeout = 15  # seconds per socket read: a slow client can't hold a thread
     sys_version = ""
 
     def _answer(self, method: str) -> None:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY:
-            self._send(Response(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, error_page("Too large")))
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= MAX_BODY:
+            self._send(Response(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, error_page("Bad or too large body")))
             return
         body = self.rfile.read(length) if length else b""
         headers = {k.lower(): v for k, v in self.headers.items()}
@@ -203,6 +222,14 @@ class _Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         self._answer("DELETE")
 
+    def do_HEAD(self) -> None:
+        self._answer("HEAD")
+
+    def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
+        """Malformed requests too get the security headers, and no server text."""
+        self.close_connection = True
+        self._send(Response(HTTPStatus(code), error_page("Bad request")))
+
     def _send(self, response: Response) -> None:
         data = response.body.encode()
         self.send_response(response.status)
@@ -212,7 +239,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Location", response.location)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":
+            self.wfile.write(data)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - http.server's name
         log.info("dashboard %s", format % args)
@@ -226,3 +254,29 @@ def make_server(dashboard: Dashboard, port: int, host: str = "0.0.0.0") -> _Serv
     server = _Server((host, port), _Handler)
     server.dashboard = dashboard
     return server
+
+
+DASHBOARD_TIMEOUT = 10.0  # seconds per storage call: a slow bucket shows an error page quickly
+
+
+def build_dashboard(
+    env: Mapping[str, str], clock: Callable[[], datetime] | None = None
+) -> tuple[Dashboard, int]:
+    """The dashboard service's wiring (`serve`): the same bucket names and checks as the job,
+    no flags, no broker, no secrets (dashboard plan, slice 1)."""
+    wiring = wiring_from(env)
+    now = clock or (lambda: datetime.now(UTC))
+    try:
+        port = int(env.get("PORT", "8080"))
+    except ValueError as error:
+        raise JobConfigError("PORT must be a number") from error
+    dashboard = Dashboard(
+        store=build_store(wiring, now, timeout=DASHBOARD_TIMEOUT),
+        environment=wiring.app_env,
+        ledger_bucket=wiring.ledger_bucket,
+        lock_bucket=wiring.lock_bucket,
+        pause_bucket=wiring.pause_bucket,
+        config=load_config(),
+        clock=now,
+    )
+    return dashboard, port

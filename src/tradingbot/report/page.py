@@ -51,8 +51,9 @@ def _pause_button() -> str:
 
 
 def glance_page(
-    lines: list[Line], *, as_of: datetime, environment: str, runs: list[RunRow], paused: bool
+    lines: list[Line], *, as_of: datetime, environment: str, runs: list[RunRow], paused: bool | None
 ) -> str:
+    """`paused` None: the pause location couldn't be read; the button stays (pressing is harmless)."""
     items = "".join(
         f'<li><b class=m style="color:{_COLOUR[x.level]}">[{escape(x.level.value)}]</b> {escape(x.text)}</li>'
         for x in lines
@@ -62,11 +63,14 @@ def glance_page(
         f"<td class=r>{escape(r.reason or '')}</td></tr>"
         for r in runs
     )
-    state = (
-        "<p><b>New orders are paused.</b> Only the owner's <code>ops clear-pause</code> resumes them.</p>"
-        if paused
-        else _pause_button()
-    )
+    if paused:
+        state = (
+            "<p><b>New orders are paused.</b> Only the owner's <code>ops clear-pause</code> resumes them.</p>"
+        )
+    elif paused is None:
+        state = "<p><b>Pause state unknown</b> (couldn't be read just now).</p>" + _pause_button()
+    else:
+        state = _pause_button()
     body = (
         f"<h1>Trading bot ({escape(environment)})</h1>"
         f"<p class=sub>As of {as_of:%a %d %b %Y %H:%M} UTC, from the bot's ledger</p>"

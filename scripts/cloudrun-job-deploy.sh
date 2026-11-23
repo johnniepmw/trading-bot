@@ -75,6 +75,23 @@ follow_dashboard() {
   gc run services update "$service" --region "$region" --image "$1" \
     || { echo "deploy: DASHBOARD NOT UPDATED: $service keeps its last good revision; the job is unaffected" >&2; exit 1; }
   echo "deploy: $service now runs ${1##*@}"
+  dashboard_not_public "$service" || exit 1
+}
+
+# A tripwire (ADR-0020): the dashboard shows account data and must never be public. IAP is
+# set by the owner, but CI's infra identity could still loosen the service, so every deploy
+# and rollback checks: no allUsers/allAuthenticatedUsers invoker, invoker IAM not disabled.
+dashboard_not_public() {
+  local policy described
+  policy="$(gc run services get-iam-policy "$1" --region "$region" --format=json)" \
+    || { echo "deploy: DASHBOARD CHECK FAILED: couldn't read $1's access policy" >&2; return 1; }
+  described="$(gc run services describe "$1" --region "$region" --format=json)" \
+    || { echo "deploy: DASHBOARD CHECK FAILED: couldn't read $1" >&2; return 1; }
+  if grep -Eq '"(allUsers|allAuthenticatedUsers)"' <<<"$policy" \
+     || grep -Eq '"(run.googleapis.com/invoker-iam-disabled|invokerIamDisabled)": *"?true' <<<"$described"; then
+    echo "deploy: DASHBOARD IS PUBLIC: $1 lets anyone call it; remove that access now (dashboard-access.md)" >&2
+    return 1
+  fi
 }
 
 trap restore EXIT

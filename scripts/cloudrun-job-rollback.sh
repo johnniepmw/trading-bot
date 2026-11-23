@@ -48,4 +48,12 @@ if grep -qx "$service" <<<"$names"; then
   gc run services update "$service" --region "$region" --image "$target" \
     || { echo "rollback: DASHBOARD NOT ROLLED BACK: $service keeps its revision; the job is rolled back" >&2; exit 1; }
   echo "rollback: $service runs ${target##*@}"
+  policy="$(gc run services get-iam-policy "$service" --region "$region" --format=json)" || policy=unreadable
+  described="$(gc run services describe "$service" --region "$region" --format=json)" || described=unreadable
+  if [ "$policy" = unreadable ] || [ "$described" = unreadable ] \
+     || grep -Eq '"(allUsers|allAuthenticatedUsers)"' <<<"$policy" \
+     || grep -Eq '"(run.googleapis.com/invoker-iam-disabled|invokerIamDisabled)": *"?true' <<<"$described"; then
+    echo "rollback: DASHBOARD CHECK FAILED: $service may be public or unreadable (ADR-0020); the job is rolled back" >&2
+    exit 1
+  fi
 fi

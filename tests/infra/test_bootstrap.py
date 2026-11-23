@@ -21,7 +21,7 @@ def test_the_deployer_holds_no_project_wide_cloud_run_write_role() -> None:
 
 def test_the_deployers_project_role_reads_and_cancels_only() -> None:
     permissions = set(
-        re.findall(r'"(run\.[a-z.]+)"', block("google_project_iam_custom_role", "job_deployer_reader"))
+        re.findall(r'"(run\.[A-Za-z.]+)"', block("google_project_iam_custom_role", "job_deployer_reader"))
     )
     assert permissions == {
         "run.jobs.get",
@@ -34,6 +34,7 @@ def test_the_deployers_project_role_reads_and_cancels_only() -> None:
         "run.locations.list",
         "run.services.get",
         "run.services.list",
+        "run.services.getIamPolicy",
     }
 
 

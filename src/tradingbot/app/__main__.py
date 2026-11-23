@@ -21,9 +21,8 @@ from pathlib import Path
 from typing import TextIO
 
 from tradingbot.app.alerts import alert_kind
-from tradingbot.app.dashboard import make_server
 from tradingbot.app.flags import Flags, GcsSource, load_registry
-from tradingbot.app.job import EXIT_STOPPED, JobConfigError, build_dashboard, build_job
+from tradingbot.app.job import EXIT_STOPPED, JobConfigError, build_job
 from tradingbot.app.local_store import LocalObjectStore
 from tradingbot.app.pause import PauseRequests
 from tradingbot.app.storage import GcsObjectStore, metadata_token, urllib_transport
@@ -128,6 +127,9 @@ def main(  # noqa: PLR0911, PLR0913 - one return per command; injectable depende
 
 
 def serve(env: Mapping[str, str]) -> int:
+    # imported here, so the job's commands never load the dashboard (it never affects trading)
+    from tradingbot.app.dashboard import build_dashboard, make_server  # noqa: PLC0415
+
     try:
         dashboard, port = build_dashboard(env)
     except (JobConfigError, ConfigFileError) as exc:

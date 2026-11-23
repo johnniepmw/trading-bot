@@ -78,10 +78,13 @@ def test_the_oauth_client_goes_to_iap_and_the_secret_is_never_printed(fake: Path
     assert "s3cr3t-value" not in result.stdout + result.stderr + "\n".join(calls(fake))
 
 
-def test_public_access_is_removed(fake: Path) -> None:
-    (fake / "policy").write_text('{"bindings": [{"members": ["allUsers"], "role": "roles/run.invoker"}]}')
+@pytest.mark.parametrize("public", ["allUsers", "allAuthenticatedUsers"])
+def test_public_access_is_removed(fake: Path, public: str) -> None:
+    (fake / "policy").write_text(
+        f'{{"bindings": [{{"members": ["{public}"], "role": "roles/run.invoker"}}]}}'
+    )
     assert run(fake, "staging").returncode == 0
-    assert any("remove-iam-policy-binding" in c and "--member=allUsers" in c for c in calls(fake))
+    assert any("remove-iam-policy-binding" in c and f"--member={public}" in c for c in calls(fake))
 
 
 def test_it_needs_the_oauth_client(fake: Path) -> None:

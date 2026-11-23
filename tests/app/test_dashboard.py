@@ -3,6 +3,7 @@ button's rules. Local store, fake data only (ADR-0014)."""
 
 from __future__ import annotations
 
+import logging
 import threading
 import urllib.error
 import urllib.request
@@ -18,6 +19,7 @@ from tradingbot.app.dashboard import HEADERS, Dashboard, Response, make_server, 
 from tradingbot.app.remote_ledger import LEDGER_OBJECT, LOCK_OBJECT, MARK_OBJECT
 from tradingbot.app.storage import ObjectInfo, StorageError
 from tradingbot.config.load import load_config
+from tradingbot.ledger.store import Ledger
 
 SAME = {"sec-fetch-site": "same-origin"}
 
@@ -80,8 +82,6 @@ def test_a_run_holding_the_lock_shows_as_in_progress(ran: Path) -> None:
     s = store(ran)
     s.write("locks", LOCK_OBJECT, b"{}", if_generation_match=0)
     # an unfinished run record, as a run in progress has uploaded
-    from tradingbot.ledger.store import Ledger  # noqa: PLC0415 - this test only
-
     info = s.info("ledger", LEDGER_OBJECT)
     assert info is not None
     path = ran / "copy.sqlite"
@@ -90,7 +90,42 @@ def test_a_run_holding_the_lock_shows_as_in_progress(ran: Path) -> None:
     led.start_run("run-live", RUN_DAY + timedelta(days=1, hours=7), "v")
     led.close()
     s.write("ledger", LEDGER_OBJECT, path.read_bytes(), if_generation_match=info.generation)
-    assert "Run: in progress since" in get(dashboard(ran)).body
+    assert "Run: in progress since" in get(dashboard(ran, now=RUN_DAY + timedelta(minutes=10))).body
+    # past STALE_AFTER the lock belongs to a run that died (killed at its timeout, say)
+    stale = get(dashboard(ran, now=RUN_DAY + timedelta(hours=2))).body
+    assert "Run: did not finish" in stale
+    assert "<td>died</td>" in stale  # the table agrees with the glance
+
+
+def test_an_unreadable_pause_location_is_unknown_and_keeps_the_button(
+    ran: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(bucket: str) -> bool:
+        raise StorageError("503")
+
+    d = dashboard(ran)
+    monkeypatch.setattr(d.store, "has_objects", broken)
+    with caplog.at_level(logging.WARNING):
+        page = get(d).body
+    assert "Pause state unknown" in page
+    assert '<form method=post action="/pause/confirm">' in page
+    assert "New orders are paused" not in page
+    assert all(getattr(r, "alert", None) is None for r in caplog.records)  # not the job's alert
+
+
+def test_only_the_last_ten_runs_are_listed(ran: Path) -> None:
+    s = store(ran)
+    info = s.info("ledger", LEDGER_OBJECT)
+    assert info is not None
+    path = ran / "copy.sqlite"
+    path.write_bytes(s.read("ledger", LEDGER_OBJECT, info.generation))
+    led = Ledger.open(path)
+    for n in range(12):
+        led.start_run(f"old-{n}", RUN_DAY - timedelta(days=30 - n), "v")
+        led.finish_run(f"old-{n}", RUN_DAY - timedelta(days=30 - n, minutes=-1), "completed", None)
+    led.close()
+    s.write("ledger", LEDGER_OBJECT, path.read_bytes(), if_generation_match=info.generation)
+    assert get(dashboard(ran)).body.count("<tr>") == 10
 
 
 def test_no_ledger_is_an_error_page(tmp_path: Path) -> None:
@@ -179,6 +214,20 @@ def test_every_response_carries_the_security_headers(served: str) -> None:
     for name, value in HEADERS.items():
         assert headers[name] == value
     assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+
+
+def test_head_and_bad_lengths_get_the_security_headers(served: str) -> None:
+    request = urllib.request.Request(served + "/", method="HEAD")  # noqa: S310 - local server
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(request, timeout=5)  # noqa: S310 - local server
+    assert error.value.code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert error.value.headers["X-Frame-Options"] == "DENY"
+    bad = urllib.request.Request(  # noqa: S310 - local server
+        served + "/pause", data=b"x", method="POST", headers={**SAME, "Content-Length": "-1"}
+    )
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(bad, timeout=5)  # noqa: S310 - local server
+    assert error.value.code == HTTPStatus.REQUEST_ENTITY_TOO_LARGE
 
 
 def test_an_oversized_post_is_refused(served: str) -> None:

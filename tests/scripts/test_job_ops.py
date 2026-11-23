@@ -47,6 +47,10 @@ elif cmd == "run services list":
     if os.path.exists(path("services_list_fails")):
         sys.exit(1)
     print(read("services"))
+elif cmd == "run services get-iam-policy":
+    print(read("service_policy", "{}"))
+elif cmd == "run services describe":
+    print(read("service_described", "{}"))
 elif cmd == "run services update":
     if os.path.exists(path("service_fails")):
         sys.exit(1)
@@ -416,3 +420,37 @@ def test_a_deployer_that_cant_list_services_skips_the_dashboard_with_a_warning(f
     assert result.returncode == 0
     assert "couldn't list services" in result.stderr
     assert (fake / "image").read_text() == NEW
+
+
+@pytest.mark.parametrize(
+    ("file", "content"),
+    [
+        ("service_policy", '{"bindings": [{"members": ["allUsers"], "role": "roles/run.invoker"}]}'),
+        (
+            "service_policy",
+            '{"bindings": [{"members": ["allAuthenticatedUsers"], "role": "roles/run.invoker"}]}',
+        ),
+        (
+            "service_described",
+            '{"metadata": {"annotations": {"run.googleapis.com/invoker-iam-disabled": "true"}}}',
+        ),
+    ],
+)
+def test_a_public_dashboard_fails_the_deploy_loudly(fake: Path, file: str, content: str) -> None:
+    (fake / "services").write_text("trading-bot-dashboard-staging\n")
+    (fake / file).write_text(content)
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode == 1
+    assert "DASHBOARD IS PUBLIC" in result.stderr
+    assert (fake / "image").read_text() == NEW  # the job is unaffected
+
+
+def test_a_public_dashboard_fails_a_rollback_loudly(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    (fake / "previous_digest").write_text("sha256:" + "a" * 64)
+    (fake / "services").write_text("trading-bot-dashboard-prod\n")
+    (fake / "service_policy").write_text('{"bindings": [{"members": ["allUsers"]}]}')
+    result = run(fake, "cloudrun-job-rollback.sh", "prod")
+    assert result.returncode == 1
+    assert "DASHBOARD CHECK FAILED" in result.stderr
+    assert (fake / "image").read_text() == OLD

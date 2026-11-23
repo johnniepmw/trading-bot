@@ -24,8 +24,8 @@ Option 2.
   HTTP, server-rendered HTML, no scripts, a strict CSP that also forbids framing.
 - **Access**: IAP on the service; IAP's service agent is the only invoker; only the owner's
   account may sign in. All three are set by the owner's own `scripts/dashboard-iap.sh`, never by
-  CI or OpenTofu state, so no CI identity holds IAP rights, the OAuth client secret or the
-  owner's address.
+  CI or OpenTofu state, so no CI identity is granted IAP rights or holds the OAuth client secret
+  or the owner's address (CI can still change the service itself: see Consequences).
 - **Identity** (owner-created in the bootstrap, like the jobs'): reads the ledger and lock
   buckets, lists and creates (never deletes) pause requests. No flags, secrets, broker key or
   write access to the ledger.
@@ -41,7 +41,12 @@ Option 2.
 - Good: the owner sees the glance any time and can stop new orders from a phone; the job never
   depends on the dashboard.
 - Bad / costs: a public URL that only IAP guards (a direct call with a Google ID token must be
-  refused: part of the staging check). The owner runs a short script per environment once.
+  refused: part of the staging check). CI's infra identity (project `run.admin`, actAs on the
+  dashboard identity) could still switch IAP off or add a public invoker through a merged
+  OpenTofu change; the module pins IAP and never manages the invoker authoritatively, its tests
+  forbid public members and disabled invoker IAM, and every deploy and rollback checks the
+  live service and fails loudly if it is public. The app doesn't verify IAP's signed header:
+  that needs an ES256 library (ADR-0007); revisit if the tripwire ever fires. The owner runs a short script per environment once.
   Cost: nothing at this traffic (IAP is free; the service scales to zero).
 - Revisit when: the dashboard needs data the ledger doesn't hold (slice 2 stores benchmark
   closes in the ledger), or a second person needs access.

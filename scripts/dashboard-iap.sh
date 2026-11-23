@@ -45,16 +45,21 @@ number="$(gc projects describe "$project" --format='value(projectNumber)')"
 gc beta services identity create --service=iap.googleapis.com >/dev/null
 gc run services add-iam-policy-binding "$service" --region "$region" \
   --member="serviceAccount:service-${number}@gcp-sa-iap.iam.gserviceaccount.com" --role=roles/run.invoker >/dev/null
-if gc run services get-iam-policy "$service" --region "$region" --format=json | grep -q '"allUsers"'; then
-  echo "    removing public access (allUsers)"
-  gc run services remove-iam-policy-binding "$service" --region "$region" \
-    --member=allUsers --role=roles/run.invoker >/dev/null
-fi
+policy="$(gc run services get-iam-policy "$service" --region "$region" --format=json)"
+for public in allUsers allAuthenticatedUsers; do
+  if grep -q "\"$public\"" <<<"$policy"; then
+    echo "    removing public access ($public)"
+    gc run services remove-iam-policy-binding "$service" --region "$region" \
+      --member="$public" --role=roles/run.invoker >/dev/null
+  fi
+done
 
-echo "==> only your account ($account) may sign in"
+echo "==> your account ($account) may sign in; check no one else is listed below"
 gc iap web add-iam-policy-binding --resource-type=cloud-run --service="$service" --region="$region" \
   --member="user:${account}" --role=roles/iap.httpsResourceAccessor >/dev/null
 
+gc iap web get-iam-policy --resource-type=cloud-run --service="$service" --region="$region" \
+  --format='value(bindings.members)'
 url="$(gc run services describe "$service" --region "$region" --format='value(status.url)')"
 echo
 echo "Done. Open $url on your phone and sign in. Then check another Google account (or a private"

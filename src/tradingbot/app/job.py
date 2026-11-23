@@ -30,7 +30,6 @@ from pathlib import Path
 from tradingbot.app.calendar import CalendarError, TradingCalendar
 from tradingbot.app.cycle import CycleConfig, dry_run_cycle, run_cycle
 from tradingbot.app.daily_email import EmailError, compose, read_sender, send
-from tradingbot.app.dashboard import Dashboard
 from tradingbot.app.eodhd import EodhdHistory, read_key
 from tradingbot.app.flags import Flags
 from tradingbot.app.glance_facts import glance_input
@@ -405,6 +404,7 @@ class Job:
                 limits=Limits(**vars(self.config.limits)),
                 now=self.clock(),
                 stopped=stopped,
+                in_progress=True,  # this very run: if its record has no end, it is still finishing
             )
             outbox.append(compose(facts, self.wiring.app_env))
         except Exception as error:  # noqa: BLE001 - the email must never change the run
@@ -523,29 +523,3 @@ def build_job(env: Mapping[str, str], flags: Flags, clock: Callable[[], datetime
     fixed = wiring.fake_now
     now = clock or ((lambda: fixed) if fixed is not None else (lambda: datetime.now(UTC)))
     return Job(wiring=wiring, config=load_config(), store=build_store(wiring, now), flags=flags, clock=now)
-
-
-DASHBOARD_TIMEOUT = 10.0  # seconds per storage call: a slow bucket shows an error page quickly
-
-
-def build_dashboard(
-    env: Mapping[str, str], clock: Callable[[], datetime] | None = None
-) -> tuple[Dashboard, int]:
-    """The dashboard service's wiring (`serve`): the same bucket names and checks as the job,
-    no flags, no broker, no secrets (dashboard plan, slice 1)."""
-    wiring = wiring_from(env)
-    now = clock or (lambda: datetime.now(UTC))
-    try:
-        port = int(env.get("PORT", "8080"))
-    except ValueError as error:
-        raise JobConfigError("PORT must be a number") from error
-    dashboard = Dashboard(
-        store=build_store(wiring, now, timeout=DASHBOARD_TIMEOUT),
-        environment=wiring.app_env,
-        ledger_bucket=wiring.ledger_bucket,
-        lock_bucket=wiring.lock_bucket,
-        pause_bucket=wiring.pause_bucket,
-        config=load_config(),
-        clock=now,
-    )
-    return dashboard, port

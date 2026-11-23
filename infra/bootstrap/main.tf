@@ -170,7 +170,8 @@ resource "google_project_iam_custom_role" "job_deployer_reader" {
   title   = "Read Cloud Run jobs, executions and services; cancel executions"
   permissions = [
     "run.jobs.get", "run.jobs.list",
-    "run.services.get", "run.services.list", # finds the dashboard service (ADR-0020); updates need its own grant
+    # find the dashboard service and check it isn't public (ADR-0020); updating it needs its own grant
+    "run.services.get", "run.services.list", "run.services.getIamPolicy",
     "run.executions.get", "run.executions.list", "run.executions.cancel",
     "run.operations.get", "run.operations.list",
     "run.locations.list",
