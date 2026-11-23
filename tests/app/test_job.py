@@ -540,3 +540,50 @@ def test_a_fake_clock_drives_a_local_run(tmp_path: Path) -> None:
 def test_a_bad_fake_clock_is_refused(tmp_path: Path, value: str) -> None:
     with pytest.raises(JobConfigError, match="FAKE_NOW"):
         wiring_from(env_for(tmp_path, FAKE_NOW=value))
+
+
+# --- staging-only reset (tech debt) ---------------------------------------------------------
+def test_a_reset_starts_staging_afresh(set_up: Path, caplog: pytest.LogCaptureFixture) -> None:
+    job_at(set_up, RUN_DAY).run()
+    assert fake_orders(set_up)  # some fake trading happened
+    with caplog.at_level(logging.WARNING):
+        assert job_at(set_up, RUN_DAY).setup("1000", reset=True) == EXIT_OK
+    assert fake_orders(set_up) == []  # a fresh fake account
+    assert [getattr(r, "alert", None) for r in caplog.records if "reset" in r.getMessage()] == [
+        "ledger_reset"
+    ]
+    ledger = saved_ledger(set_up)
+    assert (ledger.open_intents(), ledger.settled()) == ([], [])  # a fresh ledger
+
+
+def test_a_reset_ledger_runs_normally(set_up: Path) -> None:
+    job_at(set_up, RUN_DAY).run()
+    job_at(set_up, RUN_DAY).setup("1000", reset=True)
+    assert (
+        job_at(set_up, RUN_DAY).run() == EXIT_OK
+    )  # the reset ledger runs (buys vetoed: no day-start equity yet)
+
+
+def test_without_reset_a_second_setup_is_still_refused(set_up: Path) -> None:
+    assert job_at(set_up, RUN_DAY).setup("1000") == EXIT_STOPPED
+
+
+def test_prod_refuses_a_reset(tmp_path: Path) -> None:
+    from dataclasses import replace  # noqa: PLC0415
+
+    job = job_at(tmp_path, RUN_DAY)
+    prod = replace(job, wiring=replace(job.wiring, app_env="prod"))
+    with pytest.raises(JobConfigError, match="reset"):
+        prod.setup("1000", reset=True)
+
+
+def test_a_reset_needs_the_lock(set_up: Path) -> None:
+    store(set_up).write(
+        "locks", LOCK_OBJECT, b'{"execution": "x", "run_id": "y", "holder": "run"}', if_generation_match=0
+    )
+    assert job_at(set_up, RUN_DAY).setup("1000", reset=True) == EXIT_STOPPED
+    assert store(set_up).info("ledger", LEDGER_OBJECT) is not None  # nothing cleared
+
+
+def test_a_reset_with_nothing_to_clear_is_a_plain_setup(tmp_path: Path) -> None:
+    assert job_at(tmp_path, SETUP_DAY).setup("1000", reset=True) == EXIT_OK

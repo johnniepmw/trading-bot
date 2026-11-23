@@ -83,3 +83,16 @@ def test_smoke_also_logs_a_readable_line(caplog: pytest.LogCaptureFixture) -> No
     with caplog.at_level(logging.INFO):
         run(["smoke"], env={})
     assert "smoke: new_orders=True paused=False version=abc123" in caplog.text
+
+
+def test_setup_accepts_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, bool]] = []
+
+    class FakeJob:
+        def setup(self, equity: str, *, reset: bool = False) -> int:
+            seen.append((equity, reset))
+            return 0
+
+    monkeypatch.setattr("tradingbot.app.__main__.build_job", lambda env, flags: FakeJob())
+    assert run(["setup", "--equity", "1000", "--reset"], env={})[0] == 0
+    assert seen == [("1000", True)]

@@ -3,7 +3,6 @@
 Things noticed but deliberately left out of scope. One line each, newest first.
 Format: `- YYYY-MM-DD <area>: <problem> — <impact> — <suggested fix>`
 
-- 2026-11-22 staging: setup refuses where a ledger ever existed (soft-deleted included), so staging's ledger can't be reset in place (staging-ledger-reset.md) — testing from a clean state means a 30-day wait — add a staging-only reset path that the prod wiring refuses
 - 2026-11-21 agent-review (pre-existing, high): the required `agent-review` check is matched by name only, so a workflow on any branch with `checks: write` could create a passing `agent-review` check run on a PR head (the `risk-gate` status is now pinned to its own app; see docs/runbooks/risk-gate-app.md) — post the verdict through a dedicated app too and pin `integration_id` to it
 - 2026-11-21 kit escalate skill: says the owner comments `/approve-risk <first 7+ chars>`; risk-gate now needs the full 40-character SHA — change it upstream in the kit repo, then `make kit-sync`
 - 2026-11-21 agent-review: the "Prepare review inputs" and "Post the review report" steps run the PR's own `scripts/risk_classify.py` and `scripts/pr-comment.sh` in the job that holds `CLAUDE_CODE_OAUTH_TOKEN` and a `pull-requests: write` token; a background process started there could outlive the step, read the token or overwrite `verdict.json` — mitigated because `scripts/**` is high risk (needs `/approve-risk`) and fork PRs get no secrets — run those two scripts from a separate base-branch checkout

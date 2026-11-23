@@ -79,6 +79,7 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
     run.add_argument("--dry-run", action="store_true", help="stop before sending; touch nothing")
     setup = commands.add_parser("setup")
     setup.add_argument("--equity", required=True, help="the account's equity in GBP, as you see it")
+    setup.add_argument("--reset", action="store_true", help="staging only: start the ledger afresh")
     args = parser.parse_args(argv)
 
     env = env if env is not None else os.environ
@@ -91,7 +92,7 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
         try:
             job = build_job(env, flags)
             if args.command == "setup":
-                return job.setup(args.equity)
+                return job.setup(args.equity, reset=args.reset)
             return job.dry_run() if args.dry_run else job.run()
         except (JobConfigError, ConfigFileError) as exc:
             log.error("refusing to start: %s", exc)
