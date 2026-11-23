@@ -48,3 +48,8 @@ output "sa_runtime" {
 output "operator_secret" {
   value = google_secret_manager_secret.operator.secret_id
 }
+
+output "dashboard_deployer_role" {
+  description = "Custom role the dashboard module grants the deployer on each dashboard service (ADR-0020)."
+  value       = google_project_iam_custom_role.dashboard_deployer.id
+}

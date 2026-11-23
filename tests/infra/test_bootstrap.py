@@ -55,3 +55,17 @@ def test_the_iap_api_is_enabled_but_ci_gets_no_iap_role() -> None:
     text = BOOTSTRAP
     assert '"iap.googleapis.com"' in text
     assert "roles/iap" not in text  # IAP access and settings are the owner's script, never CI
+
+
+def test_the_dashboard_deployer_role_can_update_but_never_invoke() -> None:
+    permissions = set(
+        re.findall(r'"(run\.[A-Za-z.]+)"', block("google_project_iam_custom_role", "dashboard_deployer"))
+    )
+    assert permissions == {
+        "run.services.get",
+        "run.services.update",
+        "run.revisions.get",
+        "run.revisions.list",
+        "run.operations.get",
+    }
+    assert "run.routes.invoke" not in permissions

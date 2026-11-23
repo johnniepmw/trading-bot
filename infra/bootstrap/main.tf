@@ -178,6 +178,20 @@ resource "google_project_iam_custom_role" "job_deployer_reader" {
   ]
 }
 
+# Granted on each dashboard service by the dashboard module (ADR-0020): update its image and read
+# its revisions, but not invoke it (run.developer would include run.routes.invoke, a possible way
+# around IAP), so the deploy identity can never read the page.
+resource "google_project_iam_custom_role" "dashboard_deployer" {
+  project = var.project_id
+  role_id = "dashboardDeployer"
+  title   = "Update a Cloud Run service's image; never invoke it"
+  permissions = [
+    "run.services.get", "run.services.update",
+    "run.revisions.get", "run.revisions.list",
+    "run.operations.get",
+  ]
+}
+
 resource "google_project_iam_member" "deployer" {
   project = var.project_id
   role    = google_project_iam_custom_role.job_deployer_reader.id
