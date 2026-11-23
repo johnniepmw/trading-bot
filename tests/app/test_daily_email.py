@@ -251,3 +251,4 @@ def test_an_app_password_that_isnt_16_letters_is_named_clearly(tmp_path: Path, p
     with pytest.raises(EmailError, match="16 letters") as error:
         read_sender(tmp_path / "value")
     assert password not in str(error.value)
+    assert not any(ch.isdigit() for ch in str(error.value).replace("16", ""))  # no length either

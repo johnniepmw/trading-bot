@@ -66,8 +66,8 @@ def read_sender(path: Path | None = None) -> Sender:
         raise EmailError("email sender missing or not ADDRESS:APP_PASSWORD (secret gmail-sender)")
     if not re.fullmatch(r"[A-Za-z]{16}", password):  # Google's app passwords: 16 letters
         raise EmailError(
-            "the app password must be Google's 16 letters (spaces ignored); the stored one has"
-            f" {len(password)} characters, or ones that aren't letters (secret gmail-sender)"
+            "the stored app password isn't Google's 16 letters (spaces ignored): store it again"
+            " (secret gmail-sender)"
         )
     return Sender(address, password)
 
