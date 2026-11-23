@@ -149,7 +149,7 @@ def test_the_runtime_identity_has_no_other_access_to_the_pause_bucket() -> None:
 
 def test_prod_mounts_the_price_data_key() -> None:
     # the EODHD adapter reads /secrets/eodhd-key/value (ADR-0018); staging runs on synthetic prices
-    assert re.search(r'secrets\s*=\s*\["eodhd-key", "t212-demo-key"\]', PROD.read_text())
+    assert re.search(r'secrets\s*=\s*\["eodhd-key", "t212-demo-key", "gmail-sender"\]', PROD.read_text())
     assert "eodhd-key" not in STAGING.read_text()
 
 
@@ -164,3 +164,13 @@ def test_the_deploy_identity_may_deploy_each_job_directly() -> None:
     block = resource("google_cloud_run_v2_job_iam_member", "deployer")
     assert 'role     = "roles/run.developer"' in block
     assert "var.deployer_sa" in block
+
+
+def test_both_environments_mount_the_daily_email_sender() -> None:
+    assert re.search(r'secrets\s*=\s*\["gmail-sender"\]', STAGING.read_text())
+    assert '"gmail-sender"' in PROD.read_text()
+
+
+def test_the_daily_email_goes_to_the_bootstraps_alert_address() -> None:
+    block = resource("google_cloud_run_v2_job", "this")
+    assert re.search(r'name\s*=\s*"EMAIL_TO"[^\n]*\n\s*value\s*=\s*var\.alert_email', block)

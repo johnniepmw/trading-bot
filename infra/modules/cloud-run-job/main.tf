@@ -202,6 +202,10 @@ resource "google_cloud_run_v2_job" "this" {
           name  = "PAUSE_BUCKET"
           value = google_storage_bucket.pause.name
         }
+        env {
+          name  = "EMAIL_TO" # the daily email's recipient: the bootstrap's alert email, never in the repo
+          value = var.alert_email
+        }
         dynamic "volume_mounts" {
           for_each = local.mounts
           content {

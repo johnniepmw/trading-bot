@@ -40,7 +40,7 @@ module "job" {
   deployer_sa  = local.b.sa_deployer
   plan_sa      = local.b.sa_infra_plan
   alert_email  = local.b.alert_email
-  secrets      = [] # staging runs on fakes: no keys
+  secrets      = ["gmail-sender"] # staging runs on fakes; only the daily email's sender
 }
 
 output "job_name" {
