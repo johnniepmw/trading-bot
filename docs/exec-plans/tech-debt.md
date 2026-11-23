@@ -3,7 +3,6 @@
 Things noticed but deliberately left out of scope. One line each, newest first.
 Format: `- YYYY-MM-DD <area>: <problem> — <impact> — <suggested fix>`
 
-- 2026-11-22 ledger: no owner command raises the high-water mark after a deposit of more than about 10% (runs stop with "implausible new peak"), or lowers it deliberately before a withdrawal — the owner has to ask the agent each time — add an owner-only job command (`mark --set <GBP>` with the broker's equity check, logged), reviewed as high risk
 - 2026-11-22 staging: setup refuses where a ledger ever existed (soft-deleted included), so staging's ledger can't be reset in place (staging-ledger-reset.md) — testing from a clean state means a 30-day wait — add a staging-only reset path that the prod wiring refuses
 - 2026-11-21 agent-review (pre-existing, high): the required `agent-review` check is matched by name only, so a workflow on any branch with `checks: write` could create a passing `agent-review` check run on a PR head (the `risk-gate` status is now pinned to its own app; see docs/runbooks/risk-gate-app.md) — post the verdict through a dedicated app too and pin `integration_id` to it
 - 2026-11-21 kit escalate skill: says the owner comments `/approve-risk <first 7+ chars>`; risk-gate now needs the full 40-character SHA — change it upstream in the kit repo, then `make kit-sync`
