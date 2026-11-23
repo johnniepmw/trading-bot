@@ -29,7 +29,9 @@ touches the live account (ADR-0009).
 | A5 | Prod ledger setup | Owner: check equity in the demo app, then `gcloud run jobs execute trading-bot-prod --region europe-west2 --args=setup,--equity,<GBP> --wait` | "setup completed"; a second setup is refused |
 | A6 | Prod dry run | Agent or owner: a `run --dry-run` execution | "dry run: N order(s) would be sent", no ERROR |
 
-## Stage B: the normal cycle (schedule still paused; executions started by hand)
+## Stage B: the normal cycle
+The prod schedule is on from 2026-11-23 (owner): B1 is the first scheduled weekday run,
+B3 the first run after the November month end (Tuesday 2026-12-01, 07:15 UK).
 | # | Test | Steps | Expected |
 |---|---|---|---|
 | B1 | A quiet day | Owner: `--args=run` on a mid-month weekday | "run completed: 0 order(s) sent"; equity recorded |
@@ -88,4 +90,7 @@ each. You see an alert email for every adjustment.
 |---|---|---|---|
 | 2026-11-23 | A2 | owner run of `scripts/t212_record.py` (demo) | pass: currencies match Trading 212 and EODHD; quantity step 0.001; `instruments_verified = true` in the step 4 PR |
 | 2026-11-23 | A3 | `make secret-set NAME=t212-demo-key ENV=prod`; infra run 45141804879 (re-run) | pass: prod apply green |
+| 2026-11-23 | A4 | `DEPLOY_PROD=true`; deploy run 45234536351 | pass: build, staging and production green; prod's deploy check passed before setup (business stop: no ledger) |
+| 2026-11-23 | A5 | `setup --equity 1000.00` (execution trading-bot-prod-gbgms) | pass: "setup completed" |
+| 2026-11-23 | A6 | `run --dry-run` (execution trading-bot-prod-bzkld) | pass: account, positions and EODHD history read; first-buy prices from the latest close; October's month end skipped (closes not verified on the day), as designed |
 | | | | |
