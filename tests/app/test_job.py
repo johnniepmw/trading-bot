@@ -5,12 +5,15 @@ from __future__ import annotations
 import ast
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tests.brokers.t212_sim import Trading212Sim
 from tradingbot.app.__main__ import build_flags
 from tradingbot.app.job import (
     EXIT_OK,
@@ -24,7 +27,10 @@ from tradingbot.app.job import (
     wiring_from,
 )
 from tradingbot.app.local_store import LocalObjectStore
-from tradingbot.app.remote_ledger import LEDGER_OBJECT, LOCK_OBJECT
+from tradingbot.app.remote_ledger import LEDGER_OBJECT, LOCK_OBJECT, MARK_OBJECT
+from tradingbot.brokers.port import BrokerError
+from tradingbot.brokers.trading212.broker import Trading212Broker
+from tradingbot.brokers.trading212.client import DEMO_BASE, Trading212Client
 from tradingbot.config.load import load_config
 from tradingbot.data.prices import DataError
 from tradingbot.ledger.store import IntentState, Ledger
@@ -105,12 +111,10 @@ def test_prod_refuses_unverified_instruments(tmp_path: Path) -> None:
         }
     )
     with pytest.raises(JobConfigError, match="unverified"):
-        check_prod_ready(wiring, load_config())
+        check_prod_ready(wiring, replace(load_config(), instruments_verified=False))
 
 
-def test_prod_refuses_fakes_even_with_verified_instruments(tmp_path: Path) -> None:
-    from dataclasses import replace  # noqa: PLC0415 - this test only
-
+def prod_job(tmp_path: Path) -> Job:
     wiring = wiring_from(
         {
             "APP_ENV": "prod",
@@ -119,37 +123,117 @@ def test_prod_refuses_fakes_even_with_verified_instruments(tmp_path: Path) -> No
             "PAUSE_BUCKET": "p-prod-pause",
         }
     )
-    with pytest.raises(JobConfigError, match="Trading 212 adapter"):
-        check_prod_ready(wiring, replace(load_config(), instruments_verified=True))
-
-
-def test_a_live_operator_secret_builds_nothing_live(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    from dataclasses import replace  # noqa: PLC0415 - this test only
-
-    secret = tmp_path / "operator"
-    secret.write_text('{"mode": "live", "capital_gbp": "500"}')
-    env = {
-        "APP_ENV": "prod",
-        "LEDGER_BUCKET": "p-prod-ledger",
-        "LOCK_BUCKET": "p-prod-locks",
-        "PAUSE_BUCKET": "p-prod-pause",
-        "FLAG_NEW_ORDERS": "off",
-    }
-    job = Job(
-        wiring=wiring_from(env),
-        config=replace(load_config(), operator_secret_path=str(secret)),
+    config = replace(load_config(), instruments_verified=True)
+    return Job(
+        wiring=wiring,
+        config=config,
         store=store(tmp_path),
         flags=build_flags({"APP_ENV": "test"}),
         clock=lambda: RUN_DAY,
     )
-    with pytest.raises(JobConfigError), caplog.at_level(logging.ERROR):
-        job.run()
+
+
+def test_prod_with_verified_instruments_is_ready(tmp_path: Path) -> None:
+    job = prod_job(tmp_path)
+    check_prod_ready(job.wiring, job.config)  # no error
+
+
+def test_prod_trades_the_trading_212_demo_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    key = tmp_path / "key"
+    key.write_text("abc:def")
+    monkeypatch.setattr("tradingbot.brokers.trading212.client.CREDENTIALS_PATH", key)
+    assert isinstance(prod_job(tmp_path).broker(), Trading212Broker)
+
+
+def test_prod_without_the_demo_key_cannot_build_its_broker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tradingbot.brokers.trading212.client.CREDENTIALS_PATH", tmp_path / "missing")
+    with pytest.raises(BrokerError, match="unreadable"):
+        prod_job(tmp_path).broker()
+
+
+@pytest.fixture
+def prod_sim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Trading212Sim:
+    """Prod wired to the Trading 212 simulator: £800 cash and 2 VWRP at £100 (equity £1,000)."""
+    sim = Trading212Sim(Decimal(800), {"VWRPl_EQ": Decimal(100)})
+    sim.held["VWRPl_EQ"] = Decimal(2)
+    key = tmp_path / "key"
+    key.write_text("abc:def")
+    monkeypatch.setattr("tradingbot.brokers.trading212.client.CREDENTIALS_PATH", key)
+    monkeypatch.setattr("tradingbot.app.job.broker_transport", lambda: sim)
+    monkeypatch.setattr("tradingbot.brokers.trading212.client.time.sleep", lambda _: None)
+    return sim
+
+
+@pytest.mark.usefixtures("prod_sim")
+def test_prod_setup_seeds_the_mark_from_the_brokers_equity(tmp_path: Path) -> None:
+    assert prod_job(tmp_path).setup("1000") == EXIT_OK  # equity, not the £800 cash
+    s = store(tmp_path)
+    mark = s.info("p-prod-locks", MARK_OBJECT)
+    assert mark is not None
+    assert Decimal(json.loads(s.read("p-prod-locks", MARK_OBJECT, mark.generation))["amount"]) == 1000
+    assert s.info("p-prod-ledger", FAKE_ACCOUNT_OBJECT) is None  # prod never makes a fake account
+
+
+@pytest.mark.usefixtures("prod_sim")
+def test_prod_setup_refuses_a_figure_that_doesnt_match_the_broker(tmp_path: Path) -> None:
+    assert prod_job(tmp_path).setup("800") == EXIT_STOPPED
+    assert store(tmp_path).info("p-prod-ledger", LEDGER_OBJECT) is None
+
+
+@pytest.mark.usefixtures("prod_sim")
+def test_prod_run_without_the_demo_key_stops_with_an_alert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert prod_job(tmp_path).setup("1000") == EXIT_OK
+    monkeypatch.setattr("tradingbot.brokers.trading212.client.CREDENTIALS_PATH", tmp_path / "missing")
+    with caplog.at_level(logging.ERROR):
+        assert prod_job(tmp_path).run() == EXIT_STOPPED
+    assert "cycle stopped: Trading 212 key unreadable" in caplog.text
+
+
+def test_prod_never_uses_the_fake_account(tmp_path: Path) -> None:
+    with pytest.raises(JobConfigError, match="fake broker"):
+        prod_job(tmp_path).fake_account()
+
+
+def test_a_live_operator_secret_builds_nothing_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # AC8: even a valid live setting builds only the demo client (and the job says so)
+    secret = tmp_path / "operator"
+    secret.write_text('{"mode": "live", "capital_gbp": "500"}')
+    key = tmp_path / "key"
+    key.write_text("abc:def")
+    monkeypatch.setattr("tradingbot.brokers.trading212.client.CREDENTIALS_PATH", key)
+    built: list[Trading212Client] = []
+
+    class Recording(Trading212Client):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            built.append(self)
+
+    monkeypatch.setattr("tradingbot.app.job.Trading212Client", Recording)
+    job = replace(
+        prod_job(tmp_path), config=replace(prod_job(tmp_path).config, operator_secret_path=str(secret))
+    )
+    with caplog.at_level(logging.ERROR):
+        job.run()  # stops (no prod ledger here) after building nothing live
+        job.broker()
     assert "not available in Phase 2" in caplog.text
+    assert [c.base for c in built] == [DEMO_BASE]
 
 
-def test_nothing_imports_a_live_broker() -> None:
-    sources = "\n".join(p.read_text() for p in SRC.rglob("*.py"))
-    assert "brokers.trading212" not in sources  # the adapter arrives in step 4, demo only
+def test_only_the_job_wires_the_trading_212_adapter() -> None:
+    # demo only: the adapter's client refuses any other host (ADR-0009)
+    adapter = SRC / "brokers" / "trading212"
+    users = sorted(
+        str(p.relative_to(SRC))
+        for p in SRC.rglob("*.py")
+        if adapter not in p.parents and "brokers.trading212" in p.read_text()
+    )
+    assert users == ["app/job.py"]
 
 
 # --- setup (AC9) ----------------------------------------------------------------------
@@ -376,8 +460,6 @@ class BrokenStore(LocalObjectStore):
 
 
 def broken_job(tmp_path: Path, when: datetime) -> Job:
-    from dataclasses import replace  # noqa: PLC0415
-
     return replace(job_at(tmp_path, when), store=BrokenStore(tmp_path / "store"))
 
 
@@ -453,8 +535,6 @@ def test_staging_buckets_named_for_staging_are_accepted(tmp_path: Path) -> None:
 def test_prod_prices_come_from_eodhd_with_the_mounted_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dataclasses import replace  # noqa: PLC0415
-
     from tradingbot.app import eodhd  # noqa: PLC0415
 
     key = tmp_path / "key"
@@ -466,8 +546,6 @@ def test_prod_prices_come_from_eodhd_with_the_mounted_key(
 
 
 def test_fakes_are_never_built_for_prod(tmp_path: Path) -> None:
-    from dataclasses import replace  # noqa: PLC0415
-
     job = job_at(tmp_path, RUN_DAY)
     prod = replace(job, wiring=replace(job.wiring, app_env="prod"))
     with pytest.raises(JobConfigError, match="fake"):
@@ -569,8 +647,6 @@ def test_without_reset_a_second_setup_is_still_refused(set_up: Path) -> None:
 
 
 def test_prod_refuses_a_reset(tmp_path: Path) -> None:
-    from dataclasses import replace  # noqa: PLC0415
-
     job = job_at(tmp_path, RUN_DAY)
     prod = replace(job, wiring=replace(job.wiring, app_env="prod"))
     with pytest.raises(JobConfigError, match="reset"):

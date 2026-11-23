@@ -49,7 +49,8 @@ KEEP = frozenset(
         "nextPagePath",
     }
 )
-STEP_QUANTITY = 0.12345  # five decimals: shows whether the step is 0.0001 or finer
+# Tried in turn until one is accepted: the first accepted shows the finest quantity step.
+STEP_QUANTITIES = (0.12345, 0.1234, 0.123, 0.12, 0.1)
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9:]+)?")
 PENDING = {"LOCAL", "UNCONFIRMED", "CONFIRMED", "NEW", "PARTIALLY_FILLED", "REPLACING"}
 
@@ -159,7 +160,7 @@ def _created_pending(client: Client, created: list) -> list:
 
 
 def quantity_step(client: Client, ticker: str) -> bool:
-    """Buy STEP_QUANTITY, sell it back, and confirm nothing is left. True when clean."""
+    """Buy the finest accepted quantity, sell it back, and confirm nothing is left. True when clean."""
     start = _held(client, ticker)
     if start is None:
         print("\nCan't read positions; skipping the order check")
@@ -182,16 +183,24 @@ def quantity_step(client: Client, ticker: str) -> bool:
 
 
 def _buy_and_sell(client: Client, ticker: str, created: list) -> None:
-    body = {"ticker": ticker, "quantity": STEP_QUANTITY, "extendedHours": False}
-    res = client.call("POST", "/equity/orders/market", "market", body)
-    show(f"POST /equity/orders/market (buy {STEP_QUANTITY})", res)
-    data = res["data"] if isinstance(res["data"], dict) else {}
-    if res["status"] != 200 or "id" not in data:
-        print(f"\nQuantity step: {STEP_QUANTITY} was refused (see above)")
+    for quantity in STEP_QUANTITIES:
+        body = {"ticker": ticker, "quantity": quantity, "extendedHours": False}
+        res = client.call("POST", "/equity/orders/market", "market", body)
+        data = res["data"] if isinstance(res["data"], dict) else {}
+        if res["status"] == 200 and "id" in data:
+            break
+        if "precision" not in str(data.get("type", "")):
+            show(f"POST /equity/orders/market (buy {quantity})", res)
+            print(f"\nQuantity step: {quantity} was refused for another reason (see above)")
+            return
+        print(f"Quantity step: {quantity} refused (precision)")
+    else:
+        print("\nQuantity step: every quantity was refused for precision")
         return
+    show(f"POST /equity/orders/market (buy {quantity})", res)
     oid = data["id"]
     created.append(oid)
-    print(f"\nQuantity step: asked for {STEP_QUANTITY}, the order records {data.get('quantity')}")
+    print(f"\nQuantity step: asked for {quantity}, the order records {data.get('quantity')}")
     show(
         "GET /equity/orders/{id} right after placing",
         client.call("GET", f"/equity/orders/{oid}", "order_get"),

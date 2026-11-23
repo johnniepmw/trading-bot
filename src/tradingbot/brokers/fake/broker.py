@@ -87,7 +87,7 @@ class FakeBroker:
     def _fill(self, order_id: str, quantity: Decimal) -> None:
         current = self._orders[order_id]
         o = current.order
-        price = self.quote(o.instrument).to_gbp().amount
+        price = FakeBroker.quote(self, o.instrument).to_gbp().amount  # fills at the market price, held or not
         held = self._held.get(o.instrument, Decimal(0))
         sign = 1 if o.side is Side.BUY else -1
         if (o.side is Side.BUY and quantity * price > self._cash) or (

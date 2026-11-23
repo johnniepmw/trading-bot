@@ -21,7 +21,7 @@ from decimal import Decimal
 from types import MappingProxyType
 
 from tradingbot.app.alerts import drawdown_crossings
-from tradingbot.brokers.port import Broker, BrokerReader
+from tradingbot.brokers.port import Broker, BrokerReader, NoQuoteError
 from tradingbot.data.prices import PriceHistory, validate_history
 from tradingbot.domain.market import BENCHMARK_ONLY, Bar, Instrument, base_ticker, price_money
 from tradingbot.domain.money import Currency, Money
@@ -267,7 +267,7 @@ def _decide(  # noqa: PLR0913, PLR0917 - see run_cycle
         return None
 
     bars = _checked_history(history, config.universe, signal_day, now.date())
-    quotes = {i: broker.quote(i) for i in config.universe}
+    quotes = {i: _quote(broker, i, bars[i]) for i in config.universe}
     _cross_check(bars, quotes)
     _verify_signal_closes(ledger, bars, signal_day)
     in_trend = signals(bars, signal_day)
@@ -381,9 +381,22 @@ def _checked_history(
     return bars
 
 
+def _quote(broker: BrokerReader, instrument: Instrument, series: Sequence[Bar]) -> Money:
+    """The broker's live price; for a fund it doesn't price (Trading 212 prices held positions
+    only), the data source's latest close, which then cross-checks against itself. The order
+    still goes out as a market order: the price only sizes it."""
+    try:
+        return broker.quote(instrument)
+    except NoQuoteError:
+        log.info("no broker price for %s (not held): sizing from the latest close", instrument.ticker)
+        return price_money(instrument, series[-1].close)
+
+
 def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instrument, Money]) -> None:
     """The data source's latest close must be within QUOTE_TOLERANCE of the broker's live
-    price, so a wrong third-party price can't flip a signal."""
+    price, so a wrong third-party price can't flip a signal. Only held funds have a broker
+    price on Trading 212 (`_quote`): for the others the close is compared with itself, so
+    a month end acted on from all cash is checked against nothing (Phase 2 Decisions)."""
     for instrument, series in bars.items():
         close = price_money(instrument, series[-1].close)
         quote = quotes[instrument]
@@ -395,9 +408,10 @@ def _cross_check(bars: Mapping[Instrument, Sequence[Bar]], quotes: Mapping[Instr
 
 def _verify_signal_closes(ledger: Ledger, bars: Mapping[Instrument, Sequence[Bar]], signal_day: date) -> None:
     """On the first run after the month end the latest close is the signal-day close, and it
-    has just passed the cross-check: store it. A later run may only act on the same closes
-    (within CLOSE_RESCALE_TOLERANCE). If they were never verified, the month end is skipped:
-    one alert, then later runs only reconcile and mark until the next month end."""
+    has just passed the cross-check (for held funds; see `_cross_check`): store it. A later
+    run may only act on the same closes (within CLOSE_RESCALE_TOLERANCE). If they were never
+    verified, the month end is skipped: one alert, then later runs only reconcile and mark
+    until the next month end."""
     closes = {
         i: price_money(i, next(b for b in reversed(s) if b.day == signal_day).close) for i, s in bars.items()
     }

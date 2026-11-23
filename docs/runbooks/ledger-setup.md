@@ -6,8 +6,10 @@ own identity and broker):
 ```
 gcloud run jobs execute trading-bot-prod --region europe-west2 --args=setup,--equity,<GBP> --wait
 ```
-(staging was set up this way on 2026-11-22 with its fake £1,000). Prod can't run it until
-the Trading 212 adapter exists (Phase 2 step 4).
+(staging was set up this way on 2026-11-22 with its fake £1,000). Prod reads the Trading 212
+demo account (Phase 2 step 4). Before prod's setup, the demo account must hold only the
+bot's funds (`config/bot.toml`) and have no working limit or stop orders on them: any other
+position, or such an order, stops every run until it is closed or cancelled in the app.
 
 **Why it is an owner step**: the high-water mark is the peak the 20% drawdown stop is
 measured from. If code could set it, a lost or damaged ledger could be "repaired" by
