@@ -40,7 +40,7 @@ module "job" {
   deployer_sa   = local.b.sa_deployer
   plan_sa       = local.b.sa_infra_plan
   alert_email   = local.b.alert_email
-  secrets       = ["eodhd-key"]                                 # price data (ADR-0018); the owner adds the value with make secret-set
+  secrets       = ["eodhd-key", "t212-demo-key"]                # price data (ADR-0018) and the demo broker key "KEY:SECRET" (step 4); the owner adds values with make secret-set
   owner_secrets = { "prod-operator" = local.b.operator_secret } # the live switch (ADR-0009)
 }
 

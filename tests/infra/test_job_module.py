@@ -149,8 +149,14 @@ def test_the_runtime_identity_has_no_other_access_to_the_pause_bucket() -> None:
 
 def test_prod_mounts_the_price_data_key() -> None:
     # the EODHD adapter reads /secrets/eodhd-key/value (ADR-0018); staging runs on synthetic prices
-    assert re.search(r'secrets\s*=\s*\["eodhd-key"\]', PROD.read_text())
+    assert re.search(r'secrets\s*=\s*\["eodhd-key", "t212-demo-key"\]', PROD.read_text())
     assert "eodhd-key" not in STAGING.read_text()
+
+
+def test_prod_mounts_the_demo_broker_key_and_staging_does_not() -> None:
+    # the Trading 212 adapter reads /secrets/t212-demo-key/value (step 4); staging trades a fake broker
+    assert '"t212-demo-key"' in PROD.read_text()
+    assert "t212" not in STAGING.read_text()
 
 
 

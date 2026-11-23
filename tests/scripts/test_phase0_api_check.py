@@ -4,40 +4,14 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "phase0_api_check.py"
-MOCK = Path(__file__).with_name("mock_t212.py")
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture
-def mock_api(request):
-    market = getattr(request, "param", "open")
-    port = _free_port()
-    env = {**os.environ, "MOCK_MARKET": market}
-    proc = subprocess.Popen([sys.executable, str(MOCK), str(port)], env=env)
-    for _ in range(50):
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
-            break
-        except OSError:
-            time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}/api/v0"
-    proc.terminate()
-    proc.wait(timeout=5)
 
 
 def _run(base_url: str, tmp_path: Path, key: str = "test-key") -> tuple[int, dict]:
