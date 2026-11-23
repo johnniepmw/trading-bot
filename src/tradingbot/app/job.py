@@ -59,6 +59,7 @@ FAKE_STARTING_CASH = Money(Decimal(1000), Currency.GBP)
 SETUP_EQUITY_TOLERANCE = Decimal("0.02")  # the owner's figure vs the broker's equity
 EXIT_OK, EXIT_STOPPED, EXIT_SKIPPED = 0, 1, 3
 CALENDAR_WARNING_DAYS = 60
+RESETTABLE_ENVS = frozenset({"local", "test", "staging"})  # never prod
 
 
 class JobConfigError(Exception):
@@ -183,6 +184,13 @@ class FakeAccount:
         broker.now = self._clock  # the job's clock: reconcile compares order and intent times
         return broker
 
+    def clear(self) -> None:
+        """Remove the saved fake account (a staging reset)."""
+        found = self._store.info(self._bucket, FAKE_ACCOUNT_OBJECT)
+        if found is not None:
+            self._store.delete(self._bucket, FAKE_ACCOUNT_OBJECT, if_generation_match=found.generation)
+        self._generation = 0
+
     def save(self, broker: FakeBroker) -> None:
         body = json.dumps(broker.dump()).encode()
         self._generation = self._store.write(
@@ -248,10 +256,13 @@ class Job:
             log.warning("dry run stopped: %s: %s", type(error).__name__, error)
             return EXIT_STOPPED
 
-    def setup(self, equity: str) -> int:
-        """The owner's ledger setup (AC9)."""
+    def setup(self, equity: str, *, reset: bool = False) -> int:
+        """The owner's ledger setup (AC9). `reset` (staging, local and test only) clears the
+        ledger, reference mark and fake account first (docs/runbooks/staging-ledger-reset.md)."""
+        if reset and self.wiring.app_env not in RESETTABLE_ENVS:
+            raise JobConfigError("setup --reset is for staging (and local or test) only")
         try:
-            return self._setup(equity)
+            return self._setup(equity, reset=reset)
         except JobConfigError:
             raise
         except Exception as error:
@@ -360,7 +371,7 @@ class Job:
                 ledger.close()
         return EXIT_OK if report.stopped is None else EXIT_STOPPED
 
-    def _setup(self, equity: str) -> int:
+    def _setup(self, equity: str, *, reset: bool) -> int:
         """The owner's ledger setup (AC9): create the ledger, seed the high-water mark from the
         broker's equity once the owner's own figure agrees, take the lock throughout."""
         check_prod_ready(self.wiring, self.config)
@@ -379,13 +390,20 @@ class Job:
                 log.error("setup refused: %s", error)
                 return EXIT_STOPPED
             try:
-                return self._setup_locked(remote, stated, now)
+                return self._setup_locked(remote, stated, now, reset=reset)
             finally:
                 remote.release()
 
-    def _setup_locked(self, remote: RemoteLedger, stated: Money, now: datetime) -> int:
+    def _setup_locked(self, remote: RemoteLedger, stated: Money, now: datetime, *, reset: bool) -> int:
         account = self.fake_account()
         try:
+            if reset:
+                remote.clear_for_reset()
+                account.clear()
+                log.warning(
+                    "staging ledger reset: the ledger, reference mark and fake account start afresh",
+                    extra={"alert": "ledger_reset"},
+                )
             broker = account.load(new=True)
             actual = broker.account().equity
             if abs(actual.amount - stated.amount) > actual.amount * SETUP_EQUITY_TOLERANCE:
@@ -393,7 +411,7 @@ class Job:
                     "setup refused: the broker's equity doesn't match the figure given (check the account)"
                 )
                 return EXIT_STOPPED
-            ledger = remote.create()
+            ledger = remote.create(start_over=reset)
             ledger.seed_high_water_mark(actual, now)
             ledger.record_equity(now.date(), actual)
             remote.checkpoint()

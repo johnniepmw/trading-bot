@@ -252,9 +252,29 @@ class RemoteLedger:
         self._ledger, self._generation = ledger, found.generation
         return ledger
 
-    def create(self) -> Ledger:
-        """First-time setup only: refuses if a ledger ever existed or a reference mark does."""
+    def clear_for_reset(self) -> None:
+        """Remove the live ledger and reference mark (versions stay). Staging only: the job
+        refuses a reset anywhere else. Then `create(start_over=True)` starts afresh."""
         self._require_lock()
+        self._delete_live(self._ledger_bucket, LEDGER_OBJECT)
+        self._delete_live(self._lock_bucket, MARK_OBJECT)
+
+    def _delete_live(self, bucket: str, name: str) -> None:
+        found = self._retry(f"{name} info", lambda: self._store.info(bucket, name))
+        if found is None:
+            return
+        generation = found.generation
+        self._retry(
+            f"{name} delete", lambda: self._store.delete(bucket, name, if_generation_match=generation)
+        )
+
+    def create(self, *, start_over: bool = False) -> Ledger:
+        """First-time setup only: refuses if a ledger ever existed or a reference mark does,
+        unless `start_over` (a staging reset after `clear_for_reset`)."""
+        self._require_lock()
+        if start_over:
+            self._ledger, self._generation = Ledger.create(self._path), 0
+            return self._ledger
         if self._retry(
             "ledger versions", lambda: self._store.has_any_version(self._ledger_bucket, LEDGER_OBJECT)
         ):
