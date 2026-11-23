@@ -185,4 +185,12 @@ def test_an_account_saved_before_fill_prices_still_loads() -> None:
     order_id = b.place(approved(Side.BUY, "1"))
     state = b.dump()
     del state["orders"][0]["average_price"]  # type: ignore[index]
-    assert FakeBroker.load(state, b.quotes).order(order_id).average_price is None
+    loaded = FakeBroker.load(state, b.quotes).order(order_id)
+    assert (loaded.average_price, loaded.fees) == (None, None)
+
+
+def test_a_fill_of_nothing_leaves_the_order_waiting() -> None:
+    b = broker()
+    b.partial_fill_next = Decimal(0)
+    state = b.order(b.place(approved(Side.BUY, "1")))
+    assert (state.status, state.average_price) == (OrderStatus.PENDING, None)

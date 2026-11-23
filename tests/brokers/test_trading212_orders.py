@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from tradingbot.brokers.port import BrokerError, OrderStatus
+from tradingbot.brokers.port import BrokerError, BrokerOrder, OrderStatus
 from tradingbot.brokers.trading212.orders import (
     BROKER_TICKERS,
     Fill,
@@ -196,23 +196,35 @@ def test_taxes_of_an_unrecorded_shape_leave_the_fees_unknown(taxes: object) -> N
     assert fill is not None and fill.fees is None
 
 
-@pytest.mark.parametrize("change", [{"price": 0}, {"quantity": 0}, {"price": "x"}])
-def test_a_fill_without_a_price_or_quantity_is_an_error(change: dict[str, object]) -> None:
-    item = {"fill": {**SELL_ITEM["fill"], **change}}
-    with pytest.raises(BrokerError):
-        parse_fill(item)
+@pytest.mark.parametrize(
+    "change",
+    [{"price": 0}, {"quantity": 0}, {"price": "x"}, {"type": "DIVIDEND"}],
+    ids=["no-price", "no-quantity", "unreadable", "not-a-trade"],
+)
+def test_an_unusable_fill_is_skipped_not_an_error(change: dict[str, object]) -> None:
+    assert parse_fill({"fill": {**SELL_ITEM["fill"], **change}}) is None
 
 
-def test_a_fill_must_be_an_object() -> None:
-    with pytest.raises(BrokerError, match="object"):
-        parse_fill({"fill": [1]})
+def test_a_fill_that_is_not_an_object_is_skipped() -> None:
+    assert parse_fill({"fill": [1]}) is None
+
+
+def test_a_tax_without_a_currency_is_taken_in_the_wallets_pounds() -> None:
+    item = copy.deepcopy(SELL_ITEM)
+    item["fill"]["walletImpact"]["taxes"] = [{"quantity": Decimal("0.02")}]
+    fill = parse_fill(item)
+    assert fill is not None and fill.fees == Decimal("0.02")
+
+
+def filled(quantity: str) -> BrokerOrder:
+    parsed = parse_order(order(quantity=-Decimal(quantity), filledQuantity=-Decimal(quantity)), TICKERS)
+    assert parsed is not None
+    return parsed
 
 
 def test_several_fills_give_a_weighted_average_and_total_fees() -> None:
-    parsed = parse_order(SELL_ITEM["order"], TICKERS)
-    assert parsed is not None
     priced = with_fills(
-        parsed,
+        filled("4"),
         [Fill(Decimal(1), Decimal(100), Decimal("0.1")), Fill(Decimal(3), Decimal(104), Decimal("0.2"))],
     )
     assert priced.average_price == Money(Decimal(103), Currency.GBP)
@@ -220,10 +232,8 @@ def test_several_fills_give_a_weighted_average_and_total_fees() -> None:
 
 
 def test_one_fill_with_unknown_fees_leaves_the_total_unknown() -> None:
-    parsed = parse_order(SELL_ITEM["order"], TICKERS)
-    assert parsed is not None
     priced = with_fills(
-        parsed, [Fill(Decimal(1), Decimal(100), Decimal(0)), Fill(Decimal(1), Decimal(100), None)]
+        filled("2"), [Fill(Decimal(1), Decimal(100), Decimal(0)), Fill(Decimal(1), Decimal(100), None)]
     )
     assert priced.average_price is not None and priced.fees is None
 

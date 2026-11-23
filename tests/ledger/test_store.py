@@ -239,3 +239,11 @@ def test_a_ledger_from_before_fills_were_recorded_gains_the_table(tmp_path: Path
     reopened.settle(intent, IntentState.FILLED, "o-1", Decimal("1.5"), average_price=gbp("100"))
     assert reopened.fill(intent).average_price == gbp("100")
     reopened.close()
+
+
+def test_a_failed_fill_write_leaves_the_intent_open(ledger: Ledger) -> None:
+    intent = ledger.record_intent("run-1", BUY, NOW)
+    ledger._conn.execute("INSERT INTO fills (intent_id) VALUES (?)", (intent,))  # forces the insert to fail
+    with pytest.raises(sqlite3.IntegrityError):
+        ledger.settle(intent, IntentState.FILLED, "o-1", Decimal("1.5"), average_price=gbp("100"))
+    assert [i.intent_id for i in ledger.open_intents()] == [intent]  # state and fill together, or neither

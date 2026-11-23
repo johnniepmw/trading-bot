@@ -129,18 +129,21 @@ class Fill:
 
 
 def parse_fill(item: object) -> Fill | None:
-    """A history item's `fill`, if it has one. Recorded shape: `{quantity, price,
-    walletImpact: {currency: "GBP", taxes: []}}`. Fees are the taxes; an empty list is £0.
-    Taxes have never been recorded non-empty, so any are summed only from a numeric
-    `quantity` in GBP; otherwise fees stay unknown (never estimated: monitoring AC4)."""
+    """A history item's `fill`, if it has one and it is readable. Recorded shape: `{quantity,
+    price, type: "TRADE", walletImpact: {currency: "GBP", taxes: []}}`. Fees are the taxes;
+    an empty list is £0. Taxes have never been recorded non-empty: each is summed from a
+    numeric `quantity`, its currency taken as the wallet's (GBP) when it names none;
+    otherwise fees stay unknown. A fill that isn't a readable TRADE is skipped: the order's
+    price then stays empty (monitoring AC4: never estimated), and trading carries on."""
     raw = item.get("fill") if isinstance(item, dict) else None
-    if raw is None:
+    if not isinstance(raw, dict) or raw.get("type") != "TRADE":
         return None
-    if not isinstance(raw, dict):
-        raise BrokerError("Trading 212 sent a fill that is not an object")
-    price, quantity = decimal(raw, "price"), abs(decimal(raw, "quantity"))
+    try:
+        price, quantity = decimal(raw, "price"), abs(decimal(raw, "quantity"))
+    except BrokerError:
+        return None
     if price <= 0 or quantity == 0:
-        raise BrokerError("Trading 212 sent a fill with no price or quantity")
+        return None
     impact = raw.get("walletImpact")
     taxes = impact.get("taxes") if isinstance(impact, dict) and impact.get("currency") == "GBP" else None
     fees: Decimal | None = None
@@ -150,6 +153,7 @@ def parse_fill(item: object) -> Fill | None:
             for t in taxes
             if isinstance(t, dict)
             and isinstance(t.get("quantity"), Decimal | int)
+            and not isinstance(t.get("quantity"), bool)
             and t.get("currency", "GBP") == "GBP"
         ]
         fees = sum(amounts, Decimal(0)) if len(amounts) == len(taxes) else None
@@ -157,10 +161,11 @@ def parse_fill(item: object) -> Fill | None:
 
 
 def with_fills(order: BrokerOrder, fills: list[Fill]) -> BrokerOrder:
-    """The order with its average fill price and total fees, when its fills are known."""
-    if not fills:
-        return order
+    """The order with its average fill price and total fees, when its fills account for
+    exactly what it filled (a missing or repeated fill leaves both empty)."""
     quantity = sum((f.quantity for f in fills), Decimal(0))
+    if not fills or quantity != order.filled_quantity:
+        return order
     average = sum((f.quantity * f.price for f in fills), Decimal(0)) / quantity
     known = [f.fees for f in fills if f.fees is not None]
     fees = Money(sum(known, Decimal(0)), Currency.GBP) if len(known) == len(fills) else None

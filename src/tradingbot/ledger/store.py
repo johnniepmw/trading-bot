@@ -324,17 +324,23 @@ class Ledger:
             raise LedgerError(f"{state} is not a settled state")
         if fees is not None and fees.currency is not Currency.GBP:
             raise LedgerError("fees are in GBP")
-        self._set(intent_id, state, broker_order_id, filled_quantity)
-        if average_price is not None or fees is not None:
-            self._conn.execute(
-                "INSERT INTO fills (intent_id, average_price, price_currency, fees) VALUES (?, ?, ?, ?)",
-                (
-                    intent_id,
-                    None if average_price is None else str(average_price.amount),
-                    None if average_price is None else average_price.currency.value,
-                    None if fees is None else str(fees.amount),
-                ),
-            )
+        self._conn.execute("BEGIN")  # the state and its fill together, or neither
+        try:
+            self._set(intent_id, state, broker_order_id, filled_quantity)
+            if average_price is not None or fees is not None:
+                self._conn.execute(
+                    "INSERT INTO fills (intent_id, average_price, price_currency, fees) VALUES (?, ?, ?, ?)",
+                    (
+                        intent_id,
+                        None if average_price is None else str(average_price.amount),
+                        None if average_price is None else average_price.currency.value,
+                        None if fees is None else str(fees.amount),
+                    ),
+                )
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        self._conn.execute("COMMIT")
 
     def fill(self, intent_id: int) -> Fill:
         """A settled intent's fill price and fees, as far as the broker reported them."""

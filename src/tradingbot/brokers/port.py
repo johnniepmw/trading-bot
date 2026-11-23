@@ -66,7 +66,8 @@ class BrokerOrder:
     created_at: datetime  # UTC, as the broker records it
     # Monitoring AC4: when the broker reports them, else None (never estimated)
     average_price: Money | None = None  # per unit, in the instrument's quote currency
-    fees: Money | None = None  # in GBP; zero when the broker reports none
+    fees: Money | None = None  # in GBP; zero when the broker reports none. Excludes the
+    # spread, which is in the fill price (about 0.05% a round trip on the demo, 2026-11-23)
 
 
 class BrokerReader(Protocol):

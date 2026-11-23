@@ -103,6 +103,8 @@ class FakeBroker:
         self._held[o.instrument] = held + sign * quantity
         filled = current.filled_quantity + quantity
         status = OrderStatus.FILLED if filled == o.quantity else OrderStatus.PARTIALLY_FILLED
+        if quantity == 0:  # accepted, nothing filled yet
+            return
         quote = FakeBroker.quote(self, o.instrument)
         before = (
             current.average_price.amount * current.filled_quantity if current.average_price else Decimal(0)

@@ -139,22 +139,28 @@ def test_find_order_looks_in_the_history() -> None:
     assert find_order(pages, TICKERS, "8", NOW) is None
 
 
-def test_an_order_filled_in_parts_averages_its_fills() -> None:
-    def item(price: str, quantity: str) -> dict[str, object]:
-        fill = {
-            "quantity": Decimal(quantity),
-            "price": Decimal(price),
-            "walletImpact": {"currency": "GBP", "taxes": []},
-        }
-        return {"order": raw_order(4, 1), "fill": fill}
+def fill_item(order_id: int, price: str, quantity: str) -> dict[str, object]:
+    fill = {
+        "type": "TRADE",
+        "quantity": Decimal(quantity),
+        "price": Decimal(price),
+        "walletImpact": {"currency": "GBP", "taxes": []},
+    }
+    return {"order": raw_order(order_id, 1), "fill": fill}
 
-    pages = Pages(
-        {
-            FIRST: {
-                "items": [item("102", "0.25"), item("100", "0.25"), {"order": raw_order(1, 45)}],
-                "nextPagePath": None,
-            }
-        }
-    )
-    (only,) = recent_orders(pages, TICKERS, NOW)
-    assert only.average_price is not None and only.average_price.amount == Decimal(101)
+
+def test_an_order_filled_in_parts_averages_its_fills_by_quantity() -> None:
+    items = [fill_item(4, "100", "0.1"), fill_item(4, "105", "0.4"), {"order": raw_order(1, 45)}]
+    (only,) = recent_orders(Pages({FIRST: {"items": items, "nextPagePath": None}}), TICKERS, NOW)
+    assert only.average_price is not None and only.average_price.amount == Decimal(104)
+
+
+def test_fills_that_dont_add_up_to_the_order_leave_its_price_empty() -> None:
+    items = [
+        fill_item(4, "100", "0.25"),
+        fill_item(4, "100", "0.25"),
+        fill_item(4, "100", "0.25"),
+        {"order": raw_order(1, 45)},
+    ]
+    (only,) = recent_orders(Pages({FIRST: {"items": items, "nextPagePath": None}}), TICKERS, NOW)
+    assert (only.average_price, only.fees) == (None, None)
