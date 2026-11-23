@@ -12,7 +12,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "phase0_api_check.py"
-MOCK = Path(__file__).with_name("mock_t212.py")
 
 
 def _run(base_url: str, tmp_path: Path, key: str = "test-key") -> tuple[int, dict]:

@@ -97,7 +97,8 @@ class H(BaseHTTPRequestHandler):
                 ],
             )
         if p == "/equity/history/orders":
-            return self._send(200, {"items": [{"order": o} for o in history[-50:]], "nextPagePath": None})
+            items = [h if "order" in h else {"order": h} for h in history[-50:]]
+            return self._send(200, {"items": items, "nextPagePath": None})
         if p == "/history/transactions":
             return self._send(
                 200,
@@ -137,7 +138,13 @@ class H(BaseHTTPRequestHandler):
             order["status"] = "FILLED"
             order["filledQuantity"] = body["quantity"]
             positions[body["ticker"]] = positions.get(body["ticker"], 0) + body["quantity"]
-            history.append(order)
+            price = PRICE[body["ticker"]]
+            fill = {
+                "price": price,
+                "walletImpact": {"netValue": round(abs(body["quantity"]) * price / 100, 2)},
+            }
+            history.append({"order": order, "fill": fill})  # GBX: the value is in pounds
+            return self._send(200, order)
         else:
             pending[oid] = order
         self._send(200, order)
