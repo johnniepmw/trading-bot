@@ -78,6 +78,8 @@ class FakeSmtp:
 
     def quit(self) -> None:
         self.quit_called = True
+        if self.fail is not None:  # as Gmail: after refusing a login it has hung up
+            raise smtplib.SMTPServerDisconnected("please run connect() first")
 
 
 SENDER = Sender("bot@example.com", "abcdefghijklmnop")
@@ -108,7 +110,9 @@ def test_a_refusal_or_timeout_is_an_email_error_naming_only_its_type(fail: Excep
     smtp = FakeSmtp(fail)
     with pytest.raises(EmailError) as error:
         send(SENDER, "owner@example.com", "s", "b", connect=smtp)
-    assert str(error.value) == f"sending failed ({type(fail).__name__})"
+    code = ", SMTP 535" if isinstance(fail, smtplib.SMTPAuthenticationError) else ""
+    assert str(error.value) == f"sending failed at login ({type(fail).__name__}{code})"
+    assert "abcdefghijklmnop" not in str(error.value)
     assert smtp.quit_called
 
 
@@ -229,3 +233,22 @@ def test_a_run_without_a_snapshot_preview_or_record(ledger: Ledger) -> None:
 def test_an_unchecked_snapshot_is_reported(ledger: Ledger) -> None:
     ledger.record_snapshot("run-4", END, gbp("1"), [], equity_checked=False)
     assert facts(ledger, run_id="run-4").snapshot_checked is False
+
+
+def test_a_failed_connection_names_the_stage() -> None:
+    def refuse(*_: object) -> FakeSmtp:
+        raise ConnectionRefusedError("no route")
+
+    with pytest.raises(EmailError, match=r"^sending failed at connect \(ConnectionRefusedError\)$"):
+        send(SENDER, "owner@example.com", "s", "b", connect=refuse)
+
+
+@pytest.mark.parametrize(
+    "password", ["abcdefghijklmnopq", "abcdefghijklmno", "abcdefghijklmno.", "abcdefgh1jklmnop"]
+)
+def test_an_app_password_that_isnt_16_letters_is_named_clearly(tmp_path: Path, password: str) -> None:
+    (tmp_path / "value").write_text(f"bot@example.com:{password}")
+    with pytest.raises(EmailError, match="16 letters") as error:
+        read_sender(tmp_path / "value")
+    assert password not in str(error.value)
+    assert not any(ch.isdigit() for ch in str(error.value).replace("16", ""))  # no length either

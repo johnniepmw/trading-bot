@@ -10,6 +10,8 @@ Nothing here may change a run's outcome: the job catches every failure (`email_f
 
 from __future__ import annotations
 
+import contextlib
+import re
 import smtplib
 import ssl
 from collections.abc import Callable, Mapping
@@ -62,6 +64,11 @@ def read_sender(path: Path | None = None) -> Sender:
         or not value.isascii()
     ):
         raise EmailError("email sender missing or not ADDRESS:APP_PASSWORD (secret gmail-sender)")
+    if not re.fullmatch(r"[A-Za-z]{16}", password):  # Google's app passwords: 16 letters
+        raise EmailError(
+            "the stored app password isn't Google's 16 letters (spaces ignored): store it again"
+            " (secret gmail-sender)"
+        )
     return Sender(address, password)
 
 
@@ -84,15 +91,25 @@ def send(sender: Sender, to: str, subject: str, body: str, connect: Connect = _s
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = sender.address, to, subject
     msg.set_content(body)
+    stage = "connect"
     try:
         smtp = connect(SMTP_HOST, SMTP_PORT, TIMEOUT_SECONDS, ssl.create_default_context())
         try:
+            stage = "login"
             smtp.login(sender.address, sender.password)
+            stage = "send"
             smtp.send_message(msg)
         finally:
-            smtp.quit()
+            _quit_quietly(smtp)  # a server that already hung up mustn't hide the real error
     except (smtplib.SMTPException, OSError) as error:
-        raise EmailError(f"sending failed ({type(error).__name__})") from error
+        code = getattr(error, "smtp_code", None)  # e.g. 535: login refused; never the server's text
+        detail = f", SMTP {code}" if isinstance(code, int) else ""
+        raise EmailError(f"sending failed at {stage} ({type(error).__name__}{detail})") from error
+
+
+def _quit_quietly(smtp: Smtp) -> None:
+    with contextlib.suppress(smtplib.SMTPException, OSError):
+        smtp.quit()
 
 
 def _gbp(amount: Decimal) -> Money:
