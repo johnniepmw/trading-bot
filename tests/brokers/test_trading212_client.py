@@ -238,6 +238,21 @@ def test_the_transport_returns_http_errors_as_statuses(monkeypatch: pytest.Monke
     assert urllib_transport()("GET", f"{DEMO_BASE}/x", {}, None)[0] == 404
 
 
+def test_a_connection_lost_while_reading_an_error_is_an_unknown_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Dropped(urllib.error.HTTPError):
+        def read(self, *_: object) -> bytes:
+            raise ConnectionResetError("reset")
+
+    def fail(request: object, timeout: float) -> None:
+        raise Dropped(f"{DEMO_BASE}/x", 500, "err", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module, "_build_opener", lambda: _Opener(fail))
+    with pytest.raises(BrokerTimeoutError, match="ConnectionResetError"):
+        urllib_transport()("POST", f"{DEMO_BASE}/x", {}, b"{}")
+
+
 def test_a_network_failure_is_an_unknown_outcome_without_the_query(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(request: object, timeout: float) -> None:
         raise TimeoutError("secret detail")

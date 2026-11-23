@@ -72,7 +72,12 @@ def urllib_transport(timeout: float = TIMEOUT_SECONDS) -> Transport:
             with opener.open(request, timeout=timeout) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as error:
-            return error.code, error.read()
+            try:
+                return error.code, error.read()
+            except (TimeoutError, ConnectionError, http.client.HTTPException) as lost:
+                raise BrokerTimeoutError(
+                    f"{method} {url.split('?', maxsplit=1)[0]}: {type(lost).__name__}"
+                ) from lost
         except (TimeoutError, urllib.error.URLError, ConnectionError, http.client.HTTPException) as error:
             # the path only: no query, no body; the error type, not its text
             raise BrokerTimeoutError(

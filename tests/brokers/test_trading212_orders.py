@@ -102,6 +102,10 @@ def test_a_finished_limit_order_is_ignored() -> None:
     assert parse_order(order(type="LIMIT", status="CANCELLED"), TICKERS) is None
 
 
+def test_a_replaced_limit_order_is_ignored() -> None:
+    assert parse_order(order(type="LIMIT", status="REPLACED"), TICKERS) is None
+
+
 def test_a_working_limit_order_on_our_fund_stops_the_run() -> None:
     with pytest.raises(BrokerError, match="cancel it in the app"):
         parse_order(order(type="LIMIT", status="NEW"), TICKERS)

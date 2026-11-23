@@ -94,7 +94,7 @@ def parse_order(raw: object, tickers: Tickers) -> BrokerOrder | None:
     if instrument is None:
         return None
     if raw.get("type") != "MARKET":
-        if raw.get("status") in _FINISHED:
+        if raw.get("status") in _FINISHED or raw.get("status") == "REPLACED":  # replaced: superseded
             return None
         raise BrokerError(
             f"a working {instrument.ticker} order that is not a market order: cancel it in the app"
