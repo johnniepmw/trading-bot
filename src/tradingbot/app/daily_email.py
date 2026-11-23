@@ -53,7 +53,14 @@ def read_sender(path: Path | None = None) -> Sender:
         raise EmailError(f"email sender unreadable ({type(error).__name__})") from error
     address, sep, password = value.partition(":")
     password = password.replace(" ", "")
-    if not sep or "@" not in address or " " in address or not password or not value.isprintable():
+    if (
+        not sep
+        or "@" not in address
+        or " " in address
+        or not password
+        or not value.isprintable()
+        or not value.isascii()
+    ):
         raise EmailError("email sender missing or not ADDRESS:APP_PASSWORD (secret gmail-sender)")
     return Sender(address, password)
 

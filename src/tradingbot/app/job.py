@@ -204,6 +204,10 @@ class FakeAccount:
         ).generation
 
 
+def _email_failed(error: Exception) -> None:
+    log.warning("daily email not sent: %s: %s", type(error).__name__, error, extra={"alert": "email_failed"})
+
+
 @dataclass(frozen=True)
 class Job:
     wiring: Wiring
@@ -314,10 +318,12 @@ class Job:
             except LedgerStorageError as error:
                 log.error("cycle stopped: %s", error)
                 return EXIT_STOPPED
+            outbox: list[tuple[str, str]] = []
             try:
-                return self._run_locked(remote, run_id, signal_day, now)
+                return self._run_locked(remote, run_id, signal_day, now, outbox)
             finally:
                 remote.release()
+                self._deliver(outbox)  # after the lock: a slow mail server can't leave it stale
 
     def _warn_if_calendar_ends_soon(self, today: date) -> None:
         """Weekly (Mondays) once the holiday list has under 60 days left: past it, runs stop."""
@@ -330,7 +336,14 @@ class Job:
                 extra={"alert": "calendar_ending"},
             )
 
-    def _run_locked(self, remote: RemoteLedger, run_id: str, signal_day: date, now: datetime) -> int:
+    def _run_locked(
+        self,
+        remote: RemoteLedger,
+        run_id: str,
+        signal_day: date,
+        now: datetime,
+        outbox: list[tuple[str, str]],
+    ) -> int:
         try:
             ledger = remote.open()
         except (LedgerStorageError, OSError, ValueError) as error:
@@ -340,7 +353,7 @@ class Job:
             broker = self.broker()
         except (BrokerError, OSError, ValueError) as error:
             log.error("cycle stopped: %s", error)
-            self._send_daily_email(ledger, run_id, now, stopped=f"broker unavailable: {error}")
+            self._compose_daily_email(ledger, run_id, now, outbox, stopped=f"broker unavailable: {error}")
             return EXIT_STOPPED
 
         pause = PauseRequests(self.store, self.wiring.pause_bucket)
@@ -363,17 +376,24 @@ class Job:
         )
         if report.stopped is None:
             log.info("run completed: %d order(s) sent", report.sent)
-        self._send_daily_email(ledger, run_id, now, stopped=report.stopped)
+        self._compose_daily_email(ledger, run_id, now, outbox, stopped=report.stopped)
         return EXIT_OK if report.stopped is None else EXIT_STOPPED
 
-    def _send_daily_email(self, ledger: Ledger, run_id: str, now: datetime, *, stopped: str | None) -> None:
-        """The glance, after a run that opened the ledger (daily email spec). Never changes
-        the run's outcome: any failure is a WARNING the alert policy mails as email_failed."""
+    def _compose_daily_email(
+        self,
+        ledger: Ledger,
+        run_id: str,
+        now: datetime,
+        outbox: list[tuple[str, str]],
+        *,
+        stopped: str | None,
+    ) -> None:
+        """The glance from the ledger, while it is open (daily email spec); `_deliver` sends
+        it once the lock is released. Never changes the run's outcome: any failure is a
+        WARNING the alert policy mails as email_failed."""
         try:
             if not self.flags.is_enabled("daily-email"):
                 return
-            if self.wiring.email_to is None:
-                raise EmailError("EMAIL_TO is not set")
             facts = glance_input(
                 ledger,
                 run_id,
@@ -384,14 +404,20 @@ class Job:
                 now=self.clock(),
                 stopped=stopped,
             )
-            subject, body = compose(facts, self.wiring.app_env)
-            send(read_sender(), self.wiring.email_to, subject, body)
+            outbox.append(compose(facts, self.wiring.app_env))
         except Exception as error:  # noqa: BLE001 - the email must never change the run
-            log.warning(
-                "daily email not sent: %s: %s", type(error).__name__, error, extra={"alert": "email_failed"}
-            )
-            return
-        log.info("daily email sent")
+            _email_failed(error)
+
+    def _deliver(self, outbox: list[tuple[str, str]]) -> None:
+        for subject, body in outbox:
+            try:
+                if self.wiring.email_to is None:
+                    raise EmailError("EMAIL_TO is not set")
+                send(read_sender(), self.wiring.email_to, subject, body)
+            except Exception as error:  # noqa: BLE001 - the email must never change the run
+                _email_failed(error)
+                continue
+            log.info("daily email sent")
 
     def _dry_run(self, *, deploy_check: bool) -> int:
         check_prod_ready(self.wiring, self.config)

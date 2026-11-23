@@ -37,3 +37,9 @@ A dry run never sends an alert. A deploy that fails opens a GitHub `incident` is
 | `equity check failed` / `implausible new peak` | The broker's equity doesn't add up, or jumped more than 10% | A deposit of more than about 10%: raise the mark (see ledger-setup.md). Otherwise tell the agent |
 | `no high-water mark` / `lower than an earlier` / `ledger file missing` | The ledger isn't set up, or was reset or damaged | See ledger-setup.md; never re-seed after a loss |
 | `rejected: daily loss limit` / `drawdown stop` / `no day-start equity` | Risk vetoed buys for the day (sells still go through) | Expected after a bad day or a gap of more than 5 days; the drawdown stop needs you to decide |
+
+**If the bot's Gmail app password may have leaked**: revoke it at Google (the bot's Google
+Account → Security → App passwords), make a new one, and store it as a new version
+(secret-set runbook, `NAME=gmail-sender`). Never disable or destroy the secret's only
+version: Cloud Run mounts it, so the job (trading included) couldn't start. Staging and prod
+use separate app passwords, so each can be revoked on its own.

@@ -72,4 +72,6 @@ email can never disagree with the decision record.
 ## Review
 - Round 1 (reviewer): 2 blocking, both fixed: this run's orders awaiting the 08:00 open no longer turn the Orders line red (only earlier runs' open orders and unknown outcomes do); `glance_input` now has a test on a real ledger checking every figure. Non-blocking fixed: the run's own stop reason wins over its record (a failed final save); a broker that can't be built still emails a STOP; the flag check sits inside the guard; the "skipped" amber branch removed (non-trading days and duplicates never open the ledger, so they never email: the alert policy covers missed runs); tests that a failed email keeps a stopped run stopped and that an error gathering figures is caught. Recorded: `invested` leaves out a position with no GBP value (the line is red then anyway)
 
+- Security review: 1 medium (the owner's address printed in plan and apply logs, which are public: `alert_email` is now sensitive in the module and the bootstrap output; old logs to be deleted with the owner's agreement), 3 low fixed or recorded (the email is sent after the lock is released; a runbook note on revoking a leaked app password without disabling the secret; staging and prod get separate app passwords), hardening: ASCII-only secret; `src/tradingbot/report/**` is now high risk
+
 ## Outcome

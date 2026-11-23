@@ -853,3 +853,13 @@ def test_a_broker_that_cant_be_built_still_emails_a_stop(
     ((_, subject, body),) = outbox
     assert subject.endswith(": ACTION")
     assert "broker unavailable: Trading 212 key unreadable" in body
+
+
+def test_the_email_goes_out_after_the_lock_is_released(set_up: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lock_at_send: list[object] = []
+    monkeypatch.setattr("tradingbot.app.job.read_sender", lambda: Sender("bot@example.com", "pw"))
+    monkeypatch.setattr(
+        "tradingbot.app.job.send", lambda *_: lock_at_send.append(store(set_up).info("locks", LOCK_OBJECT))
+    )
+    assert job_at(set_up, RUN_DAY, **EMAIL).run() == EXIT_OK
+    assert lock_at_send == [None]  # a slow mail server can never leave the lock stale
