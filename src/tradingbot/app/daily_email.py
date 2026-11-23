@@ -11,6 +11,7 @@ Nothing here may change a run's outcome: the job catches every failure (`email_f
 from __future__ import annotations
 
 import contextlib
+import re
 import smtplib
 import ssl
 from collections.abc import Callable, Mapping
@@ -63,6 +64,11 @@ def read_sender(path: Path | None = None) -> Sender:
         or not value.isascii()
     ):
         raise EmailError("email sender missing or not ADDRESS:APP_PASSWORD (secret gmail-sender)")
+    if not re.fullmatch(r"[A-Za-z]{16}", password):  # Google's app passwords: 16 letters
+        raise EmailError(
+            "the app password must be Google's 16 letters (spaces ignored); the stored one has"
+            f" {len(password)} characters, or ones that aren't letters (secret gmail-sender)"
+        )
     return Sender(address, password)
 
 

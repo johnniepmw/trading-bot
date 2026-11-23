@@ -241,3 +241,13 @@ def test_a_failed_connection_names_the_stage() -> None:
 
     with pytest.raises(EmailError, match=r"^sending failed at connect \(ConnectionRefusedError\)$"):
         send(SENDER, "owner@example.com", "s", "b", connect=refuse)
+
+
+@pytest.mark.parametrize(
+    "password", ["abcdefghijklmnopq", "abcdefghijklmno", "abcdefghijklmno.", "abcdefgh1jklmnop"]
+)
+def test_an_app_password_that_isnt_16_letters_is_named_clearly(tmp_path: Path, password: str) -> None:
+    (tmp_path / "value").write_text(f"bot@example.com:{password}")
+    with pytest.raises(EmailError, match="16 letters") as error:
+        read_sender(tmp_path / "value")
+    assert password not in str(error.value)
