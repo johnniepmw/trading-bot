@@ -69,8 +69,10 @@ point of failure"; "an automatic email so we are aware, to guard against a bug")
 
 ## Open questions (owner)
 1. Answered 2026-11-23: the demo app can't deposit or withdraw (only a balance reset). So
-   the transaction shapes for withdrawals are recorded on the live account before the live
-   switch: one small live deposit and withdrawal (no trading), then the recorder. Pies are not
+   the transaction shapes are recorded on the live account (owner's proposal, 2026-11-23):
+   small live deposits and withdrawals (no trading), then `scripts/t212_record.py
+   --live-transactions` with a live key that has read permissions only. That mode can only
+   GET `/history/transactions` and prints kinds, signs and reference shapes, never amounts. Pies are not
    a stand-in: moving cash into a pie is not a flow, and the bot's account must not use pies.
 
 ## Plan

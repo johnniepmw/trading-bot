@@ -11,7 +11,14 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from t212_record import kinds, shape  # scripts/ is on the path (conftest)
+from t212_record import (
+    LIVE_BASE,
+    TransactionsOnly,
+    _live_base,
+    kinds,
+    reference_kind,
+    shape,
+)  # scripts/ is on the path (conftest)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "t212_record.py"
@@ -132,3 +139,79 @@ def test_kinds_are_listed_without_amounts() -> None:
     page = {"items": [{"type": "FEE", "amount": -0.5}, {"type": "INTEREST", "amount": "x"}, "junk"]}
     assert kinds(page) == ["FEE - x1", "INTEREST ? x1"]
     assert kinds({"items": []}) == ["(none)"]
+
+
+# --- --live-transactions: read-only, one endpoint --------------------------------------
+class Spy:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def call(self, method: str, path: str, bucket: str, body: dict | None = None) -> dict:
+        self.calls.append((method, path))
+        return {"status": 200, "data": {"items": [], "nextPagePath": None}}
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/equity/orders/market"),
+        ("DELETE", "/equity/orders/1"),
+        ("GET", "/equity/account/summary"),
+        ("GET", "/equity/positions"),
+        ("GET", "/history/transactionsX?limit=1"),
+    ],
+)
+def test_live_mode_refuses_everything_but_reading_transactions(method: str, path: str) -> None:
+    spy = Spy()
+    with pytest.raises(SystemExit, match="Refusing"):
+        TransactionsOnly(spy).call(method, path, "x")  # type: ignore[arg-type]
+    assert spy.calls == []
+
+
+def test_live_mode_refuses_a_body_even_on_a_get() -> None:
+    spy = Spy()
+    with pytest.raises(SystemExit, match="Refusing"):
+        TransactionsOnly(spy).call("GET", "/history/transactions?limit=1", "x", {"a": 1})  # type: ignore[arg-type]
+    assert spy.calls == []
+
+
+def test_live_mode_reads_transactions() -> None:
+    spy = Spy()
+    TransactionsOnly(spy).call("GET", "/history/transactions?limit=50", "history")  # type: ignore[arg-type]
+    assert spy.calls == [("GET", "/history/transactions?limit=50")]
+
+
+def test_live_mode_targets_the_live_host_without_a_test_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("T212_TEST_BASE_URL", raising=False)
+    assert _live_base() == LIVE_BASE == "https://live.trading212.com/api/v0"
+
+
+@pytest.mark.parametrize(
+    ("value", "kind"),
+    [
+        ("12345678", "digits(8)"),
+        ("0b9f0b9e-1a2b-4c3d-9e8f-001122334455", "uuid"),
+        ("Payment from J Bloggs", "text(21)"),
+        (None, "missing"),
+        ("", "missing"),
+    ],
+)
+def test_references_are_described_never_shown(value: object, kind: str) -> None:
+    assert reference_kind(value) == kind
+
+
+def test_live_transactions_lists_kinds_and_reference_shapes_only(mock_api: str) -> None:
+    res = _run(mock_api, "--live-transactions")
+    assert res.returncode == 0, res.stderr
+    assert "  DEPOSIT + x2" in res.stdout
+    assert "  WITHDRAW - x1" in res.stdout
+    assert "References: text(5) x3" in res.stdout
+    assert "References unique: yes" in res.stdout
+    assert "ref-1" not in res.stdout
+    assert "positions" not in res.stdout and "summary" not in res.stdout
+
+
+def test_live_mode_never_places_the_quantity_check(mock_api: str) -> None:
+    res = _run(mock_api, "--live-transactions", "--order", "ISF_EQ")
+    assert res.returncode != 0
+    assert "demo only" in res.stderr

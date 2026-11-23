@@ -11,7 +11,10 @@ verdict, not the price), sells it back, and checks nothing is left: no pending o
 change in that fund's position. Anything left is a WARNING and exit code 1. Use a fund
 priced in pence (SGLN) for the units verdict.
 
-DEMO ACCOUNT ONLY. Uses the same key and secret as phase0_api_check.py:
+DEMO ACCOUNT, except `--live-transactions`: it reads only the live account's transaction
+list (to see how deposits and withdrawals look) and refuses any other request. Use a live
+key with read permissions only. Otherwise it uses the same demo key and secret as
+phase0_api_check.py:
     read -rs T212_API_KEY && export T212_API_KEY
     read -rs T212_API_SECRET && export T212_API_SECRET
     python3 scripts/t212_record.py                       # read-only
@@ -241,15 +244,88 @@ def _buy_and_sell(client: Client, ticker: str, created: list) -> None:
         print(f"Sell refused: HTTP {sres['status']}")
 
 
+LIVE_BASE = "https://live.trading212.com/api/v0"
+LIVE_PATH = "/history/transactions"
+LIVE_PAGES = 5
+
+
+class TransactionsOnly:
+    """The live account, read through one door: GET /history/transactions and nothing else.
+    Any other method or path ends the script before a request is made (ADR-0009: no orders
+    on live; this mode exists only to record how deposits and withdrawals look)."""
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def call(self, method: str, path: str, bucket: str, body: dict | None = None) -> dict:
+        if method != "GET" or body is not None or not path.startswith(LIVE_PATH + "?"):
+            sys.exit(f"Refusing {method} {path.split('?', maxsplit=1)[0]} on the live account: transactions only")
+        return self._client.call(method, path, bucket)
+
+
+def reference_kind(value: object) -> str:
+    """What a reference looks like, never the reference itself."""
+    if not isinstance(value, str) or not value:
+        return "missing"
+    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", value):
+        return "uuid"
+    if value.isdigit():
+        return f"digits({len(value)})"
+    return f"text({len(value)})"
+
+
+def live_transactions(client: TransactionsOnly) -> None:
+    """Every transaction kind on the live account (up to LIVE_PAGES pages), with the shape of
+    one page, and what references look like: no amounts, dates or references."""
+    path: str | None = f"{LIVE_PATH}?limit=50"
+    items: list[object] = []
+    for page_number in range(1, LIVE_PAGES + 1):
+        res = client.call("GET", path or "", "history")
+        if page_number == 1:
+            show(f"GET {LIVE_PATH}?limit=50 (live)", res)
+        data = res["data"] if isinstance(res["data"], dict) else {}
+        items += data.get("items", []) if isinstance(data.get("items"), list) else []
+        following = data.get("nextPagePath")
+        path = following.removeprefix("/api/v0") if isinstance(following, str) else None
+        if path is None:
+            break
+    print("Transaction kinds (type, sign of amount, count):")
+    for line in kinds({"items": items}):
+        print(f"  {line}")
+    refs = [i.get("reference") for i in items if isinstance(i, dict)]
+    shapes: dict[str, int] = {}
+    for ref in refs:
+        shapes[reference_kind(ref)] = shapes.get(reference_kind(ref), 0) + 1
+    print(f"References: {', '.join(f'{k} x{n}' for k, n in sorted(shapes.items())) or '(none)'}")
+    print(f"References unique: {'yes' if len(set(map(str, refs))) == len(refs) else 'NO'}")
+
+
+def _live_base() -> str:
+    """Live, or the localhost test server (phase0's rule: only localhost may override)."""
+    return _base_url() if os.environ.get("T212_TEST_BASE_URL") else LIVE_BASE
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Record Trading 212 demo response shapes (no values)")
+    ap = argparse.ArgumentParser(description="Record Trading 212 response shapes (no values)")
     ap.add_argument("--order", metavar="TICKER", help="also check the quantity step with a tiny buy and sell")
+    ap.add_argument(
+        "--live-transactions",
+        action="store_true",
+        help="LIVE account, read-only: list transaction kinds (use a key with read permissions only)",
+    )
     args = ap.parse_args()
+    if args.live_transactions and args.order:
+        sys.exit("--order is demo only")
     key, secret = os.environ.get("T212_API_KEY"), os.environ.get("T212_API_SECRET")
     if not key or not secret:
-        sys.exit("Set T212_API_KEY and T212_API_SECRET (demo key) in your shell first.")
-    base = _base_url()
+        sys.exit("Set T212_API_KEY and T212_API_SECRET in your shell first.")
     fast = bool(os.environ.get("T212_TEST_BASE_URL")) and bool(os.environ.get("T212_TEST_FAST"))
+    if args.live_transactions:
+        live = TransactionsOnly(Client(key, secret, _live_base(), fast=fast))
+        print("Reading transaction kinds from the LIVE account (read-only; transactions only)")
+        live_transactions(live)
+        return 0
+    base = _base_url()
     client = Client(key, secret, base, fast=fast)
     print(f"Recording response shapes from {'demo' if 'demo.' in base else 'a local test server'}")
     read_only(client)
