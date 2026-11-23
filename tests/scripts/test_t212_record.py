@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from t212_record import shape  # scripts/ is on the path (conftest)
+from t212_record import kinds, shape  # scripts/ is on the path (conftest)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "t212_record.py"
@@ -76,10 +76,13 @@ def test_timestamps_show_their_format_only() -> None:
 def test_read_only_run_prints_shapes_without_values(mock_api: str) -> None:
     res = _run(mock_api)
     assert res.returncode == 0, res.stderr
-    assert "=== GET /history/transactions?limit=5: HTTP 200" in res.stdout
+    assert "=== GET /history/transactions?limit=50: HTTP 200" in res.stdout
+    assert "  DEPOSIT + x2" in res.stdout
+    assert "  WITHDRAW - x1" in res.stdout
     assert '"type": "DEPOSIT"' in res.stdout
     assert "5000" not in res.stdout  # the balance
     assert "1000" not in res.stdout  # the deposit amount
+    assert "ref-2" not in res.stdout
     assert "ref-1" not in res.stdout
     assert "2026-11-23" not in res.stdout
     assert "POST" not in res.stdout
@@ -123,3 +126,9 @@ def test_a_refusal_other_than_precision_stops_the_ladder(mock_api: str) -> None:
     res = _run(mock_api, "--order", "NOT_A_TICKER")
     assert "refused for another reason" in res.stdout
     assert "refused (precision)" not in res.stdout  # stopped at the first quantity
+
+
+def test_kinds_are_listed_without_amounts() -> None:
+    page = {"items": [{"type": "FEE", "amount": -0.5}, {"type": "INTEREST", "amount": "x"}, "junk"]}
+    assert kinds(page) == ["FEE - x1", "INTEREST ? x1"]
+    assert kinds({"items": []}) == ["(none)"]

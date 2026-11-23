@@ -109,7 +109,19 @@ class H(BaseHTTPRequestHandler):
                             "amount": 1000,
                             "reference": "ref-1",
                             "dateTime": "2026-11-23T08:00:00Z",
-                        }
+                        },
+                        {
+                            "type": "WITHDRAW",
+                            "amount": -10,
+                            "reference": "ref-2",
+                            "dateTime": "2026-11-23T09:00:00Z",
+                        },
+                        {
+                            "type": "DEPOSIT",
+                            "amount": 10,
+                            "reference": "ref-3",
+                            "dateTime": "2026-11-23T10:00:00Z",
+                        },
                     ],
                     "nextPagePath": None,
                 },

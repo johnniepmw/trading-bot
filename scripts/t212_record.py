@@ -94,11 +94,27 @@ def read_only(client: Client) -> None:
     show(
         "GET /equity/history/orders?limit=5", client.call("GET", "/equity/history/orders?limit=5", "history")
     )
-    for path in ("/history/transactions?limit=5", "/equity/history/transactions?limit=5"):
-        res = client.call("GET", path, "history")
-        show(f"GET {path}", res)
-        if res["status"] == 200:
-            break
+    res = client.call("GET", "/history/transactions?limit=50", "history")
+    show("GET /history/transactions?limit=50", res)
+    print("Transaction kinds (type, sign of amount, count):")
+    for line in kinds(res["data"]):
+        print(f"  {line}")
+
+
+def kinds(page: object) -> list[str]:
+    """Each transaction type with the sign of its amounts and a count: no amounts or dates."""
+    items = page.get("items", []) if isinstance(page, dict) else []
+    counts: dict[tuple[str, str], int] = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        amount = item.get("amount")
+        sign = (
+            "?" if not isinstance(amount, int | float) else "+" if amount > 0 else "-" if amount < 0 else "0"
+        )
+        key = (str(item.get("type")), sign)
+        counts[key] = counts.get(key, 0) + 1
+    return [f"{kind} {sign} x{n}" for (kind, sign), n in sorted(counts.items())] or ["(none)"]
 
 
 def _held(client: Client, ticker: str) -> float | None:
