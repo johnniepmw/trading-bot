@@ -151,3 +151,10 @@ def test_prod_mounts_the_price_data_key() -> None:
     # the EODHD adapter reads /secrets/eodhd-key/value (ADR-0018); staging runs on synthetic prices
     assert re.search(r'secrets\s*=\s*\["eodhd-key"\]', PROD.read_text())
     assert "eodhd-key" not in STAGING.read_text()
+
+
+
+def test_the_deploy_identity_may_deploy_each_job_directly() -> None:
+    block = resource("google_cloud_run_v2_job_iam_member", "deployer")
+    assert 'role     = "roles/run.developer"' in block
+    assert "var.deployer_sa" in block
