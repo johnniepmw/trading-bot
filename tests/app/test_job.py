@@ -16,6 +16,7 @@ import pytest
 from tests.brokers.t212_sim import Trading212Sim
 from tradingbot.app.__main__ import build_flags
 from tradingbot.app.cycle import CycleStopError
+from tradingbot.app.daily_email import EmailError, Sender
 from tradingbot.app.job import (
     EXIT_OK,
     EXIT_SKIPPED,
@@ -736,3 +737,77 @@ def test_a_reset_needs_the_lock(set_up: Path) -> None:
 
 def test_a_reset_with_nothing_to_clear_is_a_plain_setup(tmp_path: Path) -> None:
     assert job_at(tmp_path, SETUP_DAY).setup("1000", reset=True) == EXIT_OK
+
+
+# --- the daily email (monitoring step 5) ---------------------------------------------
+@pytest.fixture
+def outbox(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
+    sent: list[tuple[str, str, str]] = []
+    monkeypatch.setattr("tradingbot.app.job.read_sender", lambda: Sender("bot@example.com", "pw"))
+    monkeypatch.setattr(
+        "tradingbot.app.job.send", lambda sender, to, subject, body: sent.append((to, subject, body))
+    )
+    return sent
+
+
+EMAIL = {"FLAG_DAILY_EMAIL": "on", "EMAIL_TO": "owner@example.com"}
+
+
+def test_a_run_emails_the_glance_when_the_flag_is_on(
+    set_up: Path, outbox: list[tuple[str, str, str]]
+) -> None:
+    assert job_at(set_up, RUN_DAY, **EMAIL).run() == EXIT_OK
+    ((to, subject, body),) = outbox
+    assert to == "owner@example.com"
+    assert subject.startswith("Trading bot (test) ")
+    lines = body.split("\n\n")[0].splitlines()
+    assert len(lines) == 7
+    assert lines[0].startswith("[OK]   Run: completed")
+    assert lines[3].endswith("on £1,000.00")  # since setup, from the seeded mark
+
+
+def test_no_email_while_the_flag_is_off(set_up: Path, outbox: list[tuple[str, str, str]]) -> None:
+    assert job_at(set_up, RUN_DAY, EMAIL_TO="owner@example.com").run() == EXIT_OK
+    assert outbox == []
+
+
+def test_a_stopped_run_still_emails_with_a_stop_line(
+    set_up: Path, outbox: list[tuple[str, str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def stop(*_: object, **__: object) -> None:
+        raise CycleStopError("not reconciled: test")
+
+    monkeypatch.setattr("tradingbot.app.cycle._decide", stop)
+    assert job_at(set_up, RUN_DAY, **EMAIL).run() == EXIT_STOPPED
+    ((_, subject, body),) = outbox
+    assert subject.endswith(": ACTION")
+    assert "[STOP] Run: STOPPED" in body and "not reconciled: test" in body
+
+
+def test_a_failed_email_never_changes_the_run(
+    set_up: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def refuse(*_: object) -> None:
+        raise EmailError("sending failed (SMTPAuthenticationError)")
+
+    monkeypatch.setattr("tradingbot.app.job.read_sender", lambda: Sender("bot@example.com", "pw"))
+    monkeypatch.setattr("tradingbot.app.job.send", refuse)
+    with caplog.at_level(logging.WARNING):
+        assert job_at(set_up, RUN_DAY, **EMAIL).run() == EXIT_OK
+    (record,) = [r for r in caplog.records if r.getMessage().startswith("daily email not sent")]
+    assert getattr(record, "alert", None) == "email_failed"
+
+
+def test_no_recipient_is_an_email_failure_not_a_run_failure(
+    set_up: Path, outbox: list[tuple[str, str, str]], caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        assert job_at(set_up, RUN_DAY, FLAG_DAILY_EMAIL="on").run() == EXIT_OK
+    assert outbox == []
+    assert "daily email not sent: EmailError: EMAIL_TO is not set" in caplog.text
+
+
+def test_dry_runs_and_setup_send_no_email(tmp_path: Path, outbox: list[tuple[str, str, str]]) -> None:
+    assert job_at(tmp_path, SETUP_DAY, **EMAIL).setup("1000") == EXIT_OK
+    assert job_at(tmp_path, RUN_DAY, **EMAIL).dry_run() in (EXIT_OK, EXIT_STOPPED)
+    assert outbox == []

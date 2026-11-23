@@ -12,6 +12,7 @@ at ERROR. An alert email names the **kind**; read the line itself with `make log
 | `stale_lock` | A run died holding the ledger's lock; runs stop until it is cleared | stale-lock.md |
 | `run_died` | An earlier run never finished (reported by the next run) | Tell the agent; usually a timeout or a crash |
 | `crash` | Something unexpected; the run stopped | Tell the agent |
+| `email_failed` | The daily email wasn't sent (the run itself is unaffected) | The log line names why: a bad `gmail-sender` secret (re-run `make secret-set NAME=gmail-sender`), Gmail refusing the login (app password revoked), or `EMAIL_TO` unset. Tell the agent if unsure |
 | `order_short` | An order ended short of a full fill | Check the order in the Trading 212 app |
 | `account_veto` | Risk blocked buys for the whole account (daily loss, drawdown stop, no day-start equity) | Table below |
 | `drawdown` | Equity fell through 5, 10, 15 or 20% below the peak (once per crossing; 10% halves new positions, 20% stops buys) | Read it; nothing to do unless you want to step in |

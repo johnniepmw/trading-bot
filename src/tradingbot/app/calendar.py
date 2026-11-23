@@ -34,6 +34,14 @@ class TradingCalendar:
             day -= timedelta(days=1)
         return day
 
+    def next_month_end(self, today: date) -> date:
+        """The month's last trading day, or next month's once today is past it."""
+        this_month = self._last_trading_day_of_month(today.year, today.month)
+        if this_month >= today:
+            return this_month
+        following = date(today.year + today.month // 12, today.month % 12 + 1, 1)
+        return self._last_trading_day_of_month(following.year, following.month)
+
     def signal_day(self, today: date) -> date:
         """The latest month-end trading day strictly before `today` (its close is in)."""
         self.is_trading_day(today)  # refuses a date past the calendar

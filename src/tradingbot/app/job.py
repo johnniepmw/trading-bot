@@ -29,6 +29,7 @@ from pathlib import Path
 
 from tradingbot.app.calendar import CalendarError, TradingCalendar
 from tradingbot.app.cycle import CycleConfig, dry_run_cycle, run_cycle
+from tradingbot.app.daily_email import EmailError, compose, glance_input, read_sender, send
 from tradingbot.app.eodhd import EodhdHistory, read_key
 from tradingbot.app.flags import Flags
 from tradingbot.app.local_store import LocalObjectStore
@@ -53,6 +54,7 @@ from tradingbot.data.prices import DataError, PriceHistory
 from tradingbot.data.synthetic import SyntheticHistory, synthetic_close
 from tradingbot.domain.market import price_money
 from tradingbot.domain.money import Currency, Money
+from tradingbot.ledger.store import Ledger
 from tradingbot.risk.limits import Limits
 
 log = logging.getLogger(__name__)
@@ -81,6 +83,7 @@ class Wiring:
     execution: str
     version: str
     fake_now: datetime | None = None
+    email_to: str | None = None  # the daily email's recipient (EMAIL_TO, set by OpenTofu)
 
 
 def wiring_from(env: Mapping[str, str]) -> Wiring:
@@ -113,6 +116,7 @@ def wiring_from(env: Mapping[str, str]) -> Wiring:
         execution=env.get("CLOUD_RUN_EXECUTION") or "local",
         version=env.get("APP_VERSION", "dev"),
         fake_now=_fake_now(env, app_env),
+        email_to=env.get("EMAIL_TO") or None,
     )
 
 
@@ -354,8 +358,34 @@ class Job:
         )
         if report.stopped is None:
             log.info("run completed: %d order(s) sent", report.sent)
-            return EXIT_OK
-        return EXIT_STOPPED
+        self._send_daily_email(ledger, run_id, now)
+        return EXIT_OK if report.stopped is None else EXIT_STOPPED
+
+    def _send_daily_email(self, ledger: Ledger, run_id: str, now: datetime) -> None:
+        """The glance, after a run that opened the ledger (daily email spec). Never changes
+        the run's outcome: any failure is a WARNING the alert policy mails as email_failed."""
+        if not self.flags.is_enabled("daily-email"):
+            return
+        try:
+            if self.wiring.email_to is None:
+                raise EmailError("EMAIL_TO is not set")
+            facts = glance_input(
+                ledger,
+                run_id,
+                today=now.date(),
+                calendar=self._calendar(),
+                universe=self.config.universe,
+                limits=Limits(**vars(self.config.limits)),
+                now=self.clock(),
+            )
+            subject, body = compose(facts, self.wiring.app_env)
+            send(read_sender(), self.wiring.email_to, subject, body)
+        except Exception as error:  # noqa: BLE001 - the email must never change the run
+            log.warning(
+                "daily email not sent: %s: %s", type(error).__name__, error, extra={"alert": "email_failed"}
+            )
+            return
+        log.info("daily email sent")
 
     def _dry_run(self, *, deploy_check: bool) -> int:
         check_prod_ready(self.wiring, self.config)

@@ -66,6 +66,8 @@ email can never disagree with the decision record.
 4. Staging email (AC7), then prod's flag.
 
 ## Progress log
+- 2026-11-23 step 1: infra (#62); the owner made the bot's Gmail account and stored `gmail-sender` in staging and prod; both applies green
+- 2026-11-23 step 3: `report/glance.py` (pure, contract 8), `app/daily_email.py` (secret, SMTP over TLS, figures from the ledger), the job sends after a run that opened the ledger, behind `daily-email` (off) — evidence: `tests/report/test_glance.py` (every colour of every line), `tests/app/test_daily_email.py` (fake SMTP), `tests/app/test_job.py` email tests (flag off sends nothing; a stopped run still emails; a failed send never changes the run and alerts `email_failed`; dry runs and setup send nothing)
 
 ## Review
 
