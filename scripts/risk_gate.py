@@ -125,12 +125,14 @@ def classify_pr(
         return result
     if result["risk"] == "standard" and author in DEPENDABOT and result["matches"]:
         for m in result["matches"]:
-            old_tags = {action: tag for action, _, tag in removed_pins(patches.get(m["path"]))}
-            for action, sha, tag in added_pins(patches.get(m["path"])):
-                if action in old_tags and version(tag) <= version(old_tags[action]):
+            removed, added = removed_pins(patches.get(m["path"])), added_pins(patches.get(m["path"]))
+            # a pin bump replaces the same actions in order (is_pin_bump): pair them one by one
+            for (old_action, _, old_tag), (action, _, tag) in zip(removed, added, strict=False):
+                if old_action == action and version(tag) <= version(old_tag):
                     result["risk"] = "high"
-                    result["reason"] = f"{action} {tag} is not newer than {old_tags[action]}"
+                    result["reason"] = f"{action} {tag} is not newer than {old_tag}"
                     return result
+            for action, sha, tag in added:
                 if resolve(action, tag) != sha:
                     result["risk"] = "high"
                     result["reason"] = f"{action}@{sha[:12]} is not tag {tag} of that repo"

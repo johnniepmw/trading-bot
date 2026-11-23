@@ -193,6 +193,15 @@ def test_dependabot_bump_to_the_same_version_is_high() -> None:
     assert classify_pr(pr(), [{"filename": WF, "patch": same}], resolve)["risk"] == "high"
 
 
+def test_a_downgrade_hidden_behind_a_second_pin_of_the_same_action_is_high() -> None:
+    two = (
+        f"-      - uses: actions/checkout@{OLD} # v7.0.1\n-      - uses: actions/checkout@{OLD} # v6.0.0\n"
+        f"+      - uses: actions/checkout@{NEW} # v7.0.0\n+      - uses: actions/checkout@{NEW} # v6.0.1"
+    )  # v7.0.1 -> v7.0.0 is a downgrade, even though both new tags beat the last old one
+    resolve = tags({("actions/checkout", "v7.0.0"): NEW, ("actions/checkout", "v6.0.1"): NEW})
+    assert classify_pr(pr(), [{"filename": WF, "patch": two}], resolve)["risk"] == "high"
+
+
 def test_version_order_is_numeric_not_textual() -> None:
     ten = f"-      - uses: actions/checkout@{OLD} # v7.9\n+      - uses: actions/checkout@{NEW} # v7.10"
     resolve = tags({("actions/checkout", "v7.10"): NEW})
