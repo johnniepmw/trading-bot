@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.bars import weekdays
-from tradingbot.app.cycle import CycleConfig, CycleReport, run_cycle
+from tradingbot.app.cycle import CycleConfig, CycleReport, _OneFetchPerRun, run_cycle
 from tradingbot.brokers.fake.broker import FakeBroker
 from tradingbot.brokers.port import AccountSnapshot, BrokerError, NoQuoteError
 from tradingbot.data.prices import DataError
@@ -936,3 +936,50 @@ def test_a_stale_benchmark_is_left_out(
     cycle(broker, ledger, history=stale, config=WITH_BENCHMARK, signal_day=None)
     assert BENCHMARK not in {r.instrument for r in ledger.levels()["run-1"]}
     assert "benchmark close unavailable" in caplog.text
+
+
+# --- ADR-0018's call budget ---------------------------------------------------------------
+class CountingHistory(HistoryWithBenchmark):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def daily_bars(self, instrument: Instrument, start: date, end: date) -> Sequence[Bar]:
+        self.calls.append(instrument.ticker)
+        return super().daily_bars(instrument, start, end)
+
+
+def test_a_month_end_run_fetches_each_instrument_once(broker: FakeBroker, ledger: Ledger) -> None:
+    history = CountingHistory()
+    report = cycle(broker, ledger, history=history, config=WITH_BENCHMARK)
+    assert report.sent == 1
+    assert sorted(history.calls) == ["DOWN", "SSAC", "UP"]
+
+
+def test_the_preview_from_reused_bars_matches_a_fresh_fetch(broker: FakeBroker, tmp_path: Path) -> None:
+    month_end = Ledger.create(tmp_path / "a.sqlite")
+    month_end.seed_high_water_mark(gbp(1000), NOW - timedelta(days=1))
+    cycle(broker, month_end, history=FakeHistory())
+    quiet = Ledger.create(tmp_path / "b.sqlite")
+    quiet.seed_high_water_mark(gbp(1000), NOW - timedelta(days=1))
+    cycle(broker, quiet, history=FakeHistory(), signal_day=None)
+    assert month_end.preview("run-1") == quiet.preview("run-1")
+    assert month_end.levels() == quiet.levels()
+
+
+def test_a_reused_fetch_returns_only_the_requested_dates() -> None:
+    history = CountingHistory()
+    run_history = _OneFetchPerRun(history)
+    wide = run_history.daily_bars(UP, DAYS[0], DAYS[-1])
+    narrow = run_history.daily_bars(UP, DAYS[100], DAYS[200])
+    assert history.calls == ["UP"]
+    assert list(narrow) == list(FakeHistory().daily_bars(UP, DAYS[100], DAYS[200]))
+    assert len(narrow) < len(wide)
+
+
+def test_a_request_outside_the_earlier_fetch_fetches_again() -> None:
+    history = CountingHistory()
+    run_history = _OneFetchPerRun(history)
+    run_history.daily_bars(UP, DAYS[100], DAYS[200])
+    run_history.daily_bars(UP, DAYS[50], DAYS[200])
+    assert history.calls == ["UP", "UP"]
