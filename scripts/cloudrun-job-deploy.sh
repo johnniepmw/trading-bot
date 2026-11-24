@@ -70,7 +70,7 @@ restore() {
 follow_dashboard() {
   local service="${app}-dashboard-${env}" names
   names="$(gc run services list --region "$region" --format='value(metadata.name)')" \
-    || { echo "deploy: warning: couldn't list services, so no dashboard was updated; the job is unaffected" >&2; return 0; }
+    || { echo "deploy: DASHBOARD NOT CHECKED: couldn't list services; the job is unaffected" >&2; exit 1; }
   grep -qx "$service" <<<"$names" || { echo "deploy: no $service yet; skipped"; return 0; }
   gc run services update "$service" --region "$region" --image "$1" \
     || { echo "deploy: DASHBOARD NOT UPDATED: $service keeps its last good revision; the job is unaffected" >&2; exit 1; }

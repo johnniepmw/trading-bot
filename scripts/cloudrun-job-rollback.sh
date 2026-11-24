@@ -43,7 +43,7 @@ echo "rollback: done; $job runs ${target##*@}"
 # The dashboard service follows (ADR-0020); a failure here never touches the job.
 service="${app}-dashboard-${env}"
 names="$(gc run services list --region "$region" --format='value(metadata.name)')" \
-  || { echo "rollback: warning: couldn't list services, so no dashboard was rolled back; the job is rolled back" >&2; exit 0; }
+  || { echo "rollback: DASHBOARD NOT CHECKED: couldn't list services; the job is rolled back" >&2; exit 1; }
 if grep -qx "$service" <<<"$names"; then
   gc run services update "$service" --region "$region" --image "$target" \
     || { echo "rollback: DASHBOARD NOT ROLLED BACK: $service keeps its revision; the job is rolled back" >&2; exit 1; }

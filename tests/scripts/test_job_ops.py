@@ -413,12 +413,12 @@ def test_a_failed_dashboard_rollback_leaves_the_job_rolled_back(fake: Path) -> N
     assert (fake / "image").read_text() == OLD
 
 
-def test_a_deployer_that_cant_list_services_skips_the_dashboard_with_a_warning(fake: Path) -> None:
-    # before the owner's bootstrap grants run.services.list
+def test_a_deployer_that_cant_list_services_fails_the_deploy_but_not_the_job(fake: Path) -> None:
+    # the dashboard exists from this PR on: every deploy must check it (ADR-0020)
     (fake / "services_list_fails").write_text("")
     result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
-    assert result.returncode == 0
-    assert "couldn't list services" in result.stderr
+    assert result.returncode == 1
+    assert "DASHBOARD NOT CHECKED" in result.stderr
     assert (fake / "image").read_text() == NEW
 
 
