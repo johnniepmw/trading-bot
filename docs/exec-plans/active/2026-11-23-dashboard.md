@@ -71,6 +71,7 @@ incident views (the rest of AC8).
 5. Staging check on the owner's phone, then prod.
 
 ## Progress log
+- 2026-11-24 the owner merged #68 and applied the bootstrap (a disconnected Cloud Shell left a state lock: cleared with `tofu force-unlock`). The service PR: `infra/modules/cloud-run-dashboard`, staging and prod wiring, the alert filter for the dashboard's lines, `scripts/dashboard-check.sh` after every infra apply and nightly (security review of the module: 1 medium, 2 low, all taken) — evidence: `tests/infra/test_dashboard_module.py` (every infra file), `tests/scripts/test_job_ops.py` (the check, IAP gating)
 - 2026-11-23 (overnight, owner asleep) app side of slice 1, with the bootstrap PR: `app/dashboard.py` and `serve`, `report/page.py`, `app/glance_facts.py` (shared with the email; a run in progress or one that died), `app.pause.request_pause` (create-only, unique name, `pause_requested` alert), deploy and rollback move the service after the job's check, `scripts/dashboard-iap.sh` (the owner's IAP script), ADR-0020, `docs/runbooks/dashboard-access.md`, a 390 px screenshot from fake data (`docs/images/dashboard-slice1-390px.png`) — evidence: `tests/app/test_dashboard.py` (18), `tests/e2e/test_dashboard.py` (serve as a process, pause through confirm, smoke reports paused), `tests/scripts/test_job_ops.py` (7 new), `tests/scripts/test_dashboard_iap.py` (6). Waiting for the owner's bootstrap apply before the service's infra PR (CI's plan needs the new identities)
 
 ## Review
