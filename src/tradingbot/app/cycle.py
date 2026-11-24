@@ -431,7 +431,7 @@ class _OneFetchPerRun:
         earlier = self._fetched.get(instrument)
         if earlier is not None and earlier[0] <= start and end <= earlier[1]:
             return [b for b in earlier[2] if start <= b.day <= end]
-        bars = self._history.daily_bars(instrument, start, end)
+        bars = tuple(self._history.daily_bars(instrument, start, end))  # immutable: shared below
         self._fetched[instrument] = (start, end, bars)
         return bars
 

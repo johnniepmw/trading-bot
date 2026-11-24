@@ -28,7 +28,8 @@ one line in the job.
 - One request per fund per run (seven), and as many for a dry run: within 20 a day.
   Amended 2026-11-24 (dashboard slice 2): each run also fetches SSAC's latest close for
   the dashboard. A run fetches each instrument once (the month-end preview reuses the checked
-  history's bars), so every run makes 8 calls: two attempts a day fit in 20.
+  history's bars), so a run makes 8 calls (9 if a fetch fails partway): two attempts fit in
+  20, but not two attempts plus a deploy's dry run on a month end's action day.
 - Bars use `adjusted_close`, with the open scaled by the same factor, in the listing's
   units (pence for GBX funds).
 - The key is a file (`/secrets/eodhd-key/value`, prod only). It travels in the query

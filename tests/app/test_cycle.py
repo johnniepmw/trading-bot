@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.bars import weekdays
-from tradingbot.app.cycle import CycleConfig, CycleReport, run_cycle
+from tradingbot.app.cycle import CycleConfig, CycleReport, _OneFetchPerRun, run_cycle
 from tradingbot.brokers.fake.broker import FakeBroker
 from tradingbot.brokers.port import AccountSnapshot, BrokerError, NoQuoteError
 from tradingbot.data.prices import DataError
@@ -965,3 +965,21 @@ def test_the_preview_from_reused_bars_matches_a_fresh_fetch(broker: FakeBroker, 
     cycle(broker, quiet, history=FakeHistory(), signal_day=None)
     assert month_end.preview("run-1") == quiet.preview("run-1")
     assert month_end.levels() == quiet.levels()
+
+
+def test_a_reused_fetch_returns_only_the_requested_dates() -> None:
+    history = CountingHistory()
+    run_history = _OneFetchPerRun(history)
+    wide = run_history.daily_bars(UP, DAYS[0], DAYS[-1])
+    narrow = run_history.daily_bars(UP, DAYS[100], DAYS[200])
+    assert history.calls == ["UP"]
+    assert list(narrow) == list(FakeHistory().daily_bars(UP, DAYS[100], DAYS[200]))
+    assert len(narrow) < len(wide)
+
+
+def test_a_request_outside_the_earlier_fetch_fetches_again() -> None:
+    history = CountingHistory()
+    run_history = _OneFetchPerRun(history)
+    run_history.daily_bars(UP, DAYS[100], DAYS[200])
+    run_history.daily_bars(UP, DAYS[50], DAYS[200])
+    assert history.calls == ["UP", "UP"]
