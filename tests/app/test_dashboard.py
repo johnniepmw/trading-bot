@@ -263,7 +263,7 @@ def test_the_home_page_shows_the_weekly_view_from_the_runs_records(ran: Path) ->
     assert "<p class=hero>" in body
     assert "<b>VWRP</b>" in body and "<b>SGLN</b>" in body
     assert "what risk allowed, and what became of each order" in body
-    assert "Order: awaiting fill" in body  # sent at the run, filled at the open  # the run was a month end
+    assert "Order: awaiting fill" in body  # sent at the run, filled at the open
     assert "<b>Day 1</b> of 90" in body  # counted from the first run
 
 

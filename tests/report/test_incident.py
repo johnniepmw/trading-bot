@@ -12,19 +12,32 @@ from tradingbot.report.incident import DIED, GUIDANCE, UNKNOWN, guidance, incide
 RUNBOOK = Path(__file__).resolve().parents[2] / "docs" / "runbooks" / "cycle-alerts.md"
 
 
-def stop_reasons_table() -> str:
+def runbook_rows() -> list[tuple[tuple[str, ...], str, str]]:
     text = RUNBOOK.read_text(encoding="utf-8")
-    return text[text.index("## Stop reasons") :]
+    table = text[text.index("## Stop reasons") :].split("\n\n")[1]
+    rows = []
+    for line in table.splitlines():
+        if line.startswith("| `"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            keys = tuple(k.split(" ... ")[-1] for k in re.findall(r"`([^`]+)`", cells[0]))
+            rows.append((keys, *(re.sub(r"\*\*|`", "", c).strip() for c in cells[1:3])))
+    return rows
 
 
-@pytest.mark.parametrize("g", GUIDANCE, ids=lambda g: g.key)
-def test_every_stop_reason_the_page_knows_is_in_the_runbook(g) -> None:  # type: ignore[no-untyped-def]
-    assert g.key in stop_reasons_table()
+def test_the_page_and_the_runbook_give_the_same_guidance_both_ways() -> None:
+    assert [(g.keys, g.meaning, g.action) for g in GUIDANCE] == runbook_rows()
 
 
-@pytest.mark.parametrize("g", GUIDANCE, ids=lambda g: g.key)
+@pytest.mark.parametrize("g", GUIDANCE, ids=lambda g: g.keys[0])
 def test_each_stop_reason_finds_its_guidance(g) -> None:  # type: ignore[no-untyped-def]
-    assert guidance(f"cycle stopped: {g.key.upper()}: details") is g
+    for key in g.keys:
+        assert guidance(f"cycle stopped: {key.upper()}: details") is g
+
+
+def test_a_skipped_month_end_asks_the_owner_to_decide() -> None:
+    g = guidance("signal-day closes for 2026-10-30 not verified ... month end skipped until the next one")
+    assert "exits included" in g.meaning
+    assert "Decide whether to act by hand" in g.action
 
 
 def test_a_run_that_died_gets_the_died_guidance() -> None:

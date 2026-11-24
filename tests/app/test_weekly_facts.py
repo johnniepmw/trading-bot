@@ -300,3 +300,51 @@ def test_a_decision_without_an_order_has_no_order_state(ledger: Ledger) -> None:
     w = facts(ledger)
     assert w is not None
     assert (w.decisions[0].order, w.decisions[0].why) == (None, None)
+
+
+def test_a_pence_fill_is_valued_in_pounds_and_a_partial_sell_by_what_filled(ledger: Ledger) -> None:
+    rid = run(ledger, DAY1, "1000", None)
+    ledger.record_decisions(
+        rid,
+        [
+            DecisionRecord(
+                B, Side.BUY, Decimal("10"), Decimal("10"), "ok", Money(Decimal("5000"), Currency.GBX)
+            ),
+            DecisionRecord(A, Side.SELL, Decimal("4"), Decimal("4"), "ok", gbp("100")),
+        ],
+    )
+    pence = ledger.record_intent(rid, Order(B, Side.BUY, Decimal("10")), at(DAY1))
+    ledger.settle(
+        pence,
+        IntentState.FILLED,
+        "o-1",
+        Decimal("10"),
+        average_price=Money(Decimal("5000"), Currency.GBX),
+        fees=gbp("0"),
+    )
+    partial = ledger.record_intent(rid, Order(A, Side.SELL, Decimal("4")), at(DAY1))
+    ledger.settle(
+        partial, IntentState.PARTIALLY_FILLED, "o-2", Decimal("1"), average_price=gbp("99"), fees=gbp("0")
+    )
+    w = facts(ledger)
+    assert w is not None
+    b, a = w.decisions
+    assert (b.traded, b.pence) == (Decimal("500.00"), True)
+    assert (a.order, a.traded) == ("partly filled", Decimal("99"))
+
+
+def test_an_approved_decision_the_run_never_sent_says_not_sent(ledger: Ledger) -> None:
+    rid = run(ledger, DAY1, "1000", None)
+    ledger.record_decisions(rid, [DecisionRecord(A, Side.BUY, Decimal("2"), Decimal("2"), "ok", gbp("100"))])
+    w = facts(ledger)
+    assert w is not None
+    assert w.decisions[0].order == "not sent"
+
+
+def test_an_order_whose_sending_wasnt_confirmed_never_reads_as_unsent(ledger: Ledger) -> None:
+    rid = run(ledger, DAY1, "1000", None)
+    ledger.record_decisions(rid, [DecisionRecord(A, Side.BUY, Decimal("2"), Decimal("2"), "ok", gbp("100"))])
+    ledger.record_intent(rid, Order(A, Side.BUY, Decimal("2")), at(DAY1))  # killed mid-send
+    w = facts(ledger)
+    assert w is not None
+    assert w.decisions[0].order == "sending not confirmed (the next run checks the broker)"

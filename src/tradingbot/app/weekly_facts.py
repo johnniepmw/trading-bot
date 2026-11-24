@@ -12,6 +12,7 @@ import itertools
 from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal
+from typing import NamedTuple
 
 from tradingbot.domain.market import BENCHMARK, Instrument
 from tradingbot.domain.money import Currency
@@ -115,9 +116,9 @@ def _funds(
 
 
 ORDER_WORDS = {
-    IntentState.INTENDED: "recorded, not sent",
+    IntentState.INTENDED: "sending not confirmed (the next run checks the broker)",
     IntentState.SENT: "awaiting fill",
-    IntentState.UNKNOWN: "outcome unknown",
+    IntentState.UNKNOWN: "outcome unknown (the next run checks the broker)",
     IntentState.FILLED: "filled",
     IntentState.PARTIALLY_FILLED: "partly filled",
     IntentState.REJECTED: "rejected",
@@ -133,9 +134,16 @@ def _why(signal: SignalRecord | None) -> str | None:
     return f"{trend}, target {signal.weight_after * 100:.0f}%"
 
 
-def _order_facts(ledger: Ledger, intent: Intent | None) -> dict[str, object]:
-    if intent is None:
-        return {}
+class _OrderFacts(NamedTuple):
+    order: str | None = None
+    filled_at: Decimal | None = None
+    fees: Decimal | None = None
+    traded: Decimal | None = None
+
+
+def _order_facts(ledger: Ledger, intent: Intent | None, approved: bool) -> _OrderFacts:
+    if intent is None:  # approved but never recorded: the run stopped before sending it
+        return _OrderFacts("not sent" if approved else None)
     fill = ledger.fill(intent.intent_id)
     price = fill.average_price
     traded = (
@@ -143,12 +151,12 @@ def _order_facts(ledger: Ledger, intent: Intent | None) -> dict[str, object]:
         if price is not None and intent.filled_quantity
         else None
     )
-    return {
-        "order": ORDER_WORDS[intent.state],
-        "filled_at": price.amount if price is not None else None,
-        "fees": fill.fees.amount if fill.fees is not None else None,
-        "traded": traded,
-    }
+    return _OrderFacts(
+        ORDER_WORDS[intent.state],
+        price.amount if price is not None else None,
+        fill.fees.amount if fill.fees is not None else None,
+        traded,
+    )
 
 
 def _decisions(ledger: Ledger, runs: list[RunRecord]) -> tuple[date | None, list[DecisionRow]]:
@@ -163,6 +171,9 @@ def _decisions(ledger: Ledger, runs: list[RunRecord]) -> tuple[date | None, list
             }
             rows = []
             for d in records:
+                facts = _order_facts(
+                    ledger, intents.get((d.instrument, d.side)), approved=bool(d.approved_quantity)
+                )
                 price = d.quote.to_gbp().amount if d.quote else None
                 approved = (
                     d.approved_quantity * price
@@ -180,7 +191,10 @@ def _decisions(ledger: Ledger, runs: list[RunRecord]) -> tuple[date | None, list
                         why=_why(signals.get(d.instrument)),
                         intended=d.quote.amount if d.quote else None,
                         pence=d.instrument.currency is Currency.GBX,
-                        **_order_facts(ledger, intents.get((d.instrument, d.side))),  # type: ignore[arg-type]
+                        order=facts.order,
+                        filled_at=facts.filled_at,
+                        fees=facts.fees,
+                        traded=facts.traded,
                     )
                 )
             return run.started_at.date(), rows

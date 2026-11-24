@@ -524,9 +524,16 @@ def _order_line(d: DecisionRow) -> str:
         return ""
     parts = [f"Order: {escape(d.order)}"]
     if d.intended is not None and d.filled_at is not None and d.intended:
-        slip = float(d.filled_at / d.intended - 1)
+        change = float(d.filled_at / d.intended - 1)
+        worse = change if d.side == "buy" else -change  # paying more, or getting less, is worse
+        verdict = (
+            "as quoted"
+            if round(worse * 10000) == 0
+            else f"{abs(worse) * 100:.2f}% {'worse' if worse > 0 else 'better'}"
+        )
         parts.append(
-            f"{_price(d.intended, d.pence)} → {_price(d.filled_at, d.pence)} ({_pct(slip, places=2)})"
+            f"{'paid' if d.side == 'buy' else 'got'} {_price(d.filled_at, d.pence)} against "
+            f"{_price(d.intended, d.pence)} quoted ({verdict})"
         )
     if d.fees is not None and d.traded:
         assumed = d.traded * COST_ASSUMPTION
