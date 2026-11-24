@@ -96,7 +96,7 @@ def test_the_page_then_a_confirmed_pause_then_smoke_reports_paused(
     dashboard: str, run_job: RunJob, tmp_path: Path
 ) -> None:
     status, page, _ = call(dashboard + "/")
-    assert status == 200 and "Run: completed" in page
+    assert status == 200 and "<b>Run</b>: completed" in page
 
     assert call(dashboard + "/pause")[0] == 303  # a GET changes nothing
     assert call(dashboard + "/pause", b"confirm=yes", {"Sec-Fetch-Site": "cross-site"})[0] == 403

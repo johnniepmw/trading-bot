@@ -1,6 +1,6 @@
 # Dashboard: the glance and the pause button on the owner's phone (monitoring step 4)
 
-- **Status**: active (slice 1 shipped 2026-11-24; slices 2 and 3 to come)
+- **Status**: active (slice 1 shipped 2026-11-24; slice 2 in build; slice 3 to come)
 - **Branch / PR**: ccr-7fe1197d-l39xit / infra PR, then app PR, per slice
 - **Risk class**: high (infra, IAM, a new public endpoint behind IAP, and the pause control)
 - **Started**: 2026-11-23
@@ -32,6 +32,22 @@ incident views (the rest of AC8).
 | AC7 | Deploys update the service image with the job's, and roll back with it | deploy script tests |
 | AC8 | Fake data only in tests and CI (ADR-0014) | tests |
 
+## Acceptance criteria (slice 2: the weekly view)
+| # | Criterion (observable, pass/fail) | Evidence |
+|---|---|---|
+| AC9 | `GET /` leads with the answer: an overall state (worst glance level, icon and words), the account value with today's and since-setup change, and how far ahead of or behind SSAC since setup; then the seven checks (unchanged words, same as the email) | rendering tests; 390 px screenshots light and dark |
+| AC10 | Value since setup, one £ axis: the bot (blue), 1/N buy-and-hold of the 7 funds (orange) and SSAC (aqua), each started with the seed at the setup day's closes, and cash as a dashed line at the seed; a legend with each latest value and %; deploys (a change of run version) marked on the axis; every day's figures in a hover title and in a "The numbers" table | tests from fake ledgers |
+| AC11 | Drawdown from the high, with the 10% (positions halve) and 20% (no new buys) limits drawn and labelled; now, worst and room before halving as figures | tests |
+| AC12 | Per fund: in or out of trend (icon, never colour alone), distance to the 210-day average as a bar and a %, held £ and share, and the month-end preview's weight | tests |
+| AC13 | Month end: the next date; invested against cash now and on today's preview; the last acted month end's risk decisions (approved, cut, refused, with reason) | tests |
+| AC14 | Paper trading: day N of 90 since the first run, with its end date | tests |
+| AC15 | The job stores, per run, the latest closes it read for the 7 funds and SSAC, and the preview's close and 210-day average per fund (expand-only ledger change; the dashboard reads them, never computes signals itself). An older ledger without them shows the page with "—" and no chart, never an error | ledger tests; dashboard tests on an old-shape ledger |
+| AC16 | Fake data only in tests, CI and screenshots (ADR-0014); colours validated light and dark (dataviz validator); no scripts; no horizontal scroll at 390 px | tests; validator output; screenshots |
+
+## Non-goals (slice 2)
+- "Inside the backtest's expected range": waits for the backtest (Phase 1 step 8b).
+- Setting changes (flags) on the timeline: slice 3 with the incident views.
+
 ## Non-goals (slice 1)
 - Charts, benchmarks, month-end and incident views (slices 2–3).
 - Verifying IAP's signed header in the app: the service accepts requests only from IAP's
@@ -58,6 +74,12 @@ incident views (the rest of AC8).
   monitoring Decisions), with same-origin checks; IAP already authenticates every request.
 - The glance on the page is built by `report.glance`, so the page and the email can never
   disagree.
+- Slice 2 presentation (owner, 2026-11-24: "highly intuitive and efficient first, then a joy
+  to view"): answer first (state pill, value, vs SSAC), detail below in cards; the dataviz
+  reference palette, validated light and dark (aqua is under 3:1 on light, so the legend
+  carries values and a table holds every number); one £ axis, never two; status colours only
+  for the checks and the drawdown limits, always with an icon or label; dark mode follows the
+  phone. No JavaScript, so hover is the SVG `<title>` (a tap on a phone).
 
 ## Open questions
 - None for slice 1.

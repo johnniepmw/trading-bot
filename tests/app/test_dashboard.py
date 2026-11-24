@@ -59,8 +59,8 @@ def test_the_home_page_shows_the_latest_runs_glance(ran: Path) -> None:
     page = get(dashboard(ran))
     assert page.status is HTTPStatus.OK
     assert page.body.count("<li>") == 7
-    assert "Run: completed" in page.body
-    assert "Since setup:" in page.body
+    assert "<b>Run</b>: completed" in page.body
+    assert "<b>Since setup</b>:" in page.body
     assert '<form method=post action="/pause/confirm">' in page.body
     assert "<td>completed</td>" in page.body
 
@@ -90,10 +90,10 @@ def test_a_run_holding_the_lock_shows_as_in_progress(ran: Path) -> None:
     led.start_run("run-live", RUN_DAY + timedelta(days=1, hours=7), "v")
     led.close()
     s.write("ledger", LEDGER_OBJECT, path.read_bytes(), if_generation_match=info.generation)
-    assert "Run: in progress since" in get(dashboard(ran, now=RUN_DAY + timedelta(minutes=10))).body
+    assert "<b>Run</b>: in progress since" in get(dashboard(ran, now=RUN_DAY + timedelta(minutes=10))).body
     # past STALE_AFTER the lock belongs to a run that died (killed at its timeout, say)
     stale = get(dashboard(ran, now=RUN_DAY + timedelta(hours=2))).body
-    assert "Run: did not finish" in stale
+    assert "<b>Run</b>: did not finish" in stale
     assert "<td>died</td>" in stale  # the table agrees with the glance
 
 
