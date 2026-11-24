@@ -20,6 +20,7 @@ B = Instrument("BBB", Currency.GBX)
 UNIVERSE = {A: Decimal("0.001"), B: Decimal("0.001")}
 DAY1, DAY2, DAY3 = date(2026, 11, 23), date(2026, 11, 24), date(2026, 11, 25)
 MONTH_END = date(2026, 11, 30)
+ANCHOR = {A: 100.0, B: 5000.0, BENCHMARK: 50.0}  # closes on the first levels day, as stored
 
 
 def gbp(x: str) -> Money:
@@ -54,7 +55,7 @@ def run(  # noqa: PLR0913 - one run's facts
         ledger.record_levels(
             rid,
             [
-                LevelRecord(day - timedelta(days=1), i, c, c / 1.05 if i != BENCHMARK else None)
+                LevelRecord(day - timedelta(days=1), i, c, c / 1.05 if i != BENCHMARK else None, ANCHOR[i])
                 for i, c in closes.items()
             ],
         )
@@ -151,11 +152,11 @@ def test_funds_without_any_records_show_unknowns(ledger: Ledger) -> None:
     assert w.preview_as_of is None
 
 
-def test_a_run_with_levels_but_no_snapshot_holds_nothing(ledger: Ledger) -> None:
+def test_a_run_with_levels_but_no_snapshot_leaves_holdings_unknown(ledger: Ledger) -> None:
     run(ledger, DAY1, "1000", {A: 105.0, B: 5000.0})
     w = facts(ledger)
     assert w is not None
-    assert [f.held for f in w.funds] == [Decimal("0")] * 2
+    assert [(f.held, f.weight_now) for f in w.funds] == [(None, None)] * 2
 
 
 def test_the_last_month_ends_decisions_are_in_pounds(ledger: Ledger) -> None:
@@ -177,7 +178,7 @@ def test_the_last_month_ends_decisions_are_in_pounds(ledger: Ledger) -> None:
     assert [(d.ticker, d.side, d.proposed, d.approved) for d in w.decisions] == [
         ("AAA", "buy", Decimal("200"), Decimal("200")),
         ("BBB", "buy", Decimal("200"), Decimal("100")),
-        ("AAA", "sell", Decimal("0"), None),
+        ("AAA", "sell", None, None),
     ]
 
 
@@ -206,3 +207,32 @@ def test_limits_and_month_end_come_from_the_caller(ledger: Ledger) -> None:
         Limits().drawdown_stop,
         MONTH_END,
     )
+
+
+def test_benchmarks_are_total_return_through_the_anchor(ledger: Ledger) -> None:
+    run(ledger, DAY1, "1000", {A: 100.0, B: 5000.0, BENCHMARK: 50.0})
+    rid = "run-rescaled"
+    ledger.start_run(rid, at(DAY2), "v")
+    ledger.record_equity(DAY2, gbp("1000"))
+    # a dividend: the provider rescaled A's history, so the same close now means +2% total return
+    ledger.record_levels(
+        rid,
+        [
+            LevelRecord(DAY1, A, 100.0, None, 98.0),
+            LevelRecord(DAY1, B, 5000.0, None, 5000.0),
+            LevelRecord(DAY1, BENCHMARK, 50.0, None, None),  # anchor out of reach: no figure that day
+        ],
+    )
+    ledger.finish_run(rid, at(DAY2), "completed", None)
+    w = facts(ledger)
+    assert w is not None
+    assert w.values[1].equal_weight == pytest.approx(Decimal("1010.204"), abs=Decimal("0.001"))
+    assert w.values[1].benchmark is None
+
+
+def test_the_mark_comes_from_the_ledger(ledger: Ledger) -> None:
+    run(ledger, DAY1, "1000", None)
+    ledger.update_high_water_mark(gbp("1100"), at(DAY1))
+    w = facts(ledger)
+    assert w is not None
+    assert w.mark == Decimal("1100")

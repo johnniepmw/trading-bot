@@ -36,7 +36,7 @@ FUNDS = [
 DECISIONS = [
     DecisionRow("VWRP", "buy", Decimal("240"), Decimal("240"), "within limits"),
     DecisionRow("VUKE", "buy", Decimal("180"), Decimal("120"), "positions halved <drawdown>"),
-    DecisionRow("SGLN", "buy", Decimal("160"), None, "no new buys"),
+    DecisionRow("SGLN", "buy", Decimal("160"), None, "no new buys", refused=True),
 ]
 W = WeeklyInput(
     values=VALUES,
@@ -198,3 +198,47 @@ def test_series_within_a_pound_still_draw_with_pence_labels() -> None:
     h = html(replace(W, values=flat, seed=seed))
     assert 'class="line s-bot"' in h
     assert re.search(r"text-anchor=end>£1,000\.[0-9]{2}</text>", h)
+
+
+def test_benchmarks_that_start_after_setup_say_since_when() -> None:
+    late = [
+        DayValue(DAYS[0], Decimal("1000"), None, None),
+        DayValue(DAYS[1], Decimal("1010"), Decimal("1010"), Decimal("1010")),
+        DayValue(DAYS[2], Decimal("1020"), Decimal("1030"), Decimal("1040")),
+    ]
+    h = html(replace(W, values=late))
+    assert "2.0% behind SSAC (the MSCI ACWI tracker) since 24 Nov" in h  # +1.0% against +3.0%
+    assert "1/N and SSAC start 24 Nov at the bot's value" in h
+    assert "SSAC <b>£1,040</b> +3.0%" in h  # from its own start
+
+
+def test_benchmarks_from_setup_say_since_setup() -> None:
+    h = html()
+    assert "behind SSAC (the MSCI ACWI tracker) since setup" in h
+    assert "start" not in h[h.index("<ul class=legend>") : h.index("<svg", h.index("<ul class=legend>"))]
+
+
+def test_drawdown_now_and_room_use_the_ledgers_mark() -> None:
+    h = html(replace(W, mark=Decimal("1100")))
+    assert "<b>−7.7%</b> <span class=muted>now</span>" in h  # 1015 / 1100
+    assert "<b>2.3%</b> <span class=muted>room before halving</span>" in h
+    past = html(replace(W, mark=Decimal("1300")))
+    assert "<b>0.0%</b> <span class=muted>room before halving</span>" in past
+
+
+def test_unknown_holdings_never_read_as_cash() -> None:
+    unknown = replace(W, funds=[replace(f, held=None, weight_now=None) for f in FUNDS])
+    h = html(unknown)
+    assert "Now: unknown" in h
+    assert "invested · " not in h[: h.index("If today were")]
+
+
+def test_a_decision_without_a_quote_shows_no_amount() -> None:
+    rows = [DecisionRow("VWRP", "sell", None, None, "no quote")]
+    h = html(replace(W, decisions=rows))
+    assert "<td>sell —</td>" in h
+    assert "✓</span> approved" in h
+
+
+def test_the_halving_limit_says_what_halves() -> None:
+    assert "position cap halves" in html()

@@ -4,6 +4,7 @@ button's rules. Local store, fake data only (ADR-0014)."""
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 import urllib.error
 import urllib.request
@@ -261,7 +262,7 @@ def test_the_home_page_shows_the_weekly_view_from_the_runs_records(ran: Path) ->
         assert f"<h2>{heading}</h2>" in body
     assert "<p class=hero>" in body
     assert "<b>VWRP</b>" in body and "<b>SGLN</b>" in body
-    assert "Last month-end orders" in body  # the run was a month end
+    assert "Risk decisions at the last month end" in body  # the run was a month end
     assert "<b>Day 1</b> of 90" in body  # counted from the first run
 
 
@@ -290,3 +291,23 @@ def test_a_weekly_view_that_cant_be_drawn_still_shows_the_glance_and_pause(
     assert page.status is HTTPStatus.OK
     assert '<form method=post action="/pause/confirm">' in page.body
     assert "weekly view failed" in caplog.text
+
+
+def test_a_ledger_from_before_slice_2_still_shows_the_page(ran: Path) -> None:
+    s = store(ran)
+    info = s.info("ledger", LEDGER_OBJECT)
+    assert info is not None
+    path = ran / "old.sqlite"
+    path.write_bytes(s.read("ledger", LEDGER_OBJECT, info.generation))
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE levels")
+    conn.execute("DELETE FROM previews")
+    conn.commit()
+    conn.close()
+    s.write("ledger", LEDGER_OBJECT, path.read_bytes(), if_generation_match=info.generation)
+    page = get(dashboard(ran))
+    assert page.status is HTTPStatus.OK
+    assert "<b>Run</b>: completed" in page.body
+    assert '<form method=post action="/pause/confirm">' in page.body
+    assert "aria-label='no preview'" in page.body
+    assert 'class="line s-ew"' not in page.body and 'class="line s-bm"' not in page.body

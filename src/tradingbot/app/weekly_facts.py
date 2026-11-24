@@ -29,7 +29,9 @@ VERSION_SHOWN = 7  # characters of the deployed commit
 
 
 def _closes(levels: list[LevelRecord]) -> dict[str, Decimal]:
-    return {r.instrument.ticker: Decimal(repr(r.close)) for r in levels}
+    """Each instrument's total-return index: its close over its close on the anchor day, both
+    from one adjusted fetch, so dividends count however the history was later rescaled."""
+    return {r.instrument.ticker: Decimal(repr(r.close)) / Decimal(repr(r.anchor)) for r in levels if r.anchor}
 
 
 def _values(
@@ -74,7 +76,7 @@ def _funds(
 ) -> list[FundRow]:
     preview = {r.instrument.ticker: r for r in ledger.preview(run_id)} if run_id else {}
     level = {r.instrument.ticker: r for r in levels}
-    held: dict[str, Decimal] = {}
+    held: dict[str, Decimal] | None = None  # unknown without a snapshot: never "all cash"
     equity = Decimal(0)
     if run_id:
         try:
@@ -89,14 +91,14 @@ def _funds(
     rows = []
     for i in universe:
         p, lv = preview.get(i.ticker), level.get(i.ticker)
-        value = held.get(i.ticker, Decimal(0))
+        value = held.get(i.ticker, Decimal(0)) if held is not None else None
         rows.append(
             FundRow(
                 i.ticker,
                 p.in_trend if p else None,
                 lv.close / lv.average - 1 if lv and lv.average else None,
                 value,
-                float(value / equity) if equity else 0.0,
+                float(value / equity) if value is not None and equity else None,
                 p.weight if p else None,
             )
         )
@@ -109,15 +111,20 @@ def _decisions(ledger: Ledger, runs: list[RunRecord]) -> tuple[date | None, list
         if records:
             rows = []
             for d in records:
-                price = d.quote.to_gbp().amount if d.quote else Decimal(0)
-                approved = d.approved_quantity * price if d.approved_quantity else None
+                price = d.quote.to_gbp().amount if d.quote else None
+                approved = (
+                    d.approved_quantity * price
+                    if d.approved_quantity is not None and price is not None
+                    else None
+                )
                 rows.append(
                     DecisionRow(
                         d.instrument.ticker,
                         d.side.value.lower(),
-                        d.proposed_quantity * price,
+                        d.proposed_quantity * price if price is not None else None,
                         approved,
                         d.reason,
+                        refused=d.approved_quantity is None,
                     )
                 )
             return run.started_at.date(), rows
@@ -140,7 +147,8 @@ def weekly_input(
     limits: Limits,
     next_month_end: date,
 ) -> WeeklyInput | None:
-    """None before setup (no seeded mark) or before the first run."""
+    """None before setup (no seeded mark) or before the first run. Funds come from the latest
+    run that stored levels; held amounts only from that run's own snapshot."""
     seed = ledger.first_high_water_mark()
     runs = sorted(ledger.runs(), key=lambda r: r.started_at)
     if seed is None or not runs:
@@ -163,4 +171,5 @@ def weekly_input(
         changes=_changes(runs),
         drawdown_halve=limits.drawdown_halve,
         drawdown_stop=limits.drawdown_stop,
+        mark=mark.amount if (mark := ledger.high_water_mark()) else None,
     )

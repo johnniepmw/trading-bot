@@ -80,6 +80,18 @@ incident views (the rest of AC8).
   carries values and a table holds every number); one £ axis, never two; status colours only
   for the checks and the drawdown limits, always with an icon or label; dark mode follows the
   phone. No JavaScript, so hover is the SVG `<title>` (a tap on a phone).
+- Slice 2 figures (review round 1): 1/N and SSAC are total return (each run stores the close
+  on the first levels day from its own adjusted fetch, so dividends count however the
+  provider rescales history). Ledgers that ran before slice 2 have no closes for earlier
+  days, so the benchmarks start on the first day with closes at the bot's value then, and
+  the page says "since <day>" there rather than "since setup" (backfilling setup-day closes
+  isn't worth an extra API path for a few days of paper trading). "Now" drawdown and the
+  room before halving use the ledger's high-water mark, as the risk layer does; the chart
+  shows the daily path. A run without a snapshot shows holdings as unknown, never as cash.
+- Palette check (dataviz validator, 2026-11-24): `#2a78d6,#eb6834,#1baf7a` on `#fcfcfb`
+  light: band, chroma, CVD (worst ΔE 9.2 deutan), normal-vision (27.6) PASS, contrast WARN
+  for aqua at 2.74:1 (relief: legend values and the numbers table); `#3987e5,#d95926,#199e70`
+  on `#1a1a19` dark: all PASS (worst CVD ΔE 9.4)
 
 ## Open questions
 - None for slice 1.

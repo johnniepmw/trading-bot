@@ -194,7 +194,7 @@ def _finish_record(  # noqa: PLR0913 - the run's outcome and what the preview ne
     except Exception:
         log.exception("could not record the end of run %s", run_id)
     try:
-        preview, levels = _preview(history, config, started.date())
+        preview, levels = _preview(history, config, started.date(), anchor=ledger.first_level_day())
         ledger.record_preview(run_id, preview)
         ledger.record_levels(run_id, levels)
     except Exception as error:  # noqa: BLE001 - the preview is informational only (monitoring AC3)
@@ -202,7 +202,7 @@ def _finish_record(  # noqa: PLR0913 - the run's outcome and what the preview ne
 
 
 def _preview(
-    history: PriceHistory, config: CycleConfig, today: date
+    history: PriceHistory, config: CycleConfig, today: date, *, anchor: date | None = None
 ) -> tuple[list[PreviewRecord], list[LevelRecord]]:
     """What the month-end rule would do on the latest closes, and the closes and 210-day
     averages it saw, plus the benchmark's close (dashboard slice 2). Never used for orders."""
@@ -215,30 +215,40 @@ def _preview(
     in_trend = signals(bars, as_of)
     weights = vol_scaled(sleeve_weights(in_trend), {i: daily_returns(b, as_of) for i, b in bars.items()})
     preview = [PreviewRecord(as_of, i, in_trend[i], weights[i]) for i in config.universe]
-    levels = [_level(i, bars[i], as_of) for i in config.universe]
+    anchor = anchor or as_of  # the first levels day anchors every later run
+    levels = [_level(i, bars[i], as_of, anchor) for i in config.universe]
     if config.benchmark is not None:
         try:
-            levels.append(_benchmark_level(history, config.benchmark, as_of))
+            levels.append(_benchmark_level(history, config.benchmark, as_of, anchor))
         except Exception as error:  # noqa: BLE001 - the preview stays without the benchmark
             log.warning("benchmark close unavailable: %s: %s", type(error).__name__, error)
     return preview, levels
 
 
-def _level(instrument: Instrument, bars: Sequence[Bar], as_of: date) -> LevelRecord:
+def _close_on(bars: Sequence[Bar], day: date) -> float | None:
+    """The close on `day` (or the last before it) from one fetch, if the bars reach back."""
+    before = [b for b in bars if b.day <= day]
+    return before[-1].close if before and bars[0].day <= day else None
+
+
+def _level(instrument: Instrument, bars: Sequence[Bar], as_of: date, anchor: date) -> LevelRecord:
     closes = [b.close for b in bars if b.day <= as_of]
     window = closes[-SMA_DAYS:]
     average = sum(window) / SMA_DAYS if len(window) == SMA_DAYS else None
-    return LevelRecord(as_of, instrument, closes[-1], average)
+    return LevelRecord(as_of, instrument, closes[-1], average, _close_on(bars, anchor))
 
 
 BENCHMARK_LOOK_BACK = timedelta(days=14)  # the benchmark's latest close on or before the preview day
 
 
-def _benchmark_level(history: PriceHistory, benchmark: Instrument, as_of: date) -> LevelRecord:
-    bars = validate_history(benchmark, history.daily_bars(benchmark, as_of - BENCHMARK_LOOK_BACK, as_of))
-    if not bars:
+def _benchmark_level(history: PriceHistory, benchmark: Instrument, as_of: date, anchor: date) -> LevelRecord:
+    start = min(anchor - BENCHMARK_LOOK_BACK, as_of - BENCHMARK_LOOK_BACK)
+    bars = [
+        b for b in validate_history(benchmark, history.daily_bars(benchmark, start, as_of)) if b.day <= as_of
+    ]
+    if not bars or bars[-1].day < as_of - BENCHMARK_LOOK_BACK:
         raise DataError(f"no {benchmark.ticker} close in the {BENCHMARK_LOOK_BACK.days} days to {as_of}")
-    return LevelRecord(bars[-1].day, benchmark, bars[-1].close, None)
+    return LevelRecord(bars[-1].day, benchmark, bars[-1].close, None, _close_on(bars, anchor))
 
 
 def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle

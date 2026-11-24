@@ -46,8 +46,8 @@ class FundRow:
     ticker: str
     in_trend: bool | None  # on the latest preview; None: no preview
     distance: float | None  # close / 210-day average - 1, on the preview's day
-    held: Decimal  # GBP at the latest run's quotes
-    weight_now: float  # share of equity
+    held: Decimal | None  # GBP at the latest run's quotes; None: that run has no snapshot
+    weight_now: float | None  # share of equity; None as above
     weight_preview: float | None  # what the month-end rule would hold on the preview's day
 
 
@@ -55,9 +55,10 @@ class FundRow:
 class DecisionRow:
     ticker: str
     side: str  # "buy" or "sell"
-    proposed: Decimal  # GBP
-    approved: Decimal | None  # GBP; None: refused
+    proposed: Decimal | None  # GBP; None: no quote to value it
+    approved: Decimal | None  # GBP; None: refused, or no quote
     reason: str
+    refused: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class WeeklyInput:
     changes: Sequence[Change]
     drawdown_halve: Decimal
     drawdown_stop: Decimal
+    mark: Decimal | None = None  # the ledger's high-water mark, as the risk layer uses it
 
 
 def buy_and_hold(seed: Decimal, start: dict[str, Decimal], now: dict[str, Decimal]) -> Decimal | None:
@@ -139,14 +141,31 @@ def hero(w: WeeklyInput) -> str:
         f"<p class=deltas>{_delta(last.bot - prev, prev, 'today')}<br>"
         f"{_delta(last.bot - w.seed, w.seed, 'since setup')}</p>",
     ]
-    if last.benchmark is not None:
-        gap = float((last.bot - last.benchmark) / w.seed)
+    start = _start(w, "benchmark")
+    if last.benchmark is not None and start is not None:
+        first, base = start
+        bot_base = w.seed if first == w.values[0] else first.bot
+        gap = float(last.bot / bot_base - last.benchmark / base)
         word = "ahead of" if gap >= 0 else "behind"
         parts.append(
             f"<p class=muted>{_pct(abs(gap), signed=False)} {word} SSAC (the MSCI ACWI tracker) "
-            "since setup</p>"
+            f"{_since(w, first.day)}</p>"
         )
     return "".join(parts)
+
+
+def _start(w: WeeklyInput, field: str) -> tuple[DayValue, Decimal] | None:
+    """A benchmark's first day on the chart, and its value then."""
+    for v in w.values:
+        value = getattr(v, field)
+        if value is not None:
+            return v, value
+    return None
+
+
+def _since(w: WeeklyInput, day: date) -> str:
+    """Benchmarks added after setup are compared from their own first day, and say so."""
+    return "since setup" if w.values and day == w.values[0].day else f"since {day.day} {day:%b}"
 
 
 # ---- value over time --------------------------------------------------------------------
@@ -159,7 +178,7 @@ def _ticks(lo: float, hi: float, count: int = 4) -> list[float]:
     span = hi - lo or 1.0
     raw = span / count
     magnitude = 10 ** len(str(int(raw))) / 10 if raw >= 1 else 1.0
-    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
+    step = next(m * magnitude for m in (1, 2, 5, 10) if m * magnitude >= raw)  # whole pounds
     start = (lo // step) * step
     out = []
     v = start
@@ -259,21 +278,35 @@ def value_chart(w: WeeklyInput) -> str:
     )
     last = vals[-1]
 
-    def item(cls: str, name: str, value: Decimal | None) -> str:
+    def item(cls: str, name: str, value: Decimal | None, base: Decimal | None) -> str:
         figure = (
-            f"<b>{_gbp(value)}</b> {_pct(float(value / w.seed - 1))}" if value is not None else "<b>—</b>"
+            f"<b>{_gbp(value)}</b> {_pct(float(value / base - 1))}"
+            if value is not None and base
+            else "<b>—</b>"
         )
         return f"<li><i class='key {cls}'></i>{escape(name)} {figure}</li>"
 
+    def base(field: str) -> Decimal | None:
+        start = _start(w, field)
+        return None if start is None else (w.seed if start[0] == vals[0] else start[1])
+
+    late = [s[0].day for f in ("equal_weight", "benchmark") if (s := _start(w, f)) and s[0] != vals[0]]
+    note = (
+        f"<p class=small>1/N and SSAC start {_since(w, min(late))[6:]} at the bot's value; "
+        "% is from each line's start.</p>"
+        if late
+        else ""
+    )
+
     legend = (
         "<ul class=legend>"
-        + item("s-bot", "Bot", last.bot)
-        + item("s-ew", "1/N", last.equal_weight)
-        + item("s-bm", "SSAC", last.benchmark)
-        + item("cash", "Cash", w.seed)
+        + item("s-bot", "Bot", last.bot, w.seed)
+        + item("s-ew", "1/N", last.equal_weight, base("equal_weight"))
+        + item("s-bm", "SSAC", last.benchmark, base("benchmark"))
+        + item("cash", "Cash", w.seed, w.seed)
         + "</ul>"
     )
-    return legend + svg
+    return legend + svg + note
 
 
 # ---- drawdown ---------------------------------------------------------------------------
@@ -312,7 +345,7 @@ def drawdown_chart(w: WeeklyInput) -> str:
         f'<line class="limit {cls}" x1="{_L}" x2="{_W - _R}" y1="{y(v):.1f}" y2="{y(v):.1f}"/>'
         f'<text class=axis x="{_L - 6}" y="{y(v) + 4:.1f}" text-anchor=end>{_pct(v, places=0)}</text>'
         f'<text class=note x="{_W - _R}" y="{y(v) - 5:.1f}" text-anchor=end>{escape(label)}</text>'
-        for v, cls, label in ((halve, "serious", "positions halve"), (stop, "critical", "no new buys"))
+        for v, cls, label in ((halve, "serious", "position cap halves"), (stop, "critical", "no new buys"))
     )
     titles = [f"{_day(v.day)}: {_pct(d)} from the high" for v, d in zip(vals, dd, strict=True)]
     hits = _hits(xs[: len(vals)], _DH, titles)
@@ -326,8 +359,10 @@ def drawdown_chart(w: WeeklyInput) -> str:
 def drawdown_summary(w: WeeklyInput) -> str:
     dd = drawdowns(w)
     now = dd[-1] if dd else 0.0
-    worst = min(dd) if dd else 0.0
-    room = float(w.drawdown_halve) + now
+    if w.mark and w.values:  # the risk layer's own figure, from the ledger's high-water mark
+        now = min(0.0, float(w.values[-1].bot / w.mark) - 1)
+    worst = min([*dd, now]) if dd else 0.0
+    room = max(0.0, float(w.drawdown_halve) + now)
     return (
         f"<p class=stat-row><span><b>{_pct(now, places=1)}</b> <span class=muted>now</span></span>"
         f"<span><b>{_pct(worst, places=1)}</b> <span class=muted>worst</span></span>"
@@ -374,7 +409,7 @@ def funds(w: WeeklyInput) -> str:
         preview = _pct(f.weight_preview, signed=False, places=0) if f.weight_preview is not None else "—"
         held = (
             f"{_gbp(f.held)}<span class=small>{_pct(f.weight_now, signed=False, places=0)}</span>"
-            if f.held
+            if f.held and f.weight_now is not None
             else "<span class=muted>—</span>"
         )
         rows.append(
@@ -419,14 +454,16 @@ def _split_bar(invested: float, label: str) -> str:
 
 
 def month_end(w: WeeklyInput) -> str:
-    now = sum(f.weight_now for f in w.funds)
     days = (w.next_month_end - w.today).days
     when = "today" if days == 0 else f"in {days} day{'s' if days != 1 else ''}"
     parts = [
         f"<p>Next month end <b>{_day(w.next_month_end)}</b> "
         f"<span class=muted>({when}); orders the next morning</span></p>"
     ]
-    parts.append(_split_bar(now, "Now"))
+    if w.funds and all(f.weight_now is not None for f in w.funds):
+        parts.append(_split_bar(sum(f.weight_now or 0 for f in w.funds), "Now"))
+    else:
+        parts.append("<p class=small>Now: unknown (the latest run stored no holdings)</p>")
     if all(f.weight_preview is not None for f in w.funds) and w.funds:
         parts.append(_split_bar(sum(f.weight_preview or 0 for f in w.funds), "If today were the month end"))
     return "".join(parts)
@@ -442,19 +479,23 @@ def decisions(w: WeeklyInput) -> str:
         return f"<p class=muted>{_day(w.decisions_day)}: nothing to trade.</p>"
     rows = []
     for d in w.decisions:
-        if d.approved is None:
+        if d.refused:
             outcome, cls = "refused", "critical"
-        elif d.approved < d.proposed:
+        elif d.approved is not None and d.proposed is not None and d.approved < d.proposed:
             outcome, cls = f"cut to {_gbp(d.approved)}", "warning"
         else:
             outcome, cls = "approved", "good"
         icon = {"good": "✓", "warning": "!", "critical": "✕"}[cls]
+        proposed = _gbp(d.proposed) if d.proposed is not None else "—"
         rows.append(
-            f"<tr><td><b>{escape(d.ticker)}</b></td><td>{escape(d.side)} {_gbp(d.proposed)}</td>"
+            f"<tr><td><b>{escape(d.ticker)}</b></td><td>{escape(d.side)} {proposed}</td>"
             f"<td><span class='status {cls}' aria-hidden=true>{icon}</span> {escape(outcome)}"
             f"<div class=small>{escape(d.reason)}</div></td></tr>"
         )
-    head = f"<p class=muted>Last month-end orders, {_day(w.decisions_day)}</p>"
+    head = (
+        f"<p class=muted>Risk decisions at the last month end, {_day(w.decisions_day)} "
+        "(what risk allowed; the glance and runs show what was sent)</p>"
+    )
     return f"{head}<table class=dec>{''.join(rows)}</table>"
 
 
@@ -550,16 +591,11 @@ STYLE = (
     ".dec{width:100%;border-collapse:collapse;font-size:14px}.dec td{padding:6px 6px 6px 0;"
     "vertical-align:top;"
     "border-bottom:1px solid var(--grid);white-space:normal}"
-    ".status{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;font-size:11px;"
-    "font-weight:700;color:#fff;vertical-align:-2px}.status.good{background:var(--good)}"
-    ".status.warning{background:var(--warning);color:#0b0b0b}.status.critical{background:var(--critical)}"
     "details{margin-top:10px;font-size:14px}summary{cursor:pointer;color:var(--ink2)}"
     ".nums{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;"
     "margin-top:6px}"
     ".nums th,.nums td{text-align:right;padding:3px 0 3px 6px;border-bottom:1px solid var(--grid)}"
     ".nums th:first-child,.nums td:first-child{text-align:left;padding-left:0}"
-    ".changes{list-style:none;padding:0;margin:8px 0 0;font-size:13px;color:var(--ink2)}"
-    ".changes li{border:0;padding:2px 0}"
 )
 
 

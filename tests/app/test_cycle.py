@@ -23,7 +23,7 @@ from tradingbot.brokers.port import AccountSnapshot, BrokerError, NoQuoteError
 from tradingbot.data.prices import DataError
 from tradingbot.domain.market import BENCHMARK, Bar, Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
-from tradingbot.ledger.store import IntentState, Ledger, LedgerError
+from tradingbot.ledger.store import IntentState, Ledger, LedgerError, LevelRecord
 from tradingbot.portfolio.weights import daily_returns, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
 from tradingbot.strategy.trend import SMA_DAYS, month_end_days, signals
@@ -902,3 +902,37 @@ def test_the_benchmark_is_never_ordered(broker: FakeBroker, ledger: Ledger) -> N
     cycle(broker, ledger, history=HistoryWithBenchmark(), config=WITH_BENCHMARK)
     assert BENCHMARK not in {o.order.instrument for o in broker.recent_orders()}
     assert broker.recent_orders()  # it did order the fund
+
+
+def test_the_first_runs_levels_anchor_on_their_own_day(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger, signal_day=None)
+    assert {r.anchor == r.close for r in ledger.levels()["run-1"]} == {True}
+
+
+def test_later_runs_anchor_on_the_first_levels_day_from_their_own_fetch(
+    broker: FakeBroker, ledger: Ledger
+) -> None:
+    first_day = DAYS[-40]
+    ledger.record_levels("earlier", [LevelRecord(first_day, UP, 1.0, None, 1.0)])
+    history = HistoryWithBenchmark()
+    cycle(broker, ledger, history=history, config=WITH_BENCHMARK, signal_day=None)
+    rows = {r.instrument: r for r in ledger.levels()["run-1"]}
+    assert rows[UP].anchor == close_on(UP, first_day)
+    assert rows[DOWN].anchor == close_on(DOWN, first_day)
+    assert rows[BENCHMARK].anchor == 50.0 + DAYS.index(first_day)  # HistoryWithBenchmark's close
+
+
+def test_an_anchor_before_the_fetched_history_is_left_out(broker: FakeBroker, ledger: Ledger) -> None:
+    ledger.record_levels("earlier", [LevelRecord(DAYS[0] - timedelta(days=900), UP, 1.0, None, 1.0)])
+    cycle(broker, ledger, signal_day=None)
+    assert {r.anchor for r in ledger.levels()["run-1"]} == {None}
+
+
+def test_a_stale_benchmark_is_left_out(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    stale = HistoryWithBenchmark()
+    stale.bars[BENCHMARK] = stale.bars[BENCHMARK][:-30]
+    cycle(broker, ledger, history=stale, config=WITH_BENCHMARK, signal_day=None)
+    assert BENCHMARK not in {r.instrument for r in ledger.levels()["run-1"]}
+    assert "benchmark close unavailable" in caplog.text
