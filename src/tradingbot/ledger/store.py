@@ -571,6 +571,18 @@ class Ledger:
             for r in rows
         ]
 
+    def run_signals(self, run_id: str) -> list[SignalRecord]:
+        """The signal records one run wrote (the dashboard's month-end view)."""
+        rows = self._conn.execute(
+            "SELECT run_id, ticker, currency, close, sma, in_trend, weight_before, weight_after, scale"
+            " FROM signal_records WHERE run_id = ? ORDER BY rowid",
+            (run_id,),
+        )
+        return [
+            SignalRecord(r[0], Instrument(r[1], Currency(r[2])), r[3], r[4], bool(r[5]), r[6], r[7], r[8])
+            for r in rows
+        ]
+
     def record_decisions(self, run_id: str, rows: list[DecisionRecord]) -> None:
         for seq, r in enumerate(rows):
             self._conn.execute(

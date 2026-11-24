@@ -251,3 +251,66 @@ def test_only_the_late_line_is_named() -> None:
     ]
     h = html(replace(W, values=ssac_late))
     assert "<p class=small>SSAC starts 24 Nov, at the bot's value then" in h
+
+
+def test_a_filled_order_shows_why_its_price_against_the_quote_and_fees_against_the_assumption() -> None:
+    row = DecisionRow(
+        "SGLN",
+        "buy",
+        Decimal("200"),
+        Decimal("200"),
+        "within limits",
+        why="in trend, target 12%",
+        order="filled",
+        intended=Decimal("5000"),
+        filled_at=Decimal("5010"),
+        pence=True,
+        fees=Decimal("0"),
+        traded=Decimal("200.40"),
+    )
+    h = html(replace(W, decisions=[row]))
+    assert "in trend, target 12% · within limits" in h
+    assert (
+        "Order: filled · paid 5,010.0p against 5,000.0p quoted (0.20% worse) · fees £0.00 against "
+        "£0.30 assumed (0.15%)" in h
+    )
+
+
+def test_an_order_awaiting_its_fill_shows_only_its_state() -> None:
+    row = DecisionRow(
+        "VWRP", "buy", Decimal("100"), Decimal("100"), "ok", order="awaiting fill", intended=Decimal("100")
+    )
+    h = html(replace(W, decisions=[row]))
+    assert "<div class=small>Order: awaiting fill</div>" in h
+
+
+def test_a_decision_with_no_order_has_no_order_line() -> None:
+    assert "Order:" not in html()
+
+
+def test_a_sell_filled_above_its_quote_is_better() -> None:
+    row = DecisionRow(
+        "VWRP",
+        "sell",
+        Decimal("100"),
+        Decimal("100"),
+        "out of trend",
+        order="filled",
+        intended=Decimal("100"),
+        filled_at=Decimal("100.30"),
+    )
+    assert "got £100.30 against £100.00 quoted (0.30% better)" in html(replace(W, decisions=[row]))
+
+
+def test_a_fill_at_the_quote_says_so() -> None:
+    row = DecisionRow(
+        "VWRP",
+        "buy",
+        Decimal("100"),
+        Decimal("100"),
+        "ok",
+        order="filled",
+        intended=Decimal("100"),
+        filled_at=Decimal("100"),
+    )
+    assert "(as quoted)" in html(replace(W, decisions=[row]))

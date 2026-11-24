@@ -44,9 +44,16 @@ incident views (the rest of AC8).
 | AC15 | The job stores, per run, the latest closes it read for the 7 funds and SSAC, and the preview's close and 210-day average per fund (expand-only ledger change; the dashboard reads them, never computes signals itself). An older ledger without them shows the page with "—" and no chart, never an error | ledger tests; dashboard tests on an old-shape ledger |
 | AC16 | Fake data only in tests, CI and screenshots (ADR-0014); colours validated light and dark (dataviz validator); no scripts; no horizontal scroll at 390 px | tests; validator output; screenshots |
 
+## Acceptance criteria (slice 3: month-end and incident views)
+| # | Criterion (observable, pass/fail) | Evidence |
+|---|---|---|
+| AC17 | The Month end card lists the last acted month end's trades: per decision the fund, side, why (in or out of trend, and the target weight, from that run's signal record), the risk outcome, the order's state (awaiting fill, filled, partly filled, rejected, cancelled, not sent, unknown), the intended price (the run's quote) against the fill's average price with the difference %, and fees in £ against the 0.15% cost assumption of the traded value | view-model tests from a fake ledger; rendering tests |
+| AC18 | When the latest run stopped or died, an incident card comes straight after the header: the reason, what it means and what to do (a table kept in step with `docs/runbooks/cycle-alerts.md` by a test), and links to that runbook, the `ops` workflow and the environment's job logs in Cloud Logging. An unknown reason still gets the links and "tell the agent" | tests per stop reason; the drift test |
+| AC19 | Links only, to github.com and console.cloud.google.com; the CSP is unchanged (no resources load); fake data only | tests |
+
 ## Non-goals (slice 2)
 - "Inside the backtest's expected range": waits for the backtest (Phase 1 step 8b).
-- Setting changes (flags) on the timeline: slice 3 with the incident views.
+- Setting changes (flags) on the timeline: dropped from slice 3. Flags are changed only through the `ops` workflow, whose run history is the record (linked from the incident card); deploys already show on the chart.
 
 ## Non-goals (slice 1)
 - Charts, benchmarks, month-end and incident views (slices 2–3).
@@ -105,6 +112,7 @@ incident views (the rest of AC8).
 5. Staging check on the owner's phone, then prod.
 
 ## Progress log
+- 2026-11-24 slice 3 built: `report/incident.py` (guidance per stop reason, kept in step with the runbook by a test; links to the runbook, `ops` and the job's logs), the incident card first on the page when the latest run stopped or died, the Month end card's trades (why from the run's signal record, the order's state, intended price against the fill, fees against 0.15%), `Ledger.run_signals` — evidence: `tests/report/test_incident.py`, `tests/report/test_weekly.py` (order lines), `tests/app/test_weekly_facts.py` (trades from a ledger), `tests/app/test_dashboard.py` (stopped, died, completed), `tests/ledger/test_store.py`
 - 2026-11-24 slice 2 shipped: #71 merged after the owner's approval; deploy green, both dashboards moved to the new image after `dashboard-check` (behind IAP, not public). The benchmark lines start from the first run that stores closes (25 Nov)
 - 2026-11-24 slice 2 built (one PR): `report/weekly.py` (the hero, value against 1/N, SSAC and cash, drawdown with its limits, funds, month end, paper-trading days; pure, no scripts), the page restyled (state pill, cards, light and dark), `app/weekly_facts.py` (figures from the ledger only), the ledger's expand-only `levels` table filled by every run from the preview's bars plus SSAC's latest close (a failed SSAC fetch only warns), `CycleConfig.benchmark` (must be benchmark-only; never ordered). The owner saw fake-data mockups first — evidence: `tests/report/test_weekly.py` (17), `tests/app/test_weekly_facts.py` (13), `tests/app/test_cycle.py` levels tests (6), `tests/ledger/test_store.py` (2), `tests/app/test_dashboard.py` (2), `tests/app/test_job.py` (every fund and SSAC stored); palette validator passes light and dark (aqua below 3:1 on light: legend values and the numbers table carry it); 390 px screenshots light and dark with no horizontal scroll (`docs/images/dashboard-slice2-*.png`)
 - 2026-11-24 slice 1 live and checked: #69 applied (staging and prod); the owner ran `scripts/dashboard-iap.sh` for both; the deploy moved both dashboards to the real image after `dashboard-check` reported "behind IAP and not public". Owner checks passed: the page on the phone (screenshots of both), a private window refused, a direct call with an ID token refused (not 200), and in staging Pause → confirm → "paused", the `pause_requested` alert email, `ops clear-pause`, button back. AC1–AC8 met

@@ -40,6 +40,7 @@ from tradingbot.config.load import load_config
 from tradingbot.config.types import BotConfig
 from tradingbot.ledger.store import Ledger
 from tradingbot.report.glance import glance
+from tradingbot.report.incident import incident_card
 from tradingbot.report.page import RunRow, confirm_page, error_page, glance_page, paused_page
 from tradingbot.report.weekly import weekly_html
 from tradingbot.risk.limits import Limits
@@ -122,6 +123,11 @@ class Dashboard:
             runs=rows,
             paused=self._paused(),
             weekly=weekly,
+            incident=(
+                incident_card(self.environment, facts.outcome, facts.reason)
+                if facts.outcome in ("stopped", "died")
+                else None
+            ),
         )
         return Response(HTTPStatus.OK, page)
 

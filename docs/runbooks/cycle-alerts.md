@@ -29,7 +29,7 @@ A dry run never sends an alert. A deploy that fails opens a GitHub `incident` is
 
 | Alert contains | Meaning | What to do |
 |---|---|---|
-| `new orders off (kill switch or pause request)` | `new-orders` is off, or a pause request exists | Nothing, unless you want trading back (kill-switch.md) |
+| `new orders off (kill switch or pause request)` | `new-orders` is off, a pause request exists, or the pause location can't be read | Nothing, unless you want trading back: `ops` → `clear-pause` after a pause, `ops` → `restore` `new-orders` after the kill switch (kill-switch.md). If neither applies, tell the agent |
 | `not reconciled` | An earlier order's outcome is unknown or still working, or the broker has a working order the bot doesn't know (including one you placed by hand) | Wait for it to finish; if it persists, check the order in the Trading 212 app and tell the agent |
 | `order ended short` | An order the broker accepted was rejected or cancelled before filling. That month end's decision is not retried until the next one | Check the order in the app; tell the agent if it repeats |
 | `stale data` / `too short` / `implausible jump` | The price data is missing, short or wrong | Usually clears the next day; tell the agent if it doesn't |
