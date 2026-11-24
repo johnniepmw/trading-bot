@@ -7,7 +7,6 @@ Links only: nothing is loaded from those sites (the CSP forbids it).
 
 from __future__ import annotations
 
-import urllib.parse
 from dataclasses import dataclass
 from html import escape
 
@@ -103,7 +102,12 @@ def guidance(reason: str | None, *, died: bool = False) -> Guidance:
 
 def logs_url(environment: str) -> str:
     query = f'resource.type="cloud_run_job"\nresource.labels.job_name="trading-bot-{environment}"'
-    return "https://console.cloud.google.com/logs/query;query=" + urllib.parse.quote(query, safe="")
+    return "https://console.cloud.google.com/logs/query;query=" + _percent(query)
+
+
+def _percent(text: str) -> str:
+    """URL-encode everything but unreserved characters (report has no urllib: contract 3a)."""
+    return "".join(c if c.isascii() and (c.isalnum() or c in "-_.~") else f"%{ord(c):02X}" for c in text)
 
 
 def incident_card(environment: str, outcome: str, reason: str | None) -> str:

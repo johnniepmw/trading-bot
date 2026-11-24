@@ -52,3 +52,9 @@ def test_a_died_run_says_so() -> None:
 
 def test_the_logs_link_names_the_environments_job() -> None:
     assert "trading-bot-staging" in logs_url("staging").replace("%2D", "-")
+
+
+def test_the_logs_query_is_url_encoded() -> None:
+    assert logs_url("prod").endswith(
+        "query=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22trading-bot-prod%22"
+    )
