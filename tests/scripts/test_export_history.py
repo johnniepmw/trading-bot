@@ -87,6 +87,9 @@ def opener(pages: dict[str, bytes], fetched: list[str] | None = None):  # type: 
     return fetch
 
 
+ORIGINAL_MIN_CHECKED_DAYS = ex.MIN_CHECKED_DAYS
+
+
 @pytest.fixture(autouse=True)
 def few_days_suffice(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ex, "MIN_CHECKED_DAYS", 1)  # the fakes are a few days long; one test sets it back
@@ -304,8 +307,10 @@ def test_an_unexpected_eodhd_response_is_an_export_error_without_the_body(body: 
 
 
 def test_a_failed_fetch_never_shows_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(*_: object, **__: object) -> bytes:
-        raise urllib.error.URLError("HTTP 401")
+    def refuse(*_: object, **__: object) -> bytes:  # the error type that holds the full URL
+        raise urllib.error.HTTPError(
+            f"https://eodhd.com/api/eod/AAA.LSE?api_token={KEY}", 401, "No", {}, None
+        )  # type: ignore[arg-type]
 
     monkeypatch.setattr(ex._URLOPENER, "open", refuse)
     with pytest.raises(ex.ExportError, match=r"eodhd\.com/api/eod/AAA\.LSE") as raised:
@@ -412,7 +417,6 @@ def test_the_key_is_never_written(tmp_path: Path) -> None:
 def test_the_export_needs_an_eodhd_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("EODHD_API_KEY", raising=False)
     monkeypatch.setattr(ex.getpass, "getpass", lambda _prompt: "  ")
     assert ex.main(["--out", str(tmp_path / "export")], opener=opener({})) == 1
     assert "EODHD key missing" in capsys.readouterr().err
@@ -424,6 +428,19 @@ def test_the_export_refuses_any_folder_inside_the_repo(
 ) -> None:
     assert ex.main(["--out", str(ROOT / inside)], opener=opener({})) == 1
     assert "inside the repository" in capsys.readouterr().err
+
+
+def test_the_key_typed_at_the_prompt_reaches_eodhd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(ex.getpass, "getpass", lambda _prompt: f" {KEY}\n")
+    monkeypatch.setattr(ex, "load_universe", lambda: ([FUND], date(2023, 1, 1)))
+    fetched: list[str] = []
+    assert ex.main(["--out", str(tmp_path / "export")], opener=opener(pages(), fetched)) == 0
+    eodhd_urls = [u for u in fetched if "eodhd.com" in u]
+    assert [urllib.parse.parse_qs(urllib.parse.urlparse(u).query)["api_token"] for u in eodhd_urls] == [[KEY]]
+
+
+def test_the_real_minimum_of_compared_days_is_200() -> None:
+    assert ORIGINAL_MIN_CHECKED_DAYS == 200  # read before the fixture lowers it
 
 
 def test_list_mode_reports_yahoo_ranges_and_failures() -> None:

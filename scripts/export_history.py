@@ -2,7 +2,7 @@
 """Export adjusted daily price history for the strategy's backtest (Phase 1, step 8).
 
 Owner-run, in Google Cloud Shell. Public market data only: no account data. The EODHD key is
-asked for hidden (or read from EODHD_API_KEY) and never printed or written.
+asked for hidden (never on a command line or in shell history) and never printed or written.
 Standard library only (Python 3.11+).
 
     python3 scripts/export_history.py --list      # each Yahoo symbol's date range; writes nothing
@@ -23,7 +23,8 @@ The export:
   rely on Yahoo alone, and the manifest says so): too many disagreeing days, any single day
   more than 10% apart, too little coverage or too few days refuses the export
   (--accept-problems overrides; the manifest records it). It uses one EODHD call per fund
-  (8), from the same 20 a day as prod's runs: don't run it on a month-end order day;
+  (8), from the same 20 a day as prod's runs (8 each): run it at most once a day, after that
+  day's 07:15 run, and never on a month-end order day;
 - writes the development and hold-out periods to separate folders with a manifest (sources,
   splices, checks, SHA-256 hashes), building it in a temporary folder that only becomes the
   output folder when everything succeeded. Nothing outside it is touched. (If the process
@@ -41,7 +42,6 @@ import hashlib
 import itertools
 import json
 import math
-import os
 import re
 import shutil
 import sys
@@ -430,7 +430,9 @@ def export(  # noqa: PLR0913 - the export's inputs
             "accept_problems": accept_problems,
             "cross_check": (
                 "each fund's own series against EODHD's adjusted close, over the dates EODHD returned"
-                " (see checked_from per source); earlier years and proxies rely on Yahoo alone"
+                " (see checked_from per source); earlier years and proxies rely on Yahoo alone."
+                " On EODHD's free year the whole check falls in the hold-out period: the"
+                " development period is not cross-checked"
             ),
             "funds": {},
             "problems": [],
@@ -473,14 +475,13 @@ def main(argv: list[str] | None = None, opener: Opener = default_opener) -> int:
             return 0
         if args.out.resolve().is_relative_to(ROOT):
             raise ExportError(f"--out {args.out} is inside the repository: use a folder outside it")
-        key = os.environ.get("EODHD_API_KEY") or getpass.getpass("EODHD API key (hidden): ")
-        key = key.strip()
+        key = getpass.getpass("EODHD API key (hidden): ").strip()
         if not key or not key.isprintable() or " " in key:
-            raise ExportError("EODHD key missing: set EODHD_API_KEY or type it when asked")
+            raise ExportError("EODHD key missing: paste it when asked (it isn't shown)")
         manifest = export(
             funds, hold_out, args.out, opener, today, eodhd_key=key, accept_problems=args.accept_problems
         )
-    except (ExportError, OSError) as error:
+    except (ExportError, OSError, EOFError) as error:  # EOFError: no terminal for the key prompt
         print(f"export failed: {error}", file=sys.stderr)
         return 1
     print(f"wrote {len(manifest['funds'])} funds to {args.out}")
