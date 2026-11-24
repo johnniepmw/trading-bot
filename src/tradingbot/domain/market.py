@@ -98,6 +98,7 @@ class Position:
 
 
 BENCHMARK_ONLY = frozenset({"SSAC"})  # monitoring spec: compared against, never traded
+BENCHMARK = Instrument("SSAC", Currency.GBP)  # iShares MSCI ACWI on the LSE (monitoring spec)
 
 
 def base_ticker(ticker: str) -> str:

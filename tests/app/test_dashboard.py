@@ -125,7 +125,9 @@ def test_only_the_last_ten_runs_are_listed(ran: Path) -> None:
         led.finish_run(f"old-{n}", RUN_DAY - timedelta(days=30 - n, minutes=-1), "completed", None)
     led.close()
     s.write("ledger", LEDGER_OBJECT, path.read_bytes(), if_generation_match=info.generation)
-    assert get(dashboard(ran)).body.count("<tr>") == 10
+    body = get(dashboard(ran)).body
+    runs = body[body.index("<table class=runs>") :]
+    assert runs[: runs.index("</table>")].count("<tr>") == 10
 
 
 def test_an_unreadable_lock_never_shows_a_live_run_as_dead(
@@ -250,3 +252,28 @@ def test_an_oversized_post_is_refused(served: str) -> None:
     with pytest.raises(urllib.error.HTTPError) as error:
         urllib.request.urlopen(request, timeout=5)  # noqa: S310 - local server
     assert error.value.code == HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+
+# --- slice 2: the weekly view ---------------------------------------------------------
+def test_the_home_page_shows_the_weekly_view_from_the_runs_records(ran: Path) -> None:
+    body = get(dashboard(ran)).body
+    for heading in ("Value since setup", "Drawdown", "Funds", "Month end", "Paper trading"):
+        assert f"<h2>{heading}</h2>" in body
+    assert "<p class=hero>" in body
+    assert "<b>VWRP</b>" in body and "<b>SGLN</b>" in body
+    assert "Last month-end orders" in body  # the run was a month end
+    assert "<b>Day 1</b> of 90" in body  # counted from the first run
+
+
+def test_a_failing_weekly_view_still_shows_the_glance(
+    ran: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def boom(*_: object, **__: object) -> None:
+        raise RuntimeError("weekly broke")
+
+    monkeypatch.setattr("tradingbot.app.dashboard.weekly_input", boom)
+    page = get(dashboard(ran))
+    assert page.status is HTTPStatus.OK
+    assert "<b>Run</b>: completed" in page.body
+    assert "<h2>Funds</h2>" not in page.body
+    assert "weekly view failed" in caplog.text

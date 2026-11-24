@@ -453,7 +453,8 @@ def decisions(w: WeeklyInput) -> str:
             f"<td><span class='status {cls}' aria-hidden=true>{icon}</span> {escape(outcome)}"
             f"<div class=small>{escape(d.reason)}</div></td></tr>"
         )
-    return f"<p class=muted>Month end {_day(w.decisions_day)}</p><table class=dec>{''.join(rows)}</table>"
+    head = f"<p class=muted>Last month-end orders, {_day(w.decisions_day)}</p>"
+    return f"{head}<table class=dec>{''.join(rows)}</table>"
 
 
 def paper_progress(w: WeeklyInput) -> str:

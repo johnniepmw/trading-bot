@@ -26,7 +26,14 @@ from tradingbot.data.prices import DataError, PriceHistory, validate_history
 from tradingbot.domain.market import BENCHMARK_ONLY, Bar, Instrument, base_ticker, price_money
 from tradingbot.domain.money import Currency, Money
 from tradingbot.execution.executor import execute, reconcile
-from tradingbot.ledger.store import DecisionRecord, Ledger, PositionRecord, PreviewRecord, SignalRecord
+from tradingbot.ledger.store import (
+    DecisionRecord,
+    Ledger,
+    LevelRecord,
+    PositionRecord,
+    PreviewRecord,
+    SignalRecord,
+)
 from tradingbot.portfolio.weights import daily_returns, orders_for, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
 from tradingbot.risk.review import AccountState, Decision, review
@@ -52,6 +59,7 @@ class CycleStopError(Exception):
 class CycleConfig:
     universe: Mapping[Instrument, Decimal]  # every instrument the strategy trades, with its quantity step
     limits: Limits = field(default_factory=Limits)
+    benchmark: Instrument | None = None  # compared against on the dashboard, never traded
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -62,6 +70,8 @@ class CycleConfig:
             raise ValueError(
                 f"{', '.join(benchmarks)} is a benchmark only and can't be in the trading universe"
             )
+        if self.benchmark is not None and base_ticker(self.benchmark.ticker) not in BENCHMARK_ONLY:
+            raise ValueError(f"{self.benchmark.ticker} isn't a benchmark-only instrument")
 
 
 @dataclass(frozen=True)
@@ -184,13 +194,18 @@ def _finish_record(  # noqa: PLR0913 - the run's outcome and what the preview ne
     except Exception:
         log.exception("could not record the end of run %s", run_id)
     try:
-        ledger.record_preview(run_id, _preview(history, config, started.date()))
+        preview, levels = _preview(history, config, started.date())
+        ledger.record_preview(run_id, preview)
+        ledger.record_levels(run_id, levels)
     except Exception as error:  # noqa: BLE001 - the preview is informational only (monitoring AC3)
         log.warning("month-end preview failed: %s: %s", type(error).__name__, error)
 
 
-def _preview(history: PriceHistory, config: CycleConfig, today: date) -> list[PreviewRecord]:
-    """What the month-end rule would do on the latest closes. Never used for orders."""
+def _preview(
+    history: PriceHistory, config: CycleConfig, today: date
+) -> tuple[list[PreviewRecord], list[LevelRecord]]:
+    """What the month-end rule would do on the latest closes, and the closes and 210-day
+    averages it saw, plus the benchmark's close (dashboard slice 2). Never used for orders."""
     start = today - timedelta(days=HISTORY_CALENDAR_DAYS)
     bars = {
         i: validate_history(i, history.daily_bars(i, start, today - timedelta(days=1)))
@@ -199,7 +214,31 @@ def _preview(history: PriceHistory, config: CycleConfig, today: date) -> list[Pr
     as_of = min(series[-1].day for series in bars.values())
     in_trend = signals(bars, as_of)
     weights = vol_scaled(sleeve_weights(in_trend), {i: daily_returns(b, as_of) for i, b in bars.items()})
-    return [PreviewRecord(as_of, i, in_trend[i], weights[i]) for i in config.universe]
+    preview = [PreviewRecord(as_of, i, in_trend[i], weights[i]) for i in config.universe]
+    levels = [_level(i, bars[i], as_of) for i in config.universe]
+    if config.benchmark is not None:
+        try:
+            levels.append(_benchmark_level(history, config.benchmark, as_of))
+        except Exception as error:  # noqa: BLE001 - the preview stays without the benchmark
+            log.warning("benchmark close unavailable: %s: %s", type(error).__name__, error)
+    return preview, levels
+
+
+def _level(instrument: Instrument, bars: Sequence[Bar], as_of: date) -> LevelRecord:
+    closes = [b.close for b in bars if b.day <= as_of]
+    window = closes[-SMA_DAYS:]
+    average = sum(window) / SMA_DAYS if len(window) == SMA_DAYS else None
+    return LevelRecord(as_of, instrument, closes[-1], average)
+
+
+BENCHMARK_LOOK_BACK = timedelta(days=14)  # the benchmark's latest close on or before the preview day
+
+
+def _benchmark_level(history: PriceHistory, benchmark: Instrument, as_of: date) -> LevelRecord:
+    bars = validate_history(benchmark, history.daily_bars(benchmark, as_of - BENCHMARK_LOOK_BACK, as_of))
+    if not bars:
+        raise DataError(f"no {benchmark.ticker} close in the {BENCHMARK_LOOK_BACK.days} days to {as_of}")
+    return LevelRecord(bars[-1].day, benchmark, bars[-1].close, None)
 
 
 def _cycle(  # noqa: PLR0913, PLR0917 - see run_cycle

@@ -20,12 +20,13 @@ from tests.bars import weekdays
 from tradingbot.app.cycle import CycleConfig, CycleReport, run_cycle
 from tradingbot.brokers.fake.broker import FakeBroker
 from tradingbot.brokers.port import AccountSnapshot, BrokerError, NoQuoteError
-from tradingbot.domain.market import Bar, Instrument, Order, Position, Side
+from tradingbot.data.prices import DataError
+from tradingbot.domain.market import BENCHMARK, Bar, Instrument, Order, Position, Side
 from tradingbot.domain.money import Currency, Money
 from tradingbot.ledger.store import IntentState, Ledger, LedgerError
 from tradingbot.portfolio.weights import daily_returns, sleeve_weights, vol_scaled
 from tradingbot.risk.limits import Limits
-from tradingbot.strategy.trend import month_end_days, signals
+from tradingbot.strategy.trend import SMA_DAYS, month_end_days, signals
 
 UP = Instrument("UP", Currency.GBP)  # trends up: held
 DOWN = Instrument("DOWN", Currency.GBX)  # trends down, quoted in pence: cash
@@ -836,3 +837,68 @@ def test_a_crossing_after_days_without_runs_is_still_alerted(
     assert [r.getMessage() for r in caplog.records if getattr(r, "alert", None) == "drawdown"] == [
         "drawdown crossed 5% below the high-water mark"
     ]
+
+
+# --- dashboard slice 2: levels for the weekly view ---------------------------------------
+class HistoryWithBenchmark(FakeHistory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars[BENCHMARK] = [Bar(BENCHMARK, d, open=50.0 + t, close=50.0 + t) for t, d in enumerate(DAYS)]
+
+
+class BenchmarkDown(FakeHistory):
+    def daily_bars(self, instrument: Instrument, start: date, end: date) -> Sequence[Bar]:
+        if instrument == BENCHMARK:
+            raise DataError("EODHD SSAC: HTTP 500")
+        return super().daily_bars(instrument, start, end)
+
+
+WITH_BENCHMARK = CycleConfig(universe=CONFIG.universe, benchmark=BENCHMARK)
+
+
+def test_every_run_stores_each_funds_close_and_210_day_average(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger, signal_day=None)
+    latest = max(b.day for b in FakeHistory().bars[UP] if b.day < NOW.date())
+    window = [c for d, c in zip(DAYS, closes(UP), strict=True) if d <= latest][-SMA_DAYS:]
+    levels = {r.instrument: r for r in ledger.levels()["run-1"]}
+    assert set(levels) == {UP, DOWN}
+    assert levels[UP].as_of == latest
+    assert levels[UP].close == close_on(UP, latest)
+    assert levels[UP].average == pytest.approx(sum(window) / SMA_DAYS)
+
+
+def test_a_fund_with_too_little_history_has_no_average(broker: FakeBroker, ledger: Ledger) -> None:
+    short = FakeHistory()
+    short.bars = {i: bars[-50:] for i, bars in short.bars.items()}
+    cycle(broker, ledger, history=short, signal_day=None)
+    assert {r.average for r in ledger.levels()["run-1"]} == {None}
+
+
+def test_the_benchmarks_latest_close_is_stored_without_an_average(broker: FakeBroker, ledger: Ledger) -> None:
+    history = HistoryWithBenchmark()
+    cycle(broker, ledger, history=history, config=WITH_BENCHMARK, signal_day=None)
+    [ssac] = [r for r in ledger.levels()["run-1"] if r.instrument == BENCHMARK]
+    last = [b for b in history.bars[BENCHMARK] if b.day < NOW.date()][-1]
+    assert (ssac.as_of, ssac.close, ssac.average) == (last.day, last.close, None)
+
+
+def test_a_missing_benchmark_warns_and_keeps_the_preview_and_orders(
+    broker: FakeBroker, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    report = cycle(broker, ledger, history=BenchmarkDown(), config=WITH_BENCHMARK)
+    assert (report.sent, report.stopped) == (1, None)
+    assert {r.instrument for r in ledger.levels()["run-1"]} == {UP, DOWN}
+    assert len(ledger.preview("run-1")) == 2
+    assert any(r.levelno == logging.WARNING and "benchmark" in r.getMessage() for r in caplog.records)
+    assert errors(caplog) == []
+
+
+def test_the_benchmark_must_be_a_benchmark_only_instrument() -> None:
+    with pytest.raises(ValueError, match="isn't a benchmark"):
+        CycleConfig(universe=CONFIG.universe, benchmark=UP)
+
+
+def test_the_benchmark_is_never_ordered(broker: FakeBroker, ledger: Ledger) -> None:
+    cycle(broker, ledger, history=HistoryWithBenchmark(), config=WITH_BENCHMARK)
+    assert BENCHMARK not in {o.order.instrument for o in broker.recent_orders()}
+    assert broker.recent_orders()  # it did order the fund

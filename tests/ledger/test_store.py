@@ -11,7 +11,7 @@ import pytest
 
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency, Money
-from tradingbot.ledger.store import DecisionRecord, IntentState, Ledger, LedgerError
+from tradingbot.ledger.store import DecisionRecord, IntentState, Ledger, LedgerError, LevelRecord
 
 VWRP = Instrument("VWRP", Currency.GBP)
 SGLN = Instrument("SGLN", Currency.GBX)
@@ -261,3 +261,26 @@ def test_the_first_mark_is_the_seeded_one(ledger: Ledger) -> None:
     ledger.seed_high_water_mark(gbp("1000"), NOW)
     ledger.update_high_water_mark(gbp("1100"), NOW)
     assert ledger.first_high_water_mark() == gbp("1000")
+
+
+def test_levels_are_stored_per_run_in_order(ledger: Ledger) -> None:
+    first = [
+        LevelRecord(date(2026, 11, 23), VWRP, 101.5, 98.25),
+        LevelRecord(date(2026, 11, 23), SGLN, 5100.0, None),
+    ]
+    second = [LevelRecord(date(2026, 11, 24), VWRP, 102.0, 98.3)]
+    ledger.record_levels("run-1", first)
+    ledger.record_levels("run-2", second)
+    assert ledger.levels() == {"run-1": first, "run-2": second}
+
+
+def test_a_ledger_from_before_levels_were_recorded_gains_the_table(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite"
+    Ledger.create(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE levels")
+    conn.commit()
+    conn.close()
+    reopened = Ledger.open(path)
+    assert reopened.levels() == {}
+    reopened.close()
