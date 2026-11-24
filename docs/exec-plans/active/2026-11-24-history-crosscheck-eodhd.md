@@ -1,7 +1,7 @@
 # History export: EODHD replaces Stooq as the cross-check, last year only
 
-- **Status**: active
-- **Branch / PR**: ccr-d0003009-0e03lt / one PR
+- **Status**: shipped (2026-11-24, #74)
+- **Branch / PR**: ccr-d0003009-0e03lt / #74
 - **Risk class**: high (`scripts/**`, `research/universe.toml`)
 - **Started**: 2026-11-24
 
@@ -68,3 +68,7 @@ manifest says so.
   forwards no query or header, so the key can't follow one.
 
 ## Outcome
+#74 merged after the owner's `/approve-risk`; CI agent-review passed (0 blocking); deploy green
+(the bot is unchanged). AC1–AC5 met. Next (owner): `python3 scripts/export_history.py --list`
+in Cloud Shell to choose VAGP's older fund, then the export (once a day, after the 07:15 run,
+never on a month-end order day), then Phase 1 step 8b.
