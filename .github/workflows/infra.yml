@@ -25,6 +25,9 @@ concurrency:
 env:
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   TF_IN_AUTOMATION: "true"
+  GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  APP_NAME: ${{ vars.APP_NAME }}
 
 jobs:
   plan:
@@ -65,6 +68,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: bash scripts/pr-comment.sh "$PR" "infra-plan-${{ matrix.env }}" /tmp/summary.md
+      # ADR-0020: the dashboard must never be public, and should be behind the owner's IAP
+      - name: Check the dashboard isn't public (nightly)
+        id: dashboard
+        if: github.event_name == 'schedule'
+        run: |
+          set +e
+          bash scripts/dashboard-check.sh "${{ matrix.env }}" 2>&1 | tee /tmp/dashboard.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: Open (or update) a dashboard issue
+        if: github.event_name == 'schedule' && steps.dashboard.outputs.exitcode != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Dashboard check failed in ${{ matrix.env }}
+        run: |
+          existing="$(gh issue list --label incident --state open --json number,title \
+            | jq -r --arg t "$TITLE" '.[] | select(.title == $t) | .number' | head -n 1)"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file /tmp/dashboard.txt
+          else
+            gh issue create --label incident --title "$TITLE" --body-file /tmp/dashboard.txt
+          fi
       - name: Open (or update) a drift issue
         if: github.event_name == 'schedule' && steps.plan.outputs.exitcode == '2'
         env:
@@ -99,3 +123,10 @@ jobs:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.SA_INFRA_APPLY }}
       - run: bash scripts/tofu.sh "${{ matrix.env }}" apply -auto-approve
+      - name: Check the dashboard isn't public (ADR-0020)
+        run: |
+          set +e
+          bash scripts/dashboard-check.sh "${{ matrix.env }}"
+          code=$?
+          # 3: private, IAP not on yet (the owner's script runs after the first apply)
+          [ "$code" -eq 0 ] || [ "$code" -eq 3 ]

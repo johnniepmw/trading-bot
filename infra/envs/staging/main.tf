@@ -43,6 +43,22 @@ module "job" {
   secrets      = ["gmail-sender"] # staging runs on fakes; only the daily email's sender
 }
 
+# The owner's dashboard (ADR-0020): IAP and access are set by the owner's scripts/dashboard-iap.sh
+module "dashboard" {
+  source = "../../modules/cloud-run-dashboard"
+
+  project_id    = local.b.project_id
+  region        = local.b.region
+  app_name      = local.b.app_name
+  env           = "staging"
+  runtime_sa    = local.b.sa_runtime["staging-dashboard"]
+  deployer_sa   = local.b.sa_deployer
+  deployer_role = local.b.dashboard_deployer_role
+  ledger_bucket = module.job.ledger_bucket
+  lock_bucket   = module.job.lock_bucket
+  pause_bucket  = module.job.pause_bucket
+}
+
 output "job_name" {
   value = module.job.job_name
 }

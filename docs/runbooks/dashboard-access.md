@@ -34,6 +34,13 @@ prints the URL. Afterwards: `unset IAP_CLIENT_ID IAP_CLIENT_SECRET`.
 4. Staging only: press **Pause new orders…**, confirm, and check you get the `pause_requested`
    alert email; then clear it with `ops clear-pause` (env `staging`).
 
+## The guard rails
+`scripts/dashboard-check.sh` checks the live service (read-only): never public, and behind IAP.
+Deploys and rollbacks move the dashboard's image only while IAP is on, and fail loudly if it is
+public; every infra apply runs it; the nightly run opens an incident issue "Dashboard check
+failed in <env>" if it is public or IAP is off. Until you've run your IAP script the dashboard
+serves Google's placeholder page, and that nightly issue reminds you.
+
 ## Removing access
 Remove your accessor binding (or switch IAP off) in the console: the page goes dark at once. The
 bot is unaffected; it never depends on the dashboard.

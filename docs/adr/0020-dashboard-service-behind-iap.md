@@ -42,10 +42,12 @@ Option 2.
   depends on the dashboard.
 - Bad / costs: a public URL that only IAP guards (a direct call with a Google ID token must be
   refused: part of the staging check). CI's infra identity (project `run.admin`, actAs on the
-  dashboard identity) could still switch IAP off or add a public invoker through a merged
-  OpenTofu change; the module pins IAP and never manages the invoker authoritatively, its tests
-  forbid public members and disabled invoker IAM, and every deploy and rollback checks the
-  live service and fails loudly if it is public. The app doesn't verify IAP's signed header:
+  dashboard identity, which also lets it invoke the service directly) could still switch IAP off
+  or add a public invoker through a merged OpenTofu change. Guards: OpenTofu leaves IAP alone
+  and never manages the invoker authoritatively; tests over every infra file forbid public
+  members, disabled invoker IAM and IAP switched off; `scripts/dashboard-check.sh` checks the
+  live service on every deploy and rollback (the image moves only while IAP is on), after every
+  infra apply, and nightly (an incident issue if it is public or IAP is off). The app doesn't verify IAP's signed header:
   that needs an ES256 library (ADR-0007); revisit if the tripwire ever fires. The owner runs a short script per environment once.
   Cost: nothing at this traffic (IAP is free; the service scales to zero).
 - Revisit when: the dashboard needs data the ledger doesn't hold (slice 2 stores benchmark
