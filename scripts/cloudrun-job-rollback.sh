@@ -40,20 +40,18 @@ if ! timeout "${CHECK_TIMEOUT:-900}" gcloud run jobs execute "$job" --region "$r
 fi
 echo "rollback: done; $job runs ${target##*@}"
 
-# The dashboard service follows (ADR-0020); a failure here never touches the job.
+# The dashboard service follows (ADR-0020), only while it is behind IAP; a dashboard problem never
+# touches the job, but a public dashboard is reported loudly.
 service="${app}-dashboard-${env}"
-names="$(gc run services list --region "$region" --format='value(metadata.name)')" \
-  || { echo "rollback: DASHBOARD NOT CHECKED: couldn't list services; the job is rolled back" >&2; exit 1; }
-if grep -qx "$service" <<<"$names"; then
-  gc run services update "$service" --region "$region" --image "$target" \
-    || { echo "rollback: DASHBOARD NOT ROLLED BACK: $service keeps its revision; the job is rolled back" >&2; exit 1; }
-  echo "rollback: $service runs ${target##*@}"
-  policy="$(gc run services get-iam-policy "$service" --region "$region" --format=json)" || policy=unreadable
-  described="$(gc run services describe "$service" --region "$region" --format=json)" || described=unreadable
-  if [ "$policy" = unreadable ] || [ "$described" = unreadable ] \
-     || grep -Eq '"(allUsers|allAuthenticatedUsers)"' <<<"$policy" \
-     || grep -Eq '"(run.googleapis.com/invoker-iam-disabled|invokerIamDisabled)": *"?true' <<<"$described"; then
-    echo "rollback: DASHBOARD CHECK FAILED: $service may be public or unreadable (ADR-0020); the job is rolled back" >&2
-    exit 1
-  fi
-fi
+code=0
+bash "$(dirname "$0")/dashboard-check.sh" "$env" || code=$?
+case "$code" in
+  0) if grep -qx "$service" <<<"$(gc run services list --region "$region" --format='value(metadata.name)')"; then
+       gc run services update "$service" --region "$region" --image "$target" \
+         || { echo "rollback: DASHBOARD NOT ROLLED BACK: $service keeps its revision; the job is rolled back" >&2; exit 1; }
+       echo "rollback: $service runs ${target##*@}"
+       bash "$(dirname "$0")/dashboard-check.sh" "$env" || exit 1
+     fi ;;
+  2|3) echo "rollback: warning: $service not rolled back (see above); the job is rolled back" >&2 ;;
+  *) echo "rollback: the job is rolled back; the dashboard needs attention (above)" >&2; exit 1 ;;
+esac

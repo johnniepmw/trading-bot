@@ -14,7 +14,9 @@ resource "google_cloud_run_v2_service" "this" {
   ingress             = "INGRESS_TRAFFIC_ALL" # IAP fronts the run.app URL; no load balancer
   deletion_protection = var.env == "prod"
 
-  invoker_iam_disabled = false # every request needs run.invoker: only IAP's agent holds it
+  # every request needs run.invoker: IAP's agent (owner script), and those with project-wide Cloud
+  # Run rights (the owner, CI's infra identity; ADR-0020)
+  invoker_iam_disabled = false
 
   template {
     service_account                  = var.runtime_sa
@@ -56,7 +58,10 @@ resource "google_cloud_run_v2_service" "this" {
 
   lifecycle {
     # the deploy pipeline owns the image; the owner's script owns IAP
-    ignore_changes = [template[0].containers[0].image, client, client_version, iap_enabled]
+    ignore_changes = [
+      template[0].containers[0].image, template[0].labels, template[0].annotations,
+      client, client_version, iap_enabled,
+    ]
   }
 }
 

@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE = (ROOT / "infra" / "modules" / "cloud-run-dashboard" / "main.tf").read_text()
 JOB = (ROOT / "infra" / "modules" / "cloud-run-job" / "main.tf").read_text()
 ENVS = {env: (ROOT / "infra" / "envs" / env / "main.tf").read_text() for env in ("staging", "prod")}
+ALL_TF = {p: p.read_text() for p in sorted((ROOT / "infra").glob("**/*.tf")) if "bootstrap" not in p.parts}
 
 
 def test_the_dashboard_is_never_public() -> None:
@@ -20,9 +21,26 @@ def test_the_dashboard_is_never_public() -> None:
     assert "_iam_policy" not in MODULE and "_iam_binding" not in MODULE  # never authoritative
 
 
+def _code(text: str) -> str:
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())  # comments don't count
+
+
+def test_no_infra_file_can_make_any_cloud_run_service_public() -> None:
+    # the module test alone isn't enough: an env file or another module could loosen it
+    for path, text in ALL_TF.items():
+        code = _code(text)
+        assert "allUsers" not in code and "allAuthenticatedUsers" not in code, path
+        assert all(v == "false" for v in re.findall(r"invoker_iam_disabled\s*=\s*(\S+)", code)), path
+        assert not re.search(r"google_cloud_run_v2_service_iam_(policy|binding)", code), path
+        assert not re.search(r"iap_enabled\s*=\s*false", code), path
+        if "google_cloud_run_v2_service_iam_member" in code:
+            assert "roles/run.invoker" not in code, path
+
+
 def test_iap_and_the_image_are_left_to_the_owner_and_the_pipeline() -> None:
-    assert re.search(r"ignore_changes\s*=\s*\[[^\n]*template\[0\]\.containers\[0\]\.image", MODULE)
-    assert re.search(r"ignore_changes\s*=\s*\[[^\n]*iap_enabled", MODULE)
+    ignored = MODULE[MODULE.index("ignore_changes") : MODULE.index("]\n", MODULE.index("ignore_changes = ["))]
+    for attribute in ("template[0].containers[0].image", "iap_enabled", "client"):
+        assert attribute in ignored
     assert "google_iap" not in MODULE  # IAP settings, OAuth client and access: the owner's script
 
 
