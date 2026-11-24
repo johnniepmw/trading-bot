@@ -30,6 +30,9 @@ one line in the job.
   the dashboard. A run fetches each instrument once (the month-end preview reuses the checked
   history's bars), so a run makes 8 calls (9 if a fetch fails partway): two attempts fit in
   20, but not two attempts plus a deploy's dry run on a month end's action day.
+  Amended 2026-11-24 (history export): the owner's Phase 1 export (`scripts/export_history.py`)
+  uses the same key for its cross-check, 8 calls a run, so it runs at most once a day, after
+  a completed 07:15 run, and never on a month end's action day.
 - Bars use `adjusted_close`, with the open scaled by the same factor, in the listing's
   units (pence for GBX funds).
 - The key is a file (`/secrets/eodhd-key/value`, prod only). It travels in the query
