@@ -71,3 +71,17 @@ def test_the_logs_query_is_url_encoded() -> None:
     assert logs_url("prod").endswith(
         "query=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22trading-bot-prod%22"
     )
+
+
+def test_runbook_names_in_the_guidance_are_links() -> None:
+    html = incident_card("prod", "stopped", "new orders off (kill switch or pause request)")
+    assert (
+        '<a href="https://github.com/johnniepmw/trading-bot/blob/main/docs/runbooks/kill-switch.md">kill-switch.md</a>'
+        in html
+    )
+
+
+def test_every_runbook_the_guidance_names_exists() -> None:
+    names = {m for g in (*GUIDANCE, DIED) for m in re.findall(r"[a-z0-9-]+\.md", g.action)}
+    assert names
+    assert all((RUNBOOK.parent / name).is_file() for name in names)

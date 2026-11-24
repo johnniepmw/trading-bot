@@ -348,3 +348,14 @@ def test_an_order_whose_sending_wasnt_confirmed_never_reads_as_unsent(ledger: Le
     w = facts(ledger)
     assert w is not None
     assert w.decisions[0].order == "sending not confirmed (the next run checks the broker)"
+
+
+def test_while_the_run_is_still_sending_unsent_orders_say_not_yet(ledger: Ledger) -> None:
+    ledger.start_run("sending", at(DAY1), "v")
+    ledger.record_equity(DAY1, gbp("1000"))
+    ledger.record_decisions(
+        "sending", [DecisionRecord(A, Side.BUY, Decimal("2"), Decimal("2"), "ok", gbp("100"))]
+    )
+    w = facts(ledger)
+    assert w is not None
+    assert w.decisions[0].order == "not sent yet (run in progress)"

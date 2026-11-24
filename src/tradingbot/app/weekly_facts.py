@@ -141,9 +141,11 @@ class _OrderFacts(NamedTuple):
     traded: Decimal | None = None
 
 
-def _order_facts(ledger: Ledger, intent: Intent | None, approved: bool) -> _OrderFacts:
-    if intent is None:  # approved but never recorded: the run stopped before sending it
-        return _OrderFacts("not sent" if approved else None)
+def _order_facts(ledger: Ledger, intent: Intent | None, approved: bool, finished: bool) -> _OrderFacts:
+    if intent is None:  # approved but never recorded: the run stopped before it, or is still sending
+        return _OrderFacts(
+            ("not sent" if finished else "not sent yet (run in progress)") if approved else None
+        )
     fill = ledger.fill(intent.intent_id)
     price = fill.average_price
     traded = (
@@ -172,7 +174,10 @@ def _decisions(ledger: Ledger, runs: list[RunRecord]) -> tuple[date | None, list
             rows = []
             for d in records:
                 facts = _order_facts(
-                    ledger, intents.get((d.instrument, d.side)), approved=bool(d.approved_quantity)
+                    ledger,
+                    intents.get((d.instrument, d.side)),
+                    approved=bool(d.approved_quantity),
+                    finished=run.outcome is not None,
                 )
                 price = d.quote.to_gbp().amount if d.quote else None
                 approved = (
