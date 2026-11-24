@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Put the bot's Cloud Run job back on the image it ran before the last deploy, then run a
+# Put the bot's Cloud Run job (and its dashboard service, if any) back on the image it ran
+# before the last deploy, then run a
 # `smoke` execution (status only, never logs; ADR-0014). If the smoke fails, the job goes
 # back to the image it had. A named digest skips the deploy's checks, so only the owner may
 # name one (the ops workflow sets NAMED_ROLLBACK_ALLOWED from the actor).
@@ -38,3 +39,21 @@ if ! timeout "${CHECK_TIMEOUT:-900}" gcloud run jobs execute "$job" --region "$r
   exit 1
 fi
 echo "rollback: done; $job runs ${target##*@}"
+
+# The dashboard service follows (ADR-0020); a failure here never touches the job.
+service="${app}-dashboard-${env}"
+names="$(gc run services list --region "$region" --format='value(metadata.name)')" \
+  || { echo "rollback: warning: couldn't list services, so no dashboard was rolled back; the job is rolled back" >&2; exit 0; }
+if grep -qx "$service" <<<"$names"; then
+  gc run services update "$service" --region "$region" --image "$target" \
+    || { echo "rollback: DASHBOARD NOT ROLLED BACK: $service keeps its revision; the job is rolled back" >&2; exit 1; }
+  echo "rollback: $service runs ${target##*@}"
+  policy="$(gc run services get-iam-policy "$service" --region "$region" --format=json)" || policy=unreadable
+  described="$(gc run services describe "$service" --region "$region" --format=json)" || described=unreadable
+  if [ "$policy" = unreadable ] || [ "$described" = unreadable ] \
+     || grep -Eq '"(allUsers|allAuthenticatedUsers)"' <<<"$policy" \
+     || grep -Eq '"(run.googleapis.com/invoker-iam-disabled|invokerIamDisabled)": *"?true' <<<"$described"; then
+    echo "rollback: DASHBOARD CHECK FAILED: $service may be public or unreadable (ADR-0020); the job is rolled back" >&2
+    exit 1
+  fi
+fi

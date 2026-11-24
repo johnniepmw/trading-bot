@@ -29,9 +29,10 @@ from pathlib import Path
 
 from tradingbot.app.calendar import CalendarError, TradingCalendar
 from tradingbot.app.cycle import CycleConfig, dry_run_cycle, run_cycle
-from tradingbot.app.daily_email import EmailError, compose, glance_input, read_sender, send
+from tradingbot.app.daily_email import EmailError, compose, read_sender, send
 from tradingbot.app.eodhd import EodhdHistory, read_key
 from tradingbot.app.flags import Flags
+from tradingbot.app.glance_facts import glance_input
 from tradingbot.app.local_store import LocalObjectStore
 from tradingbot.app.operator import read_operator
 from tradingbot.app.pause import PauseRequests
@@ -148,10 +149,10 @@ def warn_if_live_requested(config: BotConfig, wiring: Wiring) -> None:
         log.error("operator secret asks for live trading: not available in Phase 2, staying on paper")
 
 
-def build_store(wiring: Wiring, clock: Callable[[], datetime]) -> ObjectStore:
+def build_store(wiring: Wiring, clock: Callable[[], datetime], timeout: float = 30.0) -> ObjectStore:
     if wiring.local_store_dir is not None:
         return LocalObjectStore(wiring.local_store_dir, clock)
-    transport = urllib_transport(timeout=30.0)
+    transport = urllib_transport(timeout=timeout)
     return GcsObjectStore(transport, token=lambda: metadata_token(transport))
 
 
@@ -403,6 +404,7 @@ class Job:
                 limits=Limits(**vars(self.config.limits)),
                 now=self.clock(),
                 stopped=stopped,
+                in_progress=True,  # this very run: if its record has no end, it is still finishing
             )
             outbox.append(compose(facts, self.wiring.app_env))
         except Exception as error:  # noqa: BLE001 - the email must never change the run

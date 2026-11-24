@@ -20,3 +20,6 @@ older image is the owner's call only.
 To go back further (owner only): pass `-f image=<region>-docker.pkg.dev/<project>/<app>/<app>@sha256:<digest>`
 (digests: `gcloud artifacts docker images list <region>-docker.pkg.dev/<project>/<app>/<app> --include-tags`).
 A named image skips the deploy's checks except `smoke`; prefer fixing forward.
+
+**The dashboard** follows the job in a rollback (ADR-0020). If the rollback reports
+"DASHBOARD NOT ROLLED BACK", the job did roll back; only the page is left on its revision.

@@ -72,6 +72,13 @@ def test_the_lines_read_in_pounds_and_percent() -> None:
     [
         ("stopped", "not reconciled", Level.STOP, "Run: STOPPED Tue 24 Nov 07:16 UTC: not reconciled"),
         ("stopped", None, Level.STOP, "Run: STOPPED Tue 24 Nov 07:16 UTC: no reason given"),
+        ("running", None, Level.WARN, "Run: in progress since Tue 24 Nov 07:16 UTC"),
+        (
+            "died",
+            "x",
+            Level.STOP,
+            "Run: did not finish (started Tue 24 Nov 07:16 UTC); the next run reports it",
+        ),
     ],
 )
 def test_the_run_line(outcome: str, reason: str | None, level: Level, text: str) -> None:

@@ -13,15 +13,8 @@ from pathlib import Path
 import pytest
 
 from tradingbot.app.calendar import TradingCalendar
-from tradingbot.app.daily_email import (
-    SMTP_HOST,
-    SMTP_PORT,
-    EmailError,
-    Sender,
-    glance_input,
-    read_sender,
-    send,
-)
+from tradingbot.app.daily_email import SMTP_HOST, SMTP_PORT, EmailError, Sender, read_sender, send
+from tradingbot.app.glance_facts import glance_input
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency, Money
 from tradingbot.ledger.store import IntentState, Ledger, PositionRecord, PreviewRecord
@@ -252,3 +245,24 @@ def test_an_app_password_that_isnt_16_letters_is_named_clearly(tmp_path: Path, p
         read_sender(tmp_path / "value")
     assert password not in str(error.value)
     assert not any(ch.isdigit() for ch in str(error.value).replace("16", ""))  # no length either
+
+
+def test_a_run_with_no_end_is_in_progress_while_the_lock_is_held(ledger: Ledger) -> None:
+    ledger.start_run("run-3", END, "v")
+    g = glance_input(
+        ledger,
+        "run-3",
+        today=TODAY,
+        calendar=CAL,
+        universe=UNIVERSE,
+        limits=Limits(),
+        now=END,
+        in_progress=True,
+    )
+    assert (g.outcome, g.reason, g.as_of) == ("running", None, END)
+
+
+def test_a_run_with_no_end_and_no_lock_died(ledger: Ledger) -> None:
+    ledger.start_run("run-3", END, "v")
+    g = facts(ledger, run_id="run-3")
+    assert (g.outcome, g.reason) == ("died", "did not finish (a timeout or crash)")

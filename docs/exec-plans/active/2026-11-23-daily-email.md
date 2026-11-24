@@ -71,6 +71,8 @@ email can never disagree with the decision record.
 
 - 2026-11-23 step 4 (staging email): the first send failed (`email_failed` alert worked). The logged `SMTPServerDisconnected` came from closing a connection Gmail had already dropped after refusing the login; the owner's Cloud Shell check found both stored app passwords were 17 characters (Google's are 16 letters). Fix: closing never hides the real error, the log names the stage and SMTP code, and a stored password that isn't 16 letters is refused before any SMTP attempt with a plain message. The owner re-stores both values
 
+- 2026-11-23 AC7 passed: after the owner re-stored both app passwords (Cloud Shell check: 16 letters, login OK for staging and prod), a staging `run` execution sent the glance and the owner received it. Prod's `daily-email` is switched on by the owner with `ops set`
+
 ## Review
 - Round 1 (reviewer): 2 blocking, both fixed: this run's orders awaiting the 08:00 open no longer turn the Orders line red (only earlier runs' open orders and unknown outcomes do); `glance_input` now has a test on a real ledger checking every figure. Non-blocking fixed: the run's own stop reason wins over its record (a failed final save); a broker that can't be built still emails a STOP; the flag check sits inside the guard; the "skipped" amber branch removed (non-trading days and duplicates never open the ledger, so they never email: the alert policy covers missed runs); tests that a failed email keeps a stopped run stopped and that an error gathering figures is caught. Recorded: `invested` leaves out a position with no GBP value (the line is red then anyway)
 

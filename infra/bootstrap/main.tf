@@ -13,6 +13,7 @@ locals {
     "cloudscheduler.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
+    "iap.googleapis.com", # the dashboard's sign-in gate (the owner's IAP script configures it)
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "run.googleapis.com",
@@ -24,7 +25,8 @@ locals {
   pool_principal_repo = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository_id/${var.github_repository_id}"
   # main only, and only for push, manual dispatch or schedule (never pull_request_target or comments)
   pool_principal_main = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.trusted_main/true"
-  runtime_accounts    = toset(["staging-job", "prod-job", "scheduler"])
+  # the dashboard services' identities (dashboard plan, slice 1): read the ledger, create pause requests
+  runtime_accounts = toset(["staging-job", "prod-job", "scheduler", "staging-dashboard", "prod-dashboard"])
 }
 
 resource "google_project_service" "apis" {
@@ -165,12 +167,28 @@ resource "google_artifact_registry_repository_iam_member" "push" {
 resource "google_project_iam_custom_role" "job_deployer_reader" {
   project = var.project_id
   role_id = "jobDeployerReader"
-  title   = "Read Cloud Run jobs and executions; cancel executions"
+  title   = "Read Cloud Run jobs, executions and services; cancel executions"
   permissions = [
     "run.jobs.get", "run.jobs.list",
+    # find the dashboard service and check it isn't public (ADR-0020); updating it needs its own grant
+    "run.services.get", "run.services.list", "run.services.getIamPolicy",
     "run.executions.get", "run.executions.list", "run.executions.cancel",
     "run.operations.get", "run.operations.list",
     "run.locations.list",
+  ]
+}
+
+# Granted on each dashboard service by the dashboard module (ADR-0020): update its image and read
+# its revisions, but not invoke it (run.developer would include run.routes.invoke, a possible way
+# around IAP), so the deploy identity can never read the page.
+resource "google_project_iam_custom_role" "dashboard_deployer" {
+  project = var.project_id
+  role_id = "dashboardDeployer"
+  title   = "Update a Cloud Run service's image; never invoke it"
+  permissions = [
+    "run.services.get", "run.services.update",
+    "run.revisions.get", "run.revisions.list",
+    "run.operations.get",
   ]
 }
 
@@ -267,8 +285,8 @@ resource "google_project_iam_member" "infra_apply_secrets" {
 }
 
 # ---------- runtime identities (owner-created) and the live switch (ADR-0009) --------------
-# The jobs' and the scheduler's identities are created here, so CI needs no service-account
-# admin and no project-wide actAs: it may act only as these three.
+# The jobs', the scheduler's and the dashboards' identities are created here, so CI needs no
+# service-account admin and no project-wide actAs: it may act only as these five.
 resource "google_service_account" "runtime" {
   for_each     = local.runtime_accounts
   project      = var.project_id

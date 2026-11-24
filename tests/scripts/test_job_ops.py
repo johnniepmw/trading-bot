@@ -43,6 +43,18 @@ elif cmd == "run jobs executions":
     for name in read("running").split():
         print(name + "\t")  # no completion time: still running
     print("trading-bot-x-done\t2026-11-23T07:16:02.123Z")  # a finished one is never "running"
+elif cmd == "run services list":
+    if os.path.exists(path("services_list_fails")):
+        sys.exit(1)
+    print(read("services"))
+elif cmd == "run services get-iam-policy":
+    print(read("service_policy", "{}"))
+elif cmd == "run services describe":
+    print(read("service_described", "{}"))
+elif cmd == "run services update":
+    if os.path.exists(path("service_fails")):
+        sys.exit(1)
+    open(path("service_image"), "w").write(a[a.index("--image") + 1])
 elif cmd == "scheduler jobs describe":
     print(read("scheduler", "PAUSED\t"))
 elif cmd == "run jobs describe":
@@ -345,3 +357,100 @@ def test_a_failed_clear_is_reported(fake: Path) -> None:
     result = run(fake, "pause-clear.sh", "staging", OWNER="true")
     assert result.returncode == 1
     assert "still paused" in result.stderr
+
+
+# --- the dashboard service follows the job (ADR-0020) ----------------------------------
+def test_without_a_dashboard_service_a_deploy_only_moves_the_job(fake: Path) -> None:
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode == 0
+    assert "no trading-bot-dashboard-staging yet; skipped" in result.stdout
+    assert not (fake / "service_image").exists()
+
+
+def test_the_dashboard_follows_the_job_after_its_check_passes(fake: Path) -> None:
+    (fake / "services").write_text("other-service\ntrading-bot-dashboard-staging\n")
+    assert run(fake, "cloudrun-job-deploy.sh", "staging", NEW).returncode == 0
+    assert (fake / "service_image").read_text() == NEW
+    assert (fake / "image").read_text() == NEW
+
+
+def test_a_failed_job_check_never_moves_the_dashboard(fake: Path) -> None:
+    (fake / "services").write_text("trading-bot-dashboard-staging\n")
+    (fake / "executions").write_text("fail")
+    assert run(fake, "cloudrun-job-deploy.sh", "staging", NEW).returncode == 1
+    assert not (fake / "service_image").exists()
+    assert (fake / "image").read_text() == OLD
+
+
+@pytest.mark.parametrize("failure", ["service_fails"])
+def test_a_dashboard_failure_fails_the_deploy_but_leaves_the_job_on_its_new_image(
+    fake: Path, failure: str
+) -> None:
+    (fake / "services").write_text("trading-bot-dashboard-staging\n")
+    (fake / failure).write_text("")
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode == 1
+    assert "DASHBOARD NOT UPDATED" in result.stderr
+    assert (fake / "image").read_text() == NEW  # the checked job is never reverted for it
+
+
+def test_a_rollback_moves_the_dashboard_too(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    (fake / "previous_digest").write_text("sha256:" + "a" * 64)
+    (fake / "services").write_text("trading-bot-dashboard-prod\n")
+    assert run(fake, "cloudrun-job-rollback.sh", "prod").returncode == 0
+    assert (fake / "service_image").read_text() == OLD
+
+
+def test_a_failed_dashboard_rollback_leaves_the_job_rolled_back(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    (fake / "previous_digest").write_text("sha256:" + "a" * 64)
+    (fake / "services").write_text("trading-bot-dashboard-prod\n")
+    (fake / "service_fails").write_text("")
+    result = run(fake, "cloudrun-job-rollback.sh", "prod")
+    assert result.returncode == 1
+    assert "DASHBOARD NOT ROLLED BACK" in result.stderr
+    assert (fake / "image").read_text() == OLD
+
+
+def test_a_deployer_that_cant_list_services_skips_the_dashboard_with_a_warning(fake: Path) -> None:
+    # before the owner's bootstrap grants run.services.list
+    (fake / "services_list_fails").write_text("")
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode == 0
+    assert "couldn't list services" in result.stderr
+    assert (fake / "image").read_text() == NEW
+
+
+@pytest.mark.parametrize(
+    ("file", "content"),
+    [
+        ("service_policy", '{"bindings": [{"members": ["allUsers"], "role": "roles/run.invoker"}]}'),
+        (
+            "service_policy",
+            '{"bindings": [{"members": ["allAuthenticatedUsers"], "role": "roles/run.invoker"}]}',
+        ),
+        (
+            "service_described",
+            '{"metadata": {"annotations": {"run.googleapis.com/invoker-iam-disabled": "true"}}}',
+        ),
+    ],
+)
+def test_a_public_dashboard_fails_the_deploy_loudly(fake: Path, file: str, content: str) -> None:
+    (fake / "services").write_text("trading-bot-dashboard-staging\n")
+    (fake / file).write_text(content)
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode == 1
+    assert "DASHBOARD IS PUBLIC" in result.stderr
+    assert (fake / "image").read_text() == NEW  # the job is unaffected
+
+
+def test_a_public_dashboard_fails_a_rollback_loudly(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    (fake / "previous_digest").write_text("sha256:" + "a" * 64)
+    (fake / "services").write_text("trading-bot-dashboard-prod\n")
+    (fake / "service_policy").write_text('{"bindings": [{"members": ["allUsers"]}]}')
+    result = run(fake, "cloudrun-job-rollback.sh", "prod")
+    assert result.returncode == 1
+    assert "DASHBOARD CHECK FAILED" in result.stderr
+    assert (fake / "image").read_text() == OLD

@@ -63,7 +63,7 @@ def build_pause(env: Mapping[str, str]) -> PauseRequests:
     return PauseRequests(GcsObjectStore(transport, token=lambda: metadata_token(transport)), bucket)
 
 
-def main(  # noqa: PLR0913 - injectable dependencies for tests
+def main(  # noqa: PLR0911, PLR0913 - one return per command; injectable dependencies for tests
     argv: list[str] | None = None,
     *,
     flags: Flags | None = None,
@@ -75,6 +75,7 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
     parser = argparse.ArgumentParser(prog="tradingbot")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("smoke")
+    commands.add_parser("serve", help="the dashboard service (Cloud Run service, behind IAP)")
     run = commands.add_parser("run")
     run.add_argument("--dry-run", action="store_true", help="stop before sending; touch nothing")
     run.add_argument(
@@ -90,6 +91,8 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
         parser.error("--deploy-check needs --dry-run")
 
     env = env if env is not None else os.environ
+    if args.command == "serve":  # before flags: the dashboard has no access to them
+        return serve(env)
     try:
         flags = flags if flags is not None else build_flags(env)
     except ConfigError as exc:
@@ -120,6 +123,24 @@ def main(  # noqa: PLR0913 - injectable dependencies for tests
     log.info(  # the same, as a message `make logs` shows
         "smoke: new_orders=%s paused=%s version=%s", report["new_orders"], report["paused"], report["version"]
     )
+    return 0
+
+
+def serve(env: Mapping[str, str]) -> int:
+    # imported here, so the job's commands never load the dashboard (it never affects trading)
+    from tradingbot.app.dashboard import build_dashboard, make_server  # noqa: PLC0415
+
+    try:
+        dashboard, port = build_dashboard(env)
+    except (JobConfigError, ConfigFileError) as exc:
+        log.error("refusing to start: %s", exc)
+        return 1
+    server = make_server(dashboard, port)
+    log.info("dashboard serving on port %d (%s)", port, dashboard.environment)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
     return 0
 
 

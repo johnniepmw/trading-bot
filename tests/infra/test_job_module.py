@@ -137,14 +137,22 @@ def test_alerts_go_to_the_owners_email(env: Path) -> None:
 def test_the_job_reads_its_pause_location_and_cant_clear_it() -> None:
     text = (MODULE / "main.tf").read_text()
     assert re.search(r'pause_bucket\s*=\s*"\$\{var.project_id\}-pause-\$\{var.env\}"', text)
-    assert 'role   = "roles/storage.objectViewer"' in resource("google_storage_bucket_iam_member", "runtime_pause")
+    assert 'role   = "roles/storage.objectViewer"' in resource(
+        "google_storage_bucket_iam_member", "runtime_pause"
+    )
     assert 'name  = "PAUSE_BUCKET"' in resource("google_cloud_run_v2_job", "this")
 
 
 def test_the_runtime_identity_has_no_other_access_to_the_pause_bucket() -> None:
     text = (MODULE / "main.tf").read_text()
-    bindings = re.findall(r'resource "google_storage_bucket_iam_member" "(\w+)" \{\n  bucket = google_storage_bucket\.pause\.name\n  role   = "([^"]+)"\n  member = "serviceAccount:\$\{var\.(\w+)\}"', text)
-    assert sorted(bindings) == [("deployer_pause", "roles/storage.objectUser", "deployer_sa"), ("runtime_pause", "roles/storage.objectViewer", "runtime_sa")]
+    bindings = re.findall(
+        r'resource "google_storage_bucket_iam_member" "(\w+)" \{\n  bucket = google_storage_bucket\.pause\.name\n  role   = "([^"]+)"\n  member = "serviceAccount:\$\{var\.(\w+)\}"',
+        text,
+    )
+    assert sorted(bindings) == [
+        ("deployer_pause", "roles/storage.objectUser", "deployer_sa"),
+        ("runtime_pause", "roles/storage.objectViewer", "runtime_sa"),
+    ]
 
 
 def test_prod_mounts_the_price_data_key() -> None:
@@ -157,7 +165,6 @@ def test_prod_mounts_the_demo_broker_key_and_staging_does_not() -> None:
     # the Trading 212 adapter reads /secrets/t212-demo-key/value (step 4); staging trades a fake broker
     assert '"t212-demo-key"' in PROD.read_text()
     assert "t212" not in STAGING.read_text()
-
 
 
 def test_the_deploy_identity_may_deploy_each_job_directly() -> None:
