@@ -53,7 +53,7 @@ from tradingbot.config.load import load_config
 from tradingbot.config.types import BotConfig
 from tradingbot.data.prices import DataError, PriceHistory
 from tradingbot.data.synthetic import SyntheticHistory, synthetic_close
-from tradingbot.domain.market import price_money
+from tradingbot.domain.market import BENCHMARK, price_money
 from tradingbot.domain.money import Currency, Money
 from tradingbot.ledger.store import Ledger
 from tradingbot.risk.limits import Limits
@@ -221,7 +221,9 @@ class Job:
         return TradingCalendar(self.config.holidays, until=self.config.calendar_until)
 
     def _cycle_config(self) -> CycleConfig:
-        return CycleConfig(universe=self.config.universe, limits=Limits(**vars(self.config.limits)))
+        return CycleConfig(
+            universe=self.config.universe, limits=Limits(**vars(self.config.limits)), benchmark=BENCHMARK
+        )
 
     def history(self) -> PriceHistory:
         """EODHD in prod (ADR-0018); synthetic prices everywhere else."""

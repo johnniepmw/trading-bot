@@ -25,12 +25,39 @@ def page(paused: bool = False) -> str:
     return glance_page(LINES, as_of=AS_OF, environment="prod", runs=RUNS, paused=paused)
 
 
-def test_the_glance_shows_each_line_with_its_marker_and_colour() -> None:
+def test_the_glance_shows_each_line_with_its_icon_and_bold_label() -> None:
     html = page()
-    assert '<b class=m style="color:#1b7f3b">[OK]</b> Run: completed' in html
-    assert '<b class=m style="color:#a66300">[!]</b> Drawdown: 6.0%' in html
-    assert '<b class=m style="color:#b3261e">[STOP]</b> Orders: 1 open' in html
+    assert (
+        "<li><span class='status good' role=img aria-label=OK>✓</span><span><b>Run</b>: completed</span></li>"
+        in html
+    )
+    assert (
+        "<span class='status warning' role=img aria-label=Check>!</span><span><b>Drawdown</b>: 6.0%" in html
+    )
+    assert (
+        "<span class='status critical' role=img aria-label=Stop>✕</span><span><b>Orders</b>: 1 open" in html
+    )
     assert "As of Tue 24 Nov 2026 07:17 UTC" in html
+
+
+def test_the_header_gives_the_worst_level_in_words() -> None:
+    assert "aria-label=Stop>✕</span>Needs you</span>" in page()
+    calm = glance_page([LINES[0]], as_of=AS_OF, environment="prod", runs=RUNS, paused=False)
+    assert "aria-label=OK>✓</span>All clear</span>" in calm
+    amber = glance_page(LINES[:2], as_of=AS_OF, environment="prod", runs=RUNS, paused=False)
+    assert "Worth a look" in amber
+
+
+def test_the_weekly_view_is_placed_after_the_hero_and_checks() -> None:
+    html = glance_page(
+        LINES,
+        as_of=AS_OF,
+        environment="prod",
+        runs=RUNS,
+        paused=False,
+        weekly=("<p>HERO</p>", "<p>CARDS</p>"),
+    )
+    assert html.index("HERO") < html.index("Today's checks") < html.index("CARDS") < html.index("Recent runs")
 
 
 def test_run_reasons_are_escaped() -> None:

@@ -35,10 +35,13 @@ from tradingbot.app.remote_ledger import (
     RestoredLedgerError,
 )
 from tradingbot.app.storage import ObjectStore, StorageError
+from tradingbot.app.weekly_facts import weekly_input
 from tradingbot.config.load import load_config
 from tradingbot.config.types import BotConfig
+from tradingbot.ledger.store import Ledger
 from tradingbot.report.glance import glance
 from tradingbot.report.page import RunRow, confirm_page, error_page, glance_page, paused_page
+from tradingbot.report.weekly import weekly_html
 from tradingbot.risk.limits import Limits
 
 log = logging.getLogger(__name__)
@@ -95,16 +98,19 @@ class Dashboard:
                 if not runs:
                     return _unavailable("No runs yet")
                 latest = runs[-1]
+                calendar = TradingCalendar(self.config.holidays, until=self.config.calendar_until)
+                limits = Limits(**vars(self.config.limits))
                 facts = glance_input(
                     ledger,
                     latest.run_id,
                     today=latest.started_at.date(),
-                    calendar=TradingCalendar(self.config.holidays, until=self.config.calendar_until),
+                    calendar=calendar,
                     universe=self.config.universe,
-                    limits=Limits(**vars(self.config.limits)),
+                    limits=limits,
                     now=self.clock(),
                     in_progress=self._lock_held(),
                 )
+                weekly = self._weekly(ledger, calendar, limits)
             finally:
                 ledger.close()
         rows = [RunRow(r.started_at, r.outcome, r.reason) for r in reversed(runs[-RECENT_RUNS:])]
@@ -115,8 +121,26 @@ class Dashboard:
             environment=self.environment,
             runs=rows,
             paused=self._paused(),
+            weekly=weekly,
         )
         return Response(HTTPStatus.OK, page)
+
+    def _weekly(self, ledger: Ledger, calendar: TradingCalendar, limits: Limits) -> tuple[str, str] | None:
+        """The weekly view's HTML; if it can't be built or drawn, the page keeps the glance and
+        the pause button."""
+        today = self.clock().date()
+        try:
+            figures = weekly_input(
+                ledger,
+                today=today,
+                universe=self.config.universe,
+                limits=limits,
+                next_month_end=calendar.next_month_end(today),
+            )
+            return weekly_html(figures) if figures else None
+        except Exception:
+            log.exception("dashboard: weekly view failed")
+            return None
 
     def _lock_held(self) -> bool:
         """A run holds a fresh lock; one older than STALE_AFTER belongs to a run that died. Only

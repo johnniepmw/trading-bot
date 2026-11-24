@@ -317,6 +317,15 @@ def saved_ledger(tmp_path: Path) -> Ledger:
     return Ledger.open(path)
 
 
+def test_a_run_stores_the_closes_of_every_fund_and_the_benchmark(set_up: Path) -> None:
+    job_at(set_up, RUN_DAY).run()
+    ledger = saved_ledger(set_up)
+    [levels] = ledger.levels().values()
+    ledger.close()
+    tickers = {r.instrument.ticker for r in levels}
+    assert tickers == {i.ticker for i in load_config().universe} | {"SSAC"}
+
+
 class Crash(BaseException):
     """The process dies mid-send."""
 

@@ -118,6 +118,15 @@ CREATE TABLE IF NOT EXISTS previews (
     in_trend INTEGER NOT NULL,
     weight REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS levels (
+    run_id TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    close REAL NOT NULL,
+    average REAL,
+    anchor REAL
+);
 """
 
 
@@ -175,6 +184,21 @@ class PreviewRecord:
     instrument: Instrument
     in_trend: bool
     weight: float
+
+
+@dataclass(frozen=True, slots=True)
+class LevelRecord:
+    """A fund's (or the benchmark's) latest close the run read, and its 210-day average (None
+    for the benchmark, or with too little history). `anchor` is the close on the ledger's first
+    levels day, from the same adjusted series, so close / anchor is a total return however the
+    provider later rescales its history (None if that day is out of reach). For the dashboard
+    only: never for orders."""
+
+    as_of: date
+    instrument: Instrument
+    close: float
+    average: float | None
+    anchor: float | None = None
 
 
 class LedgerError(Exception):
@@ -644,6 +668,37 @@ class Ledger:
                     r.weight,
                 ),
             )
+
+    def record_levels(self, run_id: str, rows: list[LevelRecord]) -> None:
+        for r in rows:
+            self._conn.execute(
+                "INSERT INTO levels VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    r.as_of.isoformat(),
+                    r.instrument.ticker,
+                    r.instrument.currency.value,
+                    r.close,
+                    r.average,
+                    r.anchor,
+                ),
+            )
+
+    def first_level_day(self) -> date | None:
+        """The day every run's `anchor` refers to: the first stored levels day."""
+        row = self._conn.execute("SELECT as_of FROM levels ORDER BY rowid LIMIT 1").fetchone()
+        return None if row is None else date.fromisoformat(row[0])
+
+    def levels(self) -> dict[str, list[LevelRecord]]:
+        """Every run's levels, by run ID, in the order stored."""
+        out: dict[str, list[LevelRecord]] = {}
+        for r in self._conn.execute(
+            "SELECT run_id, as_of, ticker, currency, close, average, anchor FROM levels ORDER BY rowid"
+        ):
+            out.setdefault(r[0], []).append(
+                LevelRecord(date.fromisoformat(r[1]), Instrument(r[2], Currency(r[3])), r[4], r[5], r[6])
+            )
+        return out
 
     def preview(self, run_id: str) -> list[PreviewRecord]:
         rows = self._conn.execute(
