@@ -14,7 +14,16 @@ from datetime import date
 from decimal import Decimal
 
 from tradingbot.domain.market import BENCHMARK, Instrument
-from tradingbot.ledger.store import Ledger, LedgerError, LevelRecord, RunRecord
+from tradingbot.domain.money import Currency
+from tradingbot.ledger.store import (
+    Intent,
+    IntentState,
+    Ledger,
+    LedgerError,
+    LevelRecord,
+    RunRecord,
+    SignalRecord,
+)
 from tradingbot.report.weekly import (
     Change,
     DayValue,
@@ -105,10 +114,53 @@ def _funds(
     return rows
 
 
+ORDER_WORDS = {
+    IntentState.INTENDED: "recorded, not sent",
+    IntentState.SENT: "awaiting fill",
+    IntentState.UNKNOWN: "outcome unknown",
+    IntentState.FILLED: "filled",
+    IntentState.PARTIALLY_FILLED: "partly filled",
+    IntentState.REJECTED: "rejected",
+    IntentState.CANCELLED: "cancelled",
+    IntentState.NOT_SENT: "not sent",
+}
+
+
+def _why(signal: SignalRecord | None) -> str | None:
+    if signal is None:
+        return None
+    trend = "in trend" if signal.in_trend else "out of trend"
+    return f"{trend}, target {signal.weight_after * 100:.0f}%"
+
+
+def _order_facts(ledger: Ledger, intent: Intent | None) -> dict[str, object]:
+    if intent is None:
+        return {}
+    fill = ledger.fill(intent.intent_id)
+    price = fill.average_price
+    traded = (
+        (price * intent.filled_quantity).to_gbp().amount
+        if price is not None and intent.filled_quantity
+        else None
+    )
+    return {
+        "order": ORDER_WORDS[intent.state],
+        "filled_at": price.amount if price is not None else None,
+        "fees": fill.fees.amount if fill.fees is not None else None,
+        "traded": traded,
+    }
+
+
 def _decisions(ledger: Ledger, runs: list[RunRecord]) -> tuple[date | None, list[DecisionRow]]:
     for run in reversed(runs):
         records = ledger.decisions(run.run_id)
         if records:
+            signals = {s.instrument: s for s in ledger.run_signals(run.run_id)}
+            intents = {
+                (i.order.instrument, i.order.side): i
+                for i in [*ledger.open_intents(), *ledger.settled()]
+                if i.run_id == run.run_id
+            }
             rows = []
             for d in records:
                 price = d.quote.to_gbp().amount if d.quote else None
@@ -125,6 +177,10 @@ def _decisions(ledger: Ledger, runs: list[RunRecord]) -> tuple[date | None, list
                         approved,
                         d.reason,
                         refused=d.approved_quantity is None,
+                        why=_why(signals.get(d.instrument)),
+                        intended=d.quote.amount if d.quote else None,
+                        pence=d.instrument.currency is Currency.GBX,
+                        **_order_facts(ledger, intents.get((d.instrument, d.side))),  # type: ignore[arg-type]
                     )
                 )
             return run.started_at.date(), rows

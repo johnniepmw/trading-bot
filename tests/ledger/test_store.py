@@ -11,7 +11,14 @@ import pytest
 
 from tradingbot.domain.market import Instrument, Order, Side
 from tradingbot.domain.money import Currency, Money
-from tradingbot.ledger.store import DecisionRecord, IntentState, Ledger, LedgerError, LevelRecord
+from tradingbot.ledger.store import (
+    DecisionRecord,
+    IntentState,
+    Ledger,
+    LedgerError,
+    LevelRecord,
+    SignalRecord,
+)
 
 VWRP = Instrument("VWRP", Currency.GBP)
 SGLN = Instrument("SGLN", Currency.GBX)
@@ -284,3 +291,12 @@ def test_a_ledger_from_before_levels_were_recorded_gains_the_table(tmp_path: Pat
     reopened = Ledger.open(path)
     assert reopened.levels() == {}
     reopened.close()
+
+
+def test_a_runs_signals_are_read_by_run(ledger: Ledger) -> None:
+    mine = SignalRecord("run-1", VWRP, 101.0, 99.0, True, 0.0, 0.25, 1.0)
+    other = SignalRecord("run-2", VWRP, 101.0, 99.0, True, 0.25, 0.25, 1.0)
+    ledger.record_signals("run-1", date(2026, 11, 30), [mine])
+    ledger.record_signals("run-2", date(2026, 11, 30), [other])
+    assert ledger.run_signals("run-1") == [mine]
+    assert ledger.run_signals("run-3") == []

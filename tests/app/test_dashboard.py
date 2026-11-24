@@ -262,7 +262,8 @@ def test_the_home_page_shows_the_weekly_view_from_the_runs_records(ran: Path) ->
         assert f"<h2>{heading}</h2>" in body
     assert "<p class=hero>" in body
     assert "<b>VWRP</b>" in body and "<b>SGLN</b>" in body
-    assert "Risk decisions at the last month end" in body  # the run was a month end
+    assert "what risk allowed, and what became of each order" in body
+    assert "Order: awaiting fill" in body  # sent at the run, filled at the open  # the run was a month end
     assert "<b>Day 1</b> of 90" in body  # counted from the first run
 
 
@@ -313,3 +314,36 @@ def test_a_ledger_from_before_slice_2_still_shows_the_page(ran: Path) -> None:
     assert "aria-label='no preview'" in page.body
     assert 'class="line s-bot"' in page.body
     assert 'class="line s-ew"' not in page.body and 'class="line s-bm"' not in page.body
+
+
+# --- slice 3: the incident view ----------------------------------------------------------
+def add_run(root: Path, outcome: str | None, reason: str | None) -> None:
+    s = store(root)
+    info = s.info("ledger", LEDGER_OBJECT)
+    assert info is not None
+    path = root / "edit.sqlite"
+    path.write_bytes(s.read("ledger", LEDGER_OBJECT, info.generation))
+    led = Ledger.open(path)
+    led.start_run("later", RUN_DAY + timedelta(hours=1), "v")
+    if outcome:
+        led.finish_run("later", RUN_DAY + timedelta(hours=1, minutes=1), outcome, reason)
+    led.close()
+    s.write("ledger", LEDGER_OBJECT, path.read_bytes(), if_generation_match=info.generation)
+
+
+def test_a_stopped_run_puts_the_incident_card_first(ran: Path) -> None:
+    add_run(ran, "stopped", "stale data: VWRP has no bar for 2026-11-30")
+    body = get(dashboard(ran)).body
+    assert "The last run stopped" in body
+    assert body.index("The last run stopped") < body.index("<h2>Today")
+    assert "Usually clears the next day" in body
+
+
+def test_a_run_that_died_gets_its_own_card(ran: Path) -> None:
+    add_run(ran, None, None)  # no end, and no fresh lock: it died
+    body = get(dashboard(ran, now=RUN_DAY + timedelta(days=1))).body
+    assert "The last run did not finish" in body
+
+
+def test_a_completed_run_has_no_incident_card(ran: Path) -> None:
+    assert "The last run" not in get(dashboard(ran)).body

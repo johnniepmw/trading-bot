@@ -59,6 +59,14 @@ class DecisionRow:
     approved: Decimal | None  # GBP; None: refused, or no quote
     reason: str
     refused: bool = False
+    # slice 3: why, and what became of the order
+    why: str | None = None  # e.g. "in trend, target 22%"
+    order: str | None = None  # the order's state in words; None: no order was sent
+    intended: Decimal | None = None  # per unit, in the fund's quote currency (the run's quote)
+    filled_at: Decimal | None = None  # the fill's average price, same currency
+    pence: bool = False  # the fund quotes in pence (GBX)
+    fees: Decimal | None = None  # GBP, as the broker reported them
+    traded: Decimal | None = None  # GBP value of what filled
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,16 +498,40 @@ def decisions(w: WeeklyInput) -> str:
             outcome, cls = "approved", "good"
         icon = {"good": "✓", "warning": "!", "critical": "✕"}[cls]
         proposed = _gbp(d.proposed) if d.proposed is not None else "—"
+        why = f"{escape(d.why)} · " if d.why else ""
         rows.append(
             f"<tr><td><b>{escape(d.ticker)}</b></td><td>{escape(d.side)} {proposed}</td>"
             f"<td><span class='status {cls}' aria-hidden=true>{icon}</span> {escape(outcome)}"
-            f"<div class=small>{escape(d.reason)}</div></td></tr>"
+            f"<div class=small>{why}{escape(d.reason)}</div>{_order_line(d)}</td></tr>"
         )
     head = (
-        f"<p class=muted>Risk decisions at the last month end, {_day(w.decisions_day)} "
-        "(what risk allowed; the glance and runs show what was sent)</p>"
+        f"<p class=muted>The last month end, {_day(w.decisions_day)}: what risk allowed, and what "
+        "became of each order</p>"
     )
     return f"{head}<table class=dec>{''.join(rows)}</table>"
+
+
+COST_ASSUMPTION = Decimal("0.0015")  # the backtest's cost per trade (strategy spec)
+
+
+def _price(amount: Decimal, pence: bool) -> str:
+    return f"{amount:,.1f}p" if pence else f"£{amount:,.2f}"
+
+
+def _order_line(d: DecisionRow) -> str:
+    """The order's fate: its state, intended price against the fill, fees against 0.15%."""
+    if d.order is None:
+        return ""
+    parts = [f"Order: {escape(d.order)}"]
+    if d.intended is not None and d.filled_at is not None and d.intended:
+        slip = float(d.filled_at / d.intended - 1)
+        parts.append(
+            f"{_price(d.intended, d.pence)} → {_price(d.filled_at, d.pence)} ({_pct(slip, places=2)})"
+        )
+    if d.fees is not None and d.traded:
+        assumed = d.traded * COST_ASSUMPTION
+        parts.append(f"fees {_gbp(d.fees, pence=True)} against {_gbp(assumed, pence=True)} assumed (0.15%)")
+    return f"<div class=small>{' · '.join(parts)}</div>"
 
 
 def paper_progress(w: WeeklyInput) -> str:

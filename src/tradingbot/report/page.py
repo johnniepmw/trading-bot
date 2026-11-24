@@ -57,6 +57,8 @@ _STYLE = (
     "button.go{background:var(--critical);color:#fff}form{margin:0}a{color:var(--s-bot)}"
     ".paused{display:flex;gap:10px;align-items:flex-start}"
     "code{font-size:14px}"
+    ".incident{border-left:4px solid var(--critical)}.incident .reason{font:14px/1.4 ui-monospace,monospace;"
+    "overflow-wrap:anywhere;color:var(--ink2)}"
 )
 
 
@@ -110,6 +112,7 @@ def glance_page(  # noqa: PLR0913 - the page's parts
     runs: list[RunRow],
     paused: bool | None,
     weekly: tuple[str, str] | None = None,
+    incident: str | None = None,
 ) -> str:
     """`paused` None: the pause location couldn't be read; the button stays (pressing is harmless).
     `weekly`: the hero and the weekly cards (`report.weekly.weekly_html`), when there are figures."""
@@ -135,6 +138,7 @@ def glance_page(  # noqa: PLR0913 - the page's parts
         f"<header><div><h1>Trading bot<span class=env>{escape(environment)}</span></h1>"
         f"<p class=sub>As of {as_of:%a %d %b %Y %H:%M} UTC, from the bot's ledger</p></div>"
         f"{_overall(lines)}</header>"
+        + (incident or "")
         + (f"<section class=card>{hero}</section>" if hero else "")
         + f"<section class=card><h2>Today's checks</h2><ul class=checks>{checks}</ul></section>"
         + cards

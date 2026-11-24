@@ -10,9 +10,17 @@ from pathlib import Path
 import pytest
 
 from tradingbot.app.weekly_facts import weekly_input
-from tradingbot.domain.market import BENCHMARK, Instrument, Side
+from tradingbot.domain.market import BENCHMARK, Instrument, Order, Side
 from tradingbot.domain.money import Currency, Money
-from tradingbot.ledger.store import DecisionRecord, Ledger, LevelRecord, PositionRecord, PreviewRecord
+from tradingbot.ledger.store import (
+    DecisionRecord,
+    IntentState,
+    Ledger,
+    LevelRecord,
+    PositionRecord,
+    PreviewRecord,
+    SignalRecord,
+)
 from tradingbot.risk.limits import Limits
 
 A = Instrument("AAA", Currency.GBP)
@@ -236,3 +244,59 @@ def test_the_mark_comes_from_the_ledger(ledger: Ledger) -> None:
     w = facts(ledger)
     assert w is not None
     assert w.mark == Decimal("1100")
+
+
+def test_month_end_trades_carry_why_the_order_state_the_fill_and_fees(ledger: Ledger) -> None:
+    rid = run(ledger, DAY1, "1000", None)
+    ledger.record_signals(
+        rid,
+        DAY1 - timedelta(days=1),
+        [
+            SignalRecord(rid, A, 105.0, 100.0, True, 0.0, 0.25, 1.0),
+            SignalRecord(rid, B, 4900.0, 5000.0, False, 0.0, 0.0, 1.0),
+        ],
+    )
+    ledger.record_decisions(
+        rid,
+        [
+            DecisionRecord(A, Side.BUY, Decimal("2"), Decimal("2"), "within limits", gbp("100")),
+            DecisionRecord(
+                B, Side.BUY, Decimal("1"), Decimal("1"), "within limits", Money(Decimal("5000"), Currency.GBX)
+            ),
+        ],
+    )
+    filled = ledger.record_intent(rid, Order(A, Side.BUY, Decimal("2")), at(DAY1))
+    ledger.settle(
+        filled, IntentState.FILLED, "o-1", Decimal("2"), average_price=gbp("100.5"), fees=gbp("0.10")
+    )
+    waiting = ledger.record_intent(rid, Order(B, Side.BUY, Decimal("1")), at(DAY1))
+    ledger.mark_sent(waiting, "o-2")
+    w = facts(ledger)
+    assert w is not None
+    a, b = w.decisions
+    assert (a.why, a.order, a.intended, a.filled_at, a.fees, a.traded, a.pence) == (
+        "in trend, target 25%",
+        "filled",
+        Decimal("100"),
+        Decimal("100.5"),
+        Decimal("0.10"),
+        Decimal("201.0"),
+        False,
+    )
+    assert (b.why, b.order, b.intended, b.filled_at, b.pence) == (
+        "out of trend, target 0%",
+        "awaiting fill",
+        Decimal("5000"),
+        None,
+        True,
+    )
+
+
+def test_a_decision_without_an_order_has_no_order_state(ledger: Ledger) -> None:
+    rid = run(ledger, DAY1, "1000", None)
+    ledger.record_decisions(
+        rid, [DecisionRecord(A, Side.BUY, Decimal("2"), None, "drawdown stop", gbp("100"))]
+    )
+    w = facts(ledger)
+    assert w is not None
+    assert (w.decisions[0].order, w.decisions[0].why) == (None, None)
