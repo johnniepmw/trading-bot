@@ -1,4 +1,4 @@
-"""Offline tests for scripts/export_history.py: fake Yahoo and Stooq responses, no network."""
+"""Offline tests for scripts/export_history.py: fake Yahoo and EODHD responses, no network."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import importlib.util
 import json
 import math
 import sys
+import urllib.error
+import urllib.parse
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import ModuleType
@@ -60,22 +62,37 @@ def yahoo(  # noqa: PLR0913 - a test builder with defaults
     ).encode()
 
 
-def stooq(days: list[date], closes: list[float]) -> bytes:
-    rows = "".join(f"{d},{c},{c},{c},{c},0\n" for d, c in zip(days, closes, strict=True))
-    return ("Date,Open,High,Low,Close,Volume\n" + rows).encode()
+def eodhd(days: list[date], adjusted: list[float]) -> bytes:
+    rows = [
+        {"date": d.isoformat(), "close": a * 2, "adjusted_close": a}  # only the adjusted close counts
+        for d, a in zip(days, adjusted, strict=True)
+    ]
+    return json.dumps(rows).encode()
 
 
-def opener(pages: dict[str, bytes]):  # type: ignore[no-untyped-def]
+KEY = "test-key-123"
+
+
+def opener(pages: dict[str, bytes], fetched: list[str] | None = None):  # type: ignore[no-untyped-def]
+    """Serves pages by the URL's last path part: Yahoo's AAA.L, EODHD's AAA.LSE."""
+
     def fetch(url: str) -> bytes:
-        for key, body in pages.items():
-            if key in url:
-                return body
-        raise ex.ExportError(f"unexpected URL {url}")
+        if fetched is not None:
+            fetched.append(url)
+        symbol = urllib.parse.unquote(urllib.parse.urlparse(url).path.rsplit("/", 1)[-1])
+        if symbol in pages:
+            return pages[symbol]
+        raise ex.ExportError(f"unexpected symbol {symbol}")
 
     return fetch
 
 
-SRC = ex.Source("AAA.L", "aaa.uk", distributing=False)
+@pytest.fixture(autouse=True)
+def few_days_suffice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ex, "MIN_CHECKED_DAYS", 1)  # the fakes are a few days long; one test sets it back
+
+
+SRC = ex.Source("AAA.L", "AAA.LSE", distributing=False)
 FUND = ex.Fund("AAA", "trade", SRC, [])
 CLOSES = [100.0, 101.0, 102.0, 103.0, 104.0]
 
@@ -101,12 +118,17 @@ def test_the_repo_universe_has_seven_trading_funds_and_ssac_as_benchmark_only() 
 
 
 @pytest.mark.parametrize(
-    ("field", "value"), [("ticker", "../../x"), ("ticker", "/home/u/x"), ("yahoo", "A.L/../..")]
+    ("field", "value"),
+    [("ticker", "../../x"), ("ticker", "/home/u/x"), ("yahoo", "A.L/../.."), ("eodhd", "A.LSE?x=1")],
 )
 def test_unsafe_tickers_or_symbols_are_refused(tmp_path: Path, field: str, value: str) -> None:
-    entry = {"ticker": "AAA", "role": "trade", "yahoo": "AAA.L", "stooq": "aaa.uk", "distributing": False} | {
-        field: value
-    }
+    entry = {
+        "ticker": "AAA",
+        "role": "trade",
+        "yahoo": "AAA.L",
+        "eodhd": "AAA.LSE",
+        "distributing": False,
+    } | {field: value}
     body = (
         'hold_out_start = "2023-01-01"\n[[fund]]\n'
         + "".join(f"{k} = {json.dumps(v)}\n" for k, v in entry.items())
@@ -246,19 +268,65 @@ def test_one_large_disagreement_in_a_long_history_is_a_problem() -> None:
     assert any("single day" in p for p in problems)
 
 
-def test_a_second_source_covering_too_little_is_a_problem() -> None:
-    problems = ex.check_problems("AAA.L", ex.compare(BARS, {b.day: b.close for b in BARS[-2:]}))
+def test_a_second_source_covering_too_little_of_its_window_is_a_problem() -> None:
+    problems = ex.check_problems("AAA.L", ex.compare(BARS, {b.day: b.close for b in [BARS[0], BARS[-1]]}))
     assert any("covers" in p for p in problems)
 
 
+def test_only_the_second_sources_window_is_compared() -> None:
+    check = ex.compare(BARS, {b.day: b.close for b in BARS[-3:]})  # the free plan's last year, say
+    assert (check["common_days"], check["coverage"]) == (2, 1.0)
+
+
+def test_too_few_compared_days_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ex, "MIN_CHECKED_DAYS", 200)
+    problems = ex.check_problems("AAA.L", ex.compare(BARS, {b.day: b.close for b in BARS}))
+    assert any("only 4 days compared" in p for p in problems)
+
+
+def test_eodhds_adjusted_close_is_read_and_todays_bar_dropped() -> None:
+    body = eodhd([DAYS[0], DAYS[1], TODAY], [10.0, 11.0, 12.0])
+    assert ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY) == {DAYS[0]: 10.0, DAYS[1]: 11.0}
+
+
+def test_eodhd_is_asked_for_400_days_up_to_yesterday() -> None:
+    fetched: list[str] = []
+    ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": eodhd(DAYS, CLOSES)}, fetched), TODAY)
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(fetched[0]).query)
+    assert (query["from"], query["to"], query["api_token"]) == (["2023-04-28"], ["2024-05-31"], [KEY])
+
+
+@pytest.mark.parametrize("body", [b"<html>", b'{"error": "x"}', b'[{"date": "2024-01-02"}]', b"[]"])
+def test_an_unexpected_eodhd_response_is_an_export_error_without_the_body(body: bytes) -> None:
+    with pytest.raises(ex.ExportError, match="EODHD") as raised:
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY)
+    assert "html" not in str(raised.value) and "error" not in str(raised.value)
+
+
+def test_a_failed_fetch_never_shows_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*_: object, **__: object) -> bytes:
+        raise urllib.error.URLError("HTTP 401")
+
+    monkeypatch.setattr(ex._URLOPENER, "open", refuse)
+    with pytest.raises(ex.ExportError, match=r"eodhd\.com/api/eod/AAA\.LSE") as raised:
+        ex.default_opener(f"https://eodhd.com/api/eod/AAA.LSE?api_token={KEY}")
+    assert KEY not in str(raised.value) and raised.value.__cause__ is None
+
+
+def test_a_refused_redirect_never_shows_the_key() -> None:
+    with pytest.raises(ex.ExportError, match="refusing") as raised:
+        ex.check_url(f"https://evil.example/x?api_token={KEY}")
+    assert KEY not in str(raised.value)
+
+
 # --- export --------------------------------------------------------------------------------
-def pages(stooq_closes: list[float] | None = None) -> dict[str, bytes]:
-    return {"AAA.L": yahoo(DAYS, CLOSES), "aaa.uk": stooq(DAYS, stooq_closes or CLOSES)}
+def pages(eodhd_closes: list[float] | None = None) -> dict[str, bytes]:
+    return {"AAA.L": yahoo(DAYS, CLOSES), "AAA.LSE": eodhd(DAYS, eodhd_closes or CLOSES)}
 
 
 def test_export_splits_dev_and_hold_out_at_the_boundary_with_a_manifest(tmp_path: Path) -> None:
     out = tmp_path / "export"
-    manifest = ex.export([FUND], date(2023, 1, 1), out, opener(pages()), TODAY)
+    manifest = ex.export([FUND], date(2023, 1, 1), out, opener(pages()), TODAY, eodhd_key=KEY)
     dev = (out / "dev" / "AAA.csv").read_text().splitlines()
     held = (out / "holdout" / "AAA.csv").read_text().splitlines()
     assert dev[0] == "date,open,close,currency"
@@ -277,7 +345,7 @@ def test_export_splits_dev_and_hold_out_at_the_boundary_with_a_manifest(tmp_path
 def test_export_refuses_a_folder_that_already_has_files(tmp_path: Path) -> None:
     (tmp_path / "keep.csv").write_text("mine")
     with pytest.raises(ex.ExportError, match="not empty"):
-        ex.export([FUND], date(2023, 1, 1), tmp_path, opener(pages()), TODAY)
+        ex.export([FUND], date(2023, 1, 1), tmp_path, opener(pages()), TODAY, eodhd_key=KEY)
     assert (tmp_path / "keep.csv").read_text() == "mine"
 
 
@@ -285,16 +353,25 @@ def test_a_disagreement_writes_nothing_and_touches_nothing_else(tmp_path: Path) 
     (tmp_path / "other.csv").write_text("someone else's")
     out = tmp_path / "export"
     with pytest.raises(ex.ExportError, match="disagree"):
-        ex.export([FUND], date(2023, 1, 1), out, opener(pages([100.0, 120.0, 90.0, 103.0, 104.0])), TODAY)
+        ex.export(
+            [FUND],
+            date(2023, 1, 1),
+            out,
+            opener(pages([100.0, 120.0, 90.0, 103.0, 104.0])),
+            TODAY,
+            eodhd_key=KEY,
+        )
     assert not out.exists()
     assert sorted(p.name for p in tmp_path.iterdir()) == ["other.csv"]  # no temp folder left either
 
 
 def test_a_failure_part_way_leaves_no_partial_export(tmp_path: Path) -> None:
-    second = ex.Fund("BBB", "trade", ex.Source("BBB.L", "bbb.uk", distributing=False), [])
+    second = ex.Fund("BBB", "trade", ex.Source("BBB.L", "BBB.LSE", distributing=False), [])
     out = tmp_path / "export"
     with pytest.raises(ex.ExportError):
-        ex.export([FUND, second], date(2023, 1, 1), out, opener(pages()), TODAY)  # BBB has no pages
+        ex.export(
+            [FUND, second], date(2023, 1, 1), out, opener(pages()), TODAY, eodhd_key=KEY
+        )  # BBB has no pages
     assert not out.exists() and list(tmp_path.iterdir()) == []
 
 
@@ -306,18 +383,39 @@ def test_an_override_writes_and_records_the_problems(tmp_path: Path) -> None:
         out,
         opener(pages([100.0, 120.0, 90.0, 103.0, 104.0])),
         TODAY,
+        eodhd_key=KEY,
         accept_problems=True,
     )
     assert manifest["accept_problems"] is True and manifest["problems"]
 
 
-def test_proxies_are_cross_checked_too(tmp_path: Path) -> None:
-    proxy = ex.Source("OLD.L", "old.uk", distributing=False)
-    fund = ex.Fund("AAA", "trade", ex.Source("AAA.L", "aaa.uk", distributing=False), [proxy])
-    old_days, old = DAYS[:3], [50.0, 51.0, 51.5]
-    p = pages() | {"OLD.L": yahoo(old_days, old), "old.uk": stooq(old_days, [50.0, 70.0, 51.5])}
-    with pytest.raises(ex.ExportError, match=r"OLD\.L"):
-        ex.export([fund], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY)
+def test_proxies_are_not_sent_to_eodhd_and_the_manifest_says_what_was_checked(tmp_path: Path) -> None:
+    fund = ex.Fund("AAA", "trade", SRC, [ex.Source("OLD.L", None, distributing=False)])
+    fetched: list[str] = []
+    p = pages() | {"OLD.L": yahoo(DAYS[:3], [50.0, 51.0, 51.5])}
+    manifest = ex.export(
+        [fund], date(2023, 1, 1), tmp_path / "export", opener(p, fetched), TODAY, eodhd_key=KEY
+    )
+    sources = manifest["funds"]["AAA"]["sources"]
+    assert sources["OLD.L"]["cross_check"] == "none (Yahoo alone)"
+    assert (sources["AAA.L"]["checked_from"], sources["AAA.L"]["checked_to"]) == ("2022-12-29", "2023-01-04")
+    assert "Yahoo alone" in manifest["cross_check"]
+    assert [u for u in fetched if "eodhd.com" in u and "OLD" in u] == []
+
+
+def test_the_key_is_never_written(tmp_path: Path) -> None:
+    out = tmp_path / "export"
+    ex.export([FUND], date(2023, 1, 1), out, opener(pages()), TODAY, eodhd_key=KEY)
+    assert [f for f in out.rglob("*") if f.is_file() and KEY in f.read_text()] == []
+
+
+def test_the_export_needs_an_eodhd_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("EODHD_API_KEY", raising=False)
+    monkeypatch.setattr(ex.getpass, "getpass", lambda _prompt: "  ")
+    assert ex.main(["--out", str(tmp_path / "export")], opener=opener({})) == 1
+    assert "EODHD key missing" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("inside", ["history", "research/data"])
@@ -328,17 +426,22 @@ def test_the_export_refuses_any_folder_inside_the_repo(
     assert "inside the repository" in capsys.readouterr().err
 
 
-def test_list_mode_reports_both_sources_and_failures() -> None:
-    funds = [ex.Fund("AAA", "trade", SRC, [ex.Source("OLD.L", "old.uk", distributing=True)])]
-    lines = ex.list_symbols(
-        funds, opener({"AAA.L": yahoo(DAYS[:2], [1.0, 2.0]), "aaa.uk": stooq(DAYS[:2], [1.0, 2.0])}), TODAY
-    )
+def test_list_mode_reports_yahoo_ranges_and_failures() -> None:
+    funds = [ex.Fund("AAA", "trade", SRC, [ex.Source("OLD.L", None, distributing=True)])]
+    lines = ex.list_symbols(funds, opener({"AAA.L": yahoo(DAYS[:2], [1.0, 2.0])}), TODAY)
     assert any("OLD.L" in line and "FAILED" in line for line in lines)
     assert any("AAA.L" in line and "2022-12-29 .. 2022-12-30" in line for line in lines)
-    assert any("aaa.uk" in line and "2022-12-29 .. 2022-12-30" in line for line in lines)
 
 
-@pytest.mark.parametrize("url", ["http://stooq.com/x", "https://evil.example/x", "file:///etc/passwd"])
+def test_list_mode_spends_no_eodhd_calls() -> None:
+    fetched: list[str] = []
+    ex.list_symbols([FUND], opener({"AAA.L": yahoo(DAYS[:2], [1.0, 2.0])}, fetched), TODAY)
+    assert [u for u in fetched if "eodhd.com" in u] == []
+
+
+@pytest.mark.parametrize(
+    "url", ["http://eodhd.com/x", "https://stooq.com/x", "https://evil.example/x", "file:///etc/passwd"]
+)
 def test_only_https_on_the_two_data_hosts_is_fetched_including_redirects(url: str) -> None:
     with pytest.raises(ex.ExportError, match="refusing"):
         ex.check_url(url)
@@ -349,16 +452,16 @@ def test_a_dividend_adjustment_on_a_fund_marked_accumulating_refuses_the_export(
     days = [date(2021, 1, 4), date(2022, 1, 4), date(2023, 1, 4)]
     p = {
         "AAA.L": yahoo(days, [100.0, 100.0, 100.0], adj=[90.0, 95.0, 100.0]),
-        "aaa.uk": stooq(days, [100.0, 100.0, 100.0]),
+        "AAA.LSE": eodhd(days, [100.0, 100.0, 100.0]),
     }
     with pytest.raises(ex.ExportError, match="accumulating"):
-        ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY)
+        ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY, eodhd_key=KEY)
 
 
 def test_a_distributing_series_with_a_year_of_no_dividends_is_a_problem() -> None:
     # the average looks plausible, but 2022's dividends are missing (e.g. recorded in the wrong unit)
     s = ex.Series("A.L", "GBP", [ex.Bar(DAYS[0], 1.0, 1.0)], yield_=0.02, yearly={2021: 0.04, 2022: 0.0})
-    problem = ex.yield_problem(ex.Source("A.L", "a.uk", distributing=True), s)
+    problem = ex.yield_problem(ex.Source("A.L", "A.LSE", distributing=True), s)
     assert problem is not None and "2022" in problem
 
 
@@ -372,9 +475,9 @@ def test_yearly_yields_are_measured_from_year_end_to_year_end() -> None:
 def test_too_many_skipped_rows_refuse_the_export(tmp_path: Path) -> None:
     body = json.loads(yahoo(DAYS, CLOSES))
     body["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"][1] = None  # 1 of 5 rows: 20%
-    p = {"AAA.L": json.dumps(body).encode(), "aaa.uk": stooq(DAYS, CLOSES)}
+    p = {"AAA.L": json.dumps(body).encode(), "AAA.LSE": eodhd(DAYS, CLOSES)}
     with pytest.raises(ex.ExportError, match="skipped"):
-        ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY)
+        ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY, eodhd_key=KEY)
 
 
 def test_the_redirect_guard_is_wired_into_the_opener() -> None:
@@ -384,7 +487,7 @@ def test_the_redirect_guard_is_wired_into_the_opener() -> None:
 def test_a_symbol_with_a_trailing_newline_is_refused(tmp_path: Path) -> None:
     body = (
         'hold_out_start = "2023-01-01"\n[[fund]]\nticker = "AAA\\n"\nrole = "trade"\n'
-        'yahoo = "AAA.L"\nstooq = "aaa.uk"\ndistributing = false\nproxies = []\n'
+        'yahoo = "AAA.L"\neodhd = "AAA.LSE"\ndistributing = false\nproxies = []\n'
     )
     path = tmp_path / "u.toml"
     path.write_text(body)

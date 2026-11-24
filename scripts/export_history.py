@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Export adjusted daily price history for the strategy's backtest (Phase 1, step 8).
 
-Owner-run, in Google Cloud Shell. Public market data only: no keys, no account data.
+Owner-run, in Google Cloud Shell. Public market data only: no account data. The EODHD key is
+asked for hidden (or read from EODHD_API_KEY) and never printed or written.
 Standard library only (Python 3.11+).
 
-    python3 scripts/export_history.py --list      # each symbol's date range, both sources; writes nothing
+    python3 scripts/export_history.py --list      # each Yahoo symbol's date range; writes nothing
     python3 scripts/export_history.py             # export to ~/history-export (must be new or empty)
     gcloud storage cp -r ~/history-export gs://<your-private-bucket>/history-<date>   # never the repo
 
@@ -17,9 +18,12 @@ The export:
   (Yahoo's London dividends are sometimes recorded in the wrong unit);
 - splices proxies (older funds on the same index) under a fund's history, scaled by the
   price ratio on their first common day;
-- cross-checks every series, proxies included, against Stooq on daily returns: too many
-  disagreeing days, any single day more than 10% apart, or too little coverage refuses the
-  export (--accept-problems overrides; the manifest records it);
+- cross-checks each fund's own series against EODHD's adjusted close on daily returns, over
+  the dates EODHD returns (about the last year on the free plan; earlier years and proxies
+  rely on Yahoo alone, and the manifest says so): too many disagreeing days, any single day
+  more than 10% apart, too little coverage or too few days refuses the export
+  (--accept-problems overrides; the manifest records it). It uses one EODHD call per fund
+  (8), from the same 20 a day as prod's runs: don't run it on a month-end order day;
 - writes the development and hold-out periods to separate folders with a manifest (sources,
   splices, checks, SHA-256 hashes), building it in a temporary folder that only becomes the
   output folder when everything succeeded. Nothing outside it is touched. (If the process
@@ -32,11 +36,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import getpass
 import hashlib
-import io
 import itertools
 import json
 import math
+import os
 import re
 import shutil
 import sys
@@ -47,7 +52,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -55,8 +60,9 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 UNIVERSE = ROOT / "research" / "universe.toml"
 YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1=0&period2={end}&interval=1d&events=div%2Csplit"
-STOOQ = "https://stooq.com/q/d/l/?s={symbol}&i=d"
-ALLOWED_HOSTS = frozenset({"query1.finance.yahoo.com", "stooq.com"})
+EODHD = "https://eodhd.com/api/eod/{symbol}?{query}"
+EODHD_LOOKBACK_DAYS = 400  # the free plan returns about the last year of this (scripts/eodhd_check.py)
+ALLOWED_HOSTS = frozenset({"query1.finance.yahoo.com", "eodhd.com"})
 LONDON = ZoneInfo("Europe/London")
 CURRENCIES = {"GBp": "GBX", "GBX": "GBX", "GBP": "GBP"}
 TICKER = re.compile(r"^[A-Z0-9]{1,6}$")
@@ -65,7 +71,8 @@ SYMBOL = re.compile(r"^[A-Za-z0-9^=-]{1,12}(\.[A-Za-z]{1,3})?$")
 RETURN_TOLERANCE = 0.02  # a day's return may differ by this much between sources
 MAX_DISAGREEING_SHARE = 0.01  # more disagreeing days than this is a problem
 HARD_DAY_LIMIT = 0.10  # any single day further apart than this is a problem (a missed split, a bad print)
-MIN_COVERAGE = 0.90  # the second source must cover this share of the series' days
+MIN_COVERAGE = 0.90  # the second source must cover this share of the series' days in its window
+MIN_CHECKED_DAYS = 200  # fewer compared days means the second source's window shrank
 MAX_DAILY_RATIO = 10.0  # a 10x close-to-close move is a data error (pounds read as pence)
 MAX_OPEN_CLOSE_GAP = 0.20  # opens and closes must be adjusted alike
 MAX_SKIPPED_SHARE = 0.01  # more unusable rows than this is a problem
@@ -82,7 +89,7 @@ class ExportError(Exception):
 @dataclass(frozen=True)
 class Source:
     yahoo: str
-    stooq: str
+    eodhd: str | None  # funds' own series only: proxies' spliced years are outside EODHD's free year
     distributing: bool
 
 
@@ -111,10 +118,16 @@ class Series:
     yearly: dict[int, float] = field(default_factory=dict)  # the same, year end to year end
 
 
+def without_query(url: str) -> str:
+    """The URL without its query string, which carries EODHD's key: the only form ever shown."""
+    parsed = urllib.parse.urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
 def check_url(url: str) -> None:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
-        raise ExportError(f"refusing to fetch {url}")
+        raise ExportError(f"refusing to fetch {without_query(url)}")
 
 
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
@@ -133,12 +146,15 @@ def default_opener(url: str) -> bytes:
         with _URLOPENER.open(request, timeout=30) as response:
             return bytes(response.read())
     except (urllib.error.URLError, TimeoutError, OSError) as error:
-        raise ExportError(f"fetching {url} failed: {error}") from error
+        # urllib's error text never holds the URL; the query (the key) is never shown
+        raise ExportError(f"fetching {without_query(url)} failed: {error}") from None
 
 
-def _source(raw: dict[str, Any]) -> Source:
-    source = Source(str(raw["yahoo"]), str(raw["stooq"]), bool(raw["distributing"]))
-    if not SYMBOL.fullmatch(source.yahoo) or not SYMBOL.fullmatch(source.stooq):
+def _source(raw: dict[str, Any], *, primary: bool) -> Source:
+    source = Source(str(raw["yahoo"]), str(raw["eodhd"]) if primary else None, bool(raw["distributing"]))
+    if not SYMBOL.fullmatch(source.yahoo) or (
+        source.eodhd is not None and not SYMBOL.fullmatch(source.eodhd)
+    ):
         raise ExportError(f"invalid symbol in universe: {source}")
     return source
 
@@ -147,7 +163,12 @@ def load_universe(path: Path = UNIVERSE) -> tuple[list[Fund], date]:
     try:
         raw = tomllib.loads(path.read_text())
         funds = [
-            Fund(str(f["ticker"]), str(f["role"]), _source(f), [_source(p) for p in f["proxies"]])
+            Fund(
+                str(f["ticker"]),
+                str(f["role"]),
+                _source(f, primary=True),
+                [_source(p, primary=False) for p in f["proxies"]],
+            )
             for f in raw["fund"]
         ]
         hold_out = date.fromisoformat(raw["hold_out_start"])
@@ -226,16 +247,30 @@ def yield_problem(source: Source, series: Series) -> str | None:
     return None
 
 
-def fetch_stooq(symbol: str, opener: Opener) -> dict[date, float]:
-    text = opener(STOOQ.format(symbol=urllib.parse.quote(symbol))).decode(errors="replace")
+def fetch_eodhd(symbol: str, key: str, opener: Opener, today: date) -> dict[date, float]:
+    """EODHD's adjusted closes before today, over the window it returns for a 400-day request."""
+    query = urllib.parse.urlencode(
+        {
+            "from": (today - timedelta(days=EODHD_LOOKBACK_DAYS)).isoformat(),
+            "to": (today - timedelta(days=1)).isoformat(),
+            "period": "d",
+            "fmt": "json",
+            "api_token": key,
+        }
+    )
+    body = opener(EODHD.format(symbol=urllib.parse.quote(symbol, safe=""), query=query))
     try:
-        rows = list(csv.DictReader(io.StringIO(text)))
-        closes = {date.fromisoformat(r["Date"]): float(r["Close"]) for r in rows if r.get("Close")}
-    except (KeyError, ValueError) as error:
-        raise ExportError(f"{symbol}: unexpected Stooq response ({error!r})") from error
-    closes = {d: c for d, c in closes.items() if _finite_positive(c)}
+        rows = json.loads(body)
+        closes = {date.fromisoformat(r["date"]): r["adjusted_close"] for r in rows}
+    except (KeyError, TypeError, ValueError) as error:  # names the field, never the body or the key
+        raise ExportError(f"{symbol}: unexpected EODHD response ({type(error).__name__})") from None
+    closes = {
+        d: float(c)
+        for d, c in closes.items()
+        if not isinstance(c, bool) and _finite_positive(c) and d < today
+    }
     if not closes:
-        raise ExportError(f"{symbol}: no Stooq data ({text[:60]!r})")
+        raise ExportError(f"{symbol}: no EODHD data")
     return closes
 
 
@@ -264,7 +299,9 @@ def splice(primary: Series, proxies: list[Series]) -> tuple[list[Bar], list[dict
 
 
 def compare(bars: list[Bar], second: dict[date, float]) -> dict[str, float]:
-    """Daily returns on common days: coverage, disagreeing days and the worst gap."""
+    """Daily returns on common days, within the second source's window: coverage, disagreeing days, worst gap."""
+    first, last = min(second), max(second)
+    bars = [b for b in bars if first <= b.day <= last]
     common = [b for b in bars if b.day in second]
     disagree = total = 0
     worst = 0.0
@@ -287,12 +324,14 @@ def check_problems(symbol: str, check: dict[str, float]) -> list[str]:
     problems = []
     if check["share"] > MAX_DISAGREEING_SHARE:
         problems.append(
-            f"{symbol}: {check['disagreeing_days']:.0f} of {check['common_days']:.0f} days disagree with Stooq"
+            f"{symbol}: {check['disagreeing_days']:.0f} of {check['common_days']:.0f} days disagree with EODHD"
         )
     if check["worst"] > HARD_DAY_LIMIT:
-        problems.append(f"{symbol}: a single day differs from Stooq by {check['worst']:.1%}")
+        problems.append(f"{symbol}: a single day differs from EODHD by {check['worst']:.1%}")
     if check["coverage"] < MIN_COVERAGE:
-        problems.append(f"{symbol}: Stooq covers only {check['coverage']:.0%} of its days")
+        problems.append(f"{symbol}: EODHD covers only {check['coverage']:.0%} of its days in its window")
+    if check["common_days"] < MIN_CHECKED_DAYS:
+        problems.append(f"{symbol}: only {check['common_days']:.0f} days compared with EODHD")
     return problems
 
 
@@ -307,6 +346,7 @@ def _write(path: Path, bars: list[Bar], currency: str) -> str:
 
 
 def list_symbols(funds: list[Fund], opener: Opener, today: date) -> list[str]:
+    """Yahoo only: it is for choosing proxies, and EODHD's daily calls are shared with prod."""
     lines = []
     for fund in funds:
         for source in [*fund.proxies, fund.primary]:
@@ -318,26 +358,26 @@ def list_symbols(funds: list[Fund], opener: Opener, today: date) -> list[str]:
                 )
             except ExportError as error:
                 lines.append(f"{fund.ticker:5} {source.yahoo:10} FAILED: {error}")
-            try:
-                closes = fetch_stooq(source.stooq, opener)
-                lines.append(
-                    f"{fund.ticker:5} {source.stooq:10} stooq {min(closes)} .. {max(closes)} ({len(closes)} days)"
-                )
-            except ExportError as error:
-                lines.append(f"{fund.ticker:5} {source.stooq:10} FAILED: {error}")
     return lines
 
 
-def _export_fund(
-    fund: Fund, hold_out: date, folder: Path, opener: Opener, today: date
+def _export_fund(  # noqa: PLR0913, PLR0917 - the export's inputs
+    fund: Fund, hold_out: date, folder: Path, opener: Opener, today: date, eodhd_key: str
 ) -> tuple[dict[str, Any], list[str]]:
     problems: list[str] = []
     checks = {}
     series = []
     for source in [*fund.proxies, fund.primary]:
         s = fetch_yahoo(source.yahoo, opener, today)
-        check = compare(s.bars, fetch_stooq(source.stooq, opener))
-        problems += check_problems(source.yahoo, check)
+        check: dict[str, Any] = {"cross_check": "none (Yahoo alone)"}
+        if source.eodhd is not None:
+            second = fetch_eodhd(source.eodhd, eodhd_key, opener, today)
+            check = compare(s.bars, second) | {
+                "cross_check": f"EODHD {source.eodhd}",
+                "checked_from": min(second).isoformat(),
+                "checked_to": max(second).isoformat(),
+            }
+            problems += check_problems(source.yahoo, check)
         if (problem := yield_problem(source, s)) is not None:
             problems.append(problem)
         if s.skipped > MAX_SKIPPED_SHARE * (len(s.bars) + s.skipped):
@@ -376,6 +416,7 @@ def export(  # noqa: PLR0913 - the export's inputs
     opener: Opener,
     today: date,
     *,
+    eodhd_key: str,
     accept_problems: bool = False,
 ) -> dict[str, Any]:
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
@@ -387,11 +428,17 @@ def export(  # noqa: PLR0913 - the export's inputs
             "created": datetime.now(UTC).isoformat(),
             "hold_out_start": hold_out.isoformat(),
             "accept_problems": accept_problems,
+            "cross_check": (
+                "each fund's own series against EODHD's adjusted close, over the dates EODHD returned"
+                " (see checked_from per source); earlier years and proxies rely on Yahoo alone"
+            ),
             "funds": {},
             "problems": [],
         }
         for fund in funds:
-            manifest["funds"][fund.ticker], problems = _export_fund(fund, hold_out, building, opener, today)
+            manifest["funds"][fund.ticker], problems = _export_fund(
+                fund, hold_out, building, opener, today, eodhd_key
+            )
             manifest["problems"] += problems
         if manifest["problems"] and not accept_problems:
             raise ExportError("data problems; nothing written:\n  " + "\n  ".join(manifest["problems"]))
@@ -426,7 +473,13 @@ def main(argv: list[str] | None = None, opener: Opener = default_opener) -> int:
             return 0
         if args.out.resolve().is_relative_to(ROOT):
             raise ExportError(f"--out {args.out} is inside the repository: use a folder outside it")
-        manifest = export(funds, hold_out, args.out, opener, today, accept_problems=args.accept_problems)
+        key = os.environ.get("EODHD_API_KEY") or getpass.getpass("EODHD API key (hidden): ")
+        key = key.strip()
+        if not key or not key.isprintable() or " " in key:
+            raise ExportError("EODHD key missing: set EODHD_API_KEY or type it when asked")
+        manifest = export(
+            funds, hold_out, args.out, opener, today, eodhd_key=key, accept_problems=args.accept_problems
+        )
     except (ExportError, OSError) as error:
         print(f"export failed: {error}", file=sys.stderr)
         return 1

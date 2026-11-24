@@ -3,7 +3,8 @@
 # it defines what can be traded and where the hold-out starts.
 #
 # Symbols are UNVERIFIED until the owner's `--list` run and Phase 0 API check: Yahoo uses
-# ".L" for the London Stock Exchange, Stooq ".uk". `distributing` says whether the series
+# ".L" for the London Stock Exchange, EODHD ".LSE" (funds' own series only: it is the
+# cross-check over its free year, and proxies' spliced years are older than that). `distributing` says whether the series
 # pays dividends out (its adjusted close then rises faster than its close); it is checked
 # against the data. `proxies` are older funds on the same index, spliced under the fund's own
 # history (oldest first), chosen from `--list` output before any price data is examined.
@@ -14,15 +15,15 @@ hold_out_start = "2023-01-01"
 ticker = "VWRP"   # global equity, FTSE All-World
 role = "trade"
 yahoo = "VWRP.L"
-stooq = "vwrp.uk"
+eodhd = "VWRP.LSE"
 distributing = false
-proxies = [{ yahoo = "VWRL.L", stooq = "vwrl.uk", distributing = true }]   # same index, since 2012
+proxies = [{ yahoo = "VWRL.L", distributing = true }]   # same index, since 2012
 
 [[fund]]
 ticker = "VUKE"   # UK equity, FTSE 100
 role = "trade"
 yahoo = "VUKE.L"
-stooq = "vuke.uk"
+eodhd = "VUKE.LSE"
 distributing = true
 proxies = []
 
@@ -30,7 +31,7 @@ proxies = []
 ticker = "EMIM"   # emerging markets, MSCI EM IMI
 role = "trade"
 yahoo = "EMIM.L"
-stooq = "emim.uk"
+eodhd = "EMIM.LSE"
 distributing = false
 proxies = []
 
@@ -38,7 +39,7 @@ proxies = []
 ticker = "IGLT"   # UK gilts
 role = "trade"
 yahoo = "IGLT.L"
-stooq = "iglt.uk"
+eodhd = "IGLT.LSE"
 distributing = true
 proxies = []
 
@@ -46,7 +47,7 @@ proxies = []
 ticker = "VAGP"   # global aggregate bonds, GBP hedged (2017): a proxy is to be chosen from `--list`
 role = "trade"
 yahoo = "VAGP.L"
-stooq = "vagp.uk"
+eodhd = "VAGP.LSE"
 distributing = false
 proxies = []
 
@@ -54,7 +55,7 @@ proxies = []
 ticker = "INXG"   # UK index-linked gilts
 role = "trade"
 yahoo = "INXG.L"
-stooq = "inxg.uk"
+eodhd = "INXG.LSE"
 distributing = true
 proxies = []
 
@@ -62,7 +63,7 @@ proxies = []
 ticker = "SGLN"   # physical gold
 role = "trade"
 yahoo = "SGLN.L"
-stooq = "sgln.uk"
+eodhd = "SGLN.LSE"
 distributing = false
 proxies = []
 
@@ -70,6 +71,6 @@ proxies = []
 ticker = "SSAC"   # MSCI ACWI: the owner's benchmark, never traded (monitoring spec)
 role = "benchmark"
 yahoo = "SSAC.L"
-stooq = "ssac.uk"
+eodhd = "SSAC.LSE"
 distributing = false
 proxies = []
