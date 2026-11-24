@@ -41,7 +41,7 @@ from tradingbot.config.types import BotConfig
 from tradingbot.ledger.store import Ledger
 from tradingbot.report.glance import glance
 from tradingbot.report.page import RunRow, confirm_page, error_page, glance_page, paused_page
-from tradingbot.report.weekly import WeeklyInput, weekly_html
+from tradingbot.report.weekly import weekly_html
 from tradingbot.risk.limits import Limits
 
 log = logging.getLogger(__name__)
@@ -121,21 +121,23 @@ class Dashboard:
             environment=self.environment,
             runs=rows,
             paused=self._paused(),
-            weekly=weekly_html(weekly) if weekly else None,
+            weekly=weekly,
         )
         return Response(HTTPStatus.OK, page)
 
-    def _weekly(self, ledger: Ledger, calendar: TradingCalendar, limits: Limits) -> WeeklyInput | None:
-        """The weekly view's figures; if they can't be built, the page keeps the glance."""
+    def _weekly(self, ledger: Ledger, calendar: TradingCalendar, limits: Limits) -> tuple[str, str] | None:
+        """The weekly view's HTML; if it can't be built or drawn, the page keeps the glance and
+        the pause button."""
         today = self.clock().date()
         try:
-            return weekly_input(
+            figures = weekly_input(
                 ledger,
                 today=today,
                 universe=self.config.universe,
                 limits=limits,
                 next_month_end=calendar.next_month_end(today),
             )
+            return weekly_html(figures) if figures else None
         except Exception:
             log.exception("dashboard: weekly view failed")
             return None

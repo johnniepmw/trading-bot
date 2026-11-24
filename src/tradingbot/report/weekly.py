@@ -167,7 +167,7 @@ def _ticks(lo: float, hi: float, count: int = 4) -> list[float]:
         if v >= lo - step * 0.001:
             out.append(v)
         v += step
-    return out
+    return out or [lo, hi]  # series within a pound of each other: label the ends
 
 
 def _x_positions(n: int, width: float = _W) -> list[float]:
@@ -216,9 +216,10 @@ def value_chart(w: WeeklyInput) -> str:
     def y(v: float) -> float:
         return _T + (hi - v) / (hi - lo) * (_H - _T - _B)
 
+    places = 0 if all(t == int(t) for t in ticks) else 2
     grid = "".join(
         f'<line class=grid x1="{_L}" x2="{_W - _R}" y1="{y(t):.1f}" y2="{y(t):.1f}"/>'
-        f'<text class=axis x="{_L - 6}" y="{y(t) + 4:.1f}" text-anchor=end>£{t:,.0f}</text>'
+        f'<text class=axis x="{_L - 6}" y="{y(t) + 4:.1f}" text-anchor=end>£{t:,.{places}f}</text>'
         for t in ticks
     )
     cash = (

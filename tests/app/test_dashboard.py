@@ -277,3 +277,16 @@ def test_a_failing_weekly_view_still_shows_the_glance(
     assert "<b>Run</b>: completed" in page.body
     assert "<h2>Funds</h2>" not in page.body
     assert "weekly view failed" in caplog.text
+
+
+def test_a_weekly_view_that_cant_be_drawn_still_shows_the_glance_and_pause(
+    ran: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def boom(*_: object, **__: object) -> None:
+        raise IndexError("drawing broke")
+
+    monkeypatch.setattr("tradingbot.app.dashboard.weekly_html", boom)
+    page = get(dashboard(ran))
+    assert page.status is HTTPStatus.OK
+    assert '<form method=post action="/pause/confirm">' in page.body
+    assert "weekly view failed" in caplog.text

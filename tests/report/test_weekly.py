@@ -187,3 +187,14 @@ def test_no_scripts_and_no_colour_in_text() -> None:
     h = html()
     assert "<script" not in h and "style=" not in h
     assert weekly.MINUS == "−"
+
+
+def test_series_within_a_pound_still_draw_with_pence_labels() -> None:
+    seed = Decimal("1000.37")
+    flat = [
+        DayValue(DAYS[0], seed, seed, seed),
+        DayValue(DAYS[1], Decimal("1000.41"), Decimal("1000.40"), Decimal("1000.39")),
+    ]
+    h = html(replace(W, values=flat, seed=seed))
+    assert 'class="line s-bot"' in h
+    assert re.search(r"text-anchor=end>£1,000\.[0-9]{2}</text>", h)

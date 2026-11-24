@@ -26,6 +26,10 @@ that covers LSE ETFs, adjusts for dividends, publishes the previous close before
 Option 1, behind the `PriceHistory` port, so a change of provider is one new adapter and
 one line in the job.
 - One request per fund per run (seven), and as many for a dry run: within 20 a day.
+  Amended 2026-11-24 (dashboard slice 2): each run also fetches SSAC's latest close for
+  the dashboard, the run's last call: 8 a quiet day, 15 on a month end's action day. A failed
+  month-end attempt retried the same day can pass 20 and skip that month; revisit the plan
+  if that ever happens.
 - Bars use `adjusted_close`, with the open scaled by the same factor, in the listing's
   units (pence for GBX funds).
 - The key is a file (`/secrets/eodhd-key/value`, prod only). It travels in the query
