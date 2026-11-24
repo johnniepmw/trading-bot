@@ -98,6 +98,7 @@ def run_cycle(  # noqa: PLR0913 - the composition root passes every dependency e
     end of every run, whatever happened."""
     recorded = False
     now: datetime | None = None
+    history = _OneFetchPerRun(history)
     try:
         now = clock()
         if now.tzinfo is UTC:  # a run with a wrong clock can't be recorded; _cycle stops it below
@@ -415,6 +416,24 @@ def _check_equity(
     )
     if computed <= 0 or abs(equity.amount / computed - 1) > EQUITY_TOLERANCE:
         raise CycleStopError(f"equity check failed: broker says {equity}, cash and holdings give {computed}")
+
+
+class _OneFetchPerRun:
+    """A run's price history that fetches each instrument once: a later request inside an
+    earlier fetch's dates is served from it. On a month-end action run the preview then
+    reuses the checked history's bars (8 EODHD calls instead of 15; ADR-0018's budget)."""
+
+    def __init__(self, history: PriceHistory) -> None:
+        self._history = history
+        self._fetched: dict[Instrument, tuple[date, date, Sequence[Bar]]] = {}
+
+    def daily_bars(self, instrument: Instrument, start: date, end: date) -> Sequence[Bar]:
+        earlier = self._fetched.get(instrument)
+        if earlier is not None and earlier[0] <= start and end <= earlier[1]:
+            return [b for b in earlier[2] if start <= b.day <= end]
+        bars = self._history.daily_bars(instrument, start, end)
+        self._fetched[instrument] = (start, end, bars)
+        return bars
 
 
 def _checked_history(

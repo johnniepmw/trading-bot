@@ -936,3 +936,32 @@ def test_a_stale_benchmark_is_left_out(
     cycle(broker, ledger, history=stale, config=WITH_BENCHMARK, signal_day=None)
     assert BENCHMARK not in {r.instrument for r in ledger.levels()["run-1"]}
     assert "benchmark close unavailable" in caplog.text
+
+
+# --- ADR-0018's call budget ---------------------------------------------------------------
+class CountingHistory(HistoryWithBenchmark):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def daily_bars(self, instrument: Instrument, start: date, end: date) -> Sequence[Bar]:
+        self.calls.append(instrument.ticker)
+        return super().daily_bars(instrument, start, end)
+
+
+def test_a_month_end_run_fetches_each_instrument_once(broker: FakeBroker, ledger: Ledger) -> None:
+    history = CountingHistory()
+    report = cycle(broker, ledger, history=history, config=WITH_BENCHMARK)
+    assert report.sent == 1
+    assert sorted(history.calls) == ["DOWN", "SSAC", "UP"]
+
+
+def test_the_preview_from_reused_bars_matches_a_fresh_fetch(broker: FakeBroker, tmp_path: Path) -> None:
+    month_end = Ledger.create(tmp_path / "a.sqlite")
+    month_end.seed_high_water_mark(gbp(1000), NOW - timedelta(days=1))
+    cycle(broker, month_end, history=FakeHistory())
+    quiet = Ledger.create(tmp_path / "b.sqlite")
+    quiet.seed_high_water_mark(gbp(1000), NOW - timedelta(days=1))
+    cycle(broker, quiet, history=FakeHistory(), signal_day=None)
+    assert month_end.preview("run-1") == quiet.preview("run-1")
+    assert month_end.levels() == quiet.levels()

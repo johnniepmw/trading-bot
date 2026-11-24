@@ -1,6 +1,6 @@
 # Dashboard: the glance and the pause button on the owner's phone (monitoring step 4)
 
-- **Status**: active (slice 1 shipped 2026-11-24; slice 2 in build; slice 3 to come)
+- **Status**: active (slices 1 and 2 shipped 2026-11-24; slice 3 to come)
 - **Branch / PR**: ccr-7fe1197d-l39xit / infra PR, then app PR, per slice
 - **Risk class**: high (infra, IAM, a new public endpoint behind IAP, and the pause control)
 - **Started**: 2026-11-23
@@ -105,6 +105,7 @@ incident views (the rest of AC8).
 5. Staging check on the owner's phone, then prod.
 
 ## Progress log
+- 2026-11-24 slice 2 shipped: #71 merged after the owner's approval; deploy green, both dashboards moved to the new image after `dashboard-check` (behind IAP, not public). The benchmark lines start from the first run that stores closes (25 Nov)
 - 2026-11-24 slice 2 built (one PR): `report/weekly.py` (the hero, value against 1/N, SSAC and cash, drawdown with its limits, funds, month end, paper-trading days; pure, no scripts), the page restyled (state pill, cards, light and dark), `app/weekly_facts.py` (figures from the ledger only), the ledger's expand-only `levels` table filled by every run from the preview's bars plus SSAC's latest close (a failed SSAC fetch only warns), `CycleConfig.benchmark` (must be benchmark-only; never ordered). The owner saw fake-data mockups first — evidence: `tests/report/test_weekly.py` (17), `tests/app/test_weekly_facts.py` (13), `tests/app/test_cycle.py` levels tests (6), `tests/ledger/test_store.py` (2), `tests/app/test_dashboard.py` (2), `tests/app/test_job.py` (every fund and SSAC stored); palette validator passes light and dark (aqua below 3:1 on light: legend values and the numbers table carry it); 390 px screenshots light and dark with no horizontal scroll (`docs/images/dashboard-slice2-*.png`)
 - 2026-11-24 slice 1 live and checked: #69 applied (staging and prod); the owner ran `scripts/dashboard-iap.sh` for both; the deploy moved both dashboards to the real image after `dashboard-check` reported "behind IAP and not public". Owner checks passed: the page on the phone (screenshots of both), a private window refused, a direct call with an ID token refused (not 200), and in staging Pause → confirm → "paused", the `pause_requested` alert email, `ops clear-pause`, button back. AC1–AC8 met
 - 2026-11-24 the owner merged #68 and applied the bootstrap (a disconnected Cloud Shell left a state lock: cleared with `tofu force-unlock`). The service PR: `infra/modules/cloud-run-dashboard`, staging and prod wiring, the alert filter for the dashboard's lines, `scripts/dashboard-check.sh` after every infra apply and nightly (security review of the module: 1 medium, 2 low, all taken) — evidence: `tests/infra/test_dashboard_module.py` (every infra file), `tests/scripts/test_job_ops.py` (the check, IAP gating)
