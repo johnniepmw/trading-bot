@@ -208,7 +208,7 @@ def test_benchmarks_that_start_after_setup_say_since_when() -> None:
     ]
     h = html(replace(W, values=late))
     assert "2.0% behind SSAC (the MSCI ACWI tracker) since 24 Nov" in h  # +1.0% against +3.0%
-    assert "1/N and SSAC start 24 Nov at the bot's value" in h
+    assert "1/N starts 24 Nov; SSAC starts 24 Nov, at the bot's value then" in h
     assert "SSAC <b>£1,040</b> +3.0%" in h  # from its own start
 
 
@@ -242,3 +242,12 @@ def test_a_decision_without_a_quote_shows_no_amount() -> None:
 
 def test_the_halving_limit_says_what_halves() -> None:
     assert "position cap halves" in html()
+
+
+def test_only_the_late_line_is_named() -> None:
+    ssac_late = [
+        DayValue(DAYS[0], Decimal("1000"), Decimal("1000"), None),
+        DayValue(DAYS[1], Decimal("1010"), Decimal("1005"), Decimal("1010")),
+    ]
+    h = html(replace(W, values=ssac_late))
+    assert "<p class=small>SSAC starts 24 Nov, at the bot's value then" in h

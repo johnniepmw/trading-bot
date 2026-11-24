@@ -294,6 +294,7 @@ def test_a_weekly_view_that_cant_be_drawn_still_shows_the_glance_and_pause(
 
 
 def test_a_ledger_from_before_slice_2_still_shows_the_page(ran: Path) -> None:
+    assert job_at(ran, RUN_DAY + timedelta(days=1)).run() == 0  # two days: the chart draws
     s = store(ran)
     info = s.info("ledger", LEDGER_OBJECT)
     assert info is not None
@@ -310,4 +311,5 @@ def test_a_ledger_from_before_slice_2_still_shows_the_page(ran: Path) -> None:
     assert "<b>Run</b>: completed" in page.body
     assert '<form method=post action="/pause/confirm">' in page.body
     assert "aria-label='no preview'" in page.body
+    assert 'class="line s-bot"' in page.body
     assert 'class="line s-ew"' not in page.body and 'class="line s-bm"' not in page.body

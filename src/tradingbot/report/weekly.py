@@ -290,10 +290,13 @@ def value_chart(w: WeeklyInput) -> str:
         start = _start(w, field)
         return None if start is None else (w.seed if start[0] == vals[0] else start[1])
 
-    late = [s[0].day for f in ("equal_weight", "benchmark") if (s := _start(w, f)) and s[0] != vals[0]]
+    late = [
+        f"{name} starts {_since(w, start[0].day)[6:]}"
+        for field, name in (("equal_weight", "1/N"), ("benchmark", "SSAC"))
+        if (start := _start(w, field)) and start[0] != vals[0]
+    ]
     note = (
-        f"<p class=small>1/N and SSAC start {_since(w, min(late))[6:]} at the bot's value; "
-        "% is from each line's start.</p>"
+        f"<p class=small>{'; '.join(late)}, at the bot's value then; % is from each line's start.</p>"
         if late
         else ""
     )
