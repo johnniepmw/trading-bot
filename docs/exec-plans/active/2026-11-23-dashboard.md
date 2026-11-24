@@ -1,6 +1,6 @@
 # Dashboard: the glance and the pause button on the owner's phone (monitoring step 4)
 
-- **Status**: active (slices 1 and 2 shipped 2026-11-24; slice 3 to come)
+- **Status**: shipped (slices 1–3 live 2026-11-24)
 - **Branch / PR**: ccr-7fe1197d-l39xit / infra PR, then app PR, per slice
 - **Risk class**: high (infra, IAM, a new public endpoint behind IAP, and the pause control)
 - **Started**: 2026-11-23
@@ -112,6 +112,7 @@ incident views (the rest of AC8).
 5. Staging check on the owner's phone, then prod.
 
 ## Progress log
+- 2026-11-24 slice 3 shipped: #73 merged after the owner's approval (the CI agent-review crashed once without a verdict; its re-run passed, 0 blocking); deploy green through production. Its one real finding is in tech-debt (a run whose end record failed to save reads as in progress on the Month end card)
 - 2026-11-24 slice 3 built: `report/incident.py` (guidance per stop reason, kept in step with the runbook by a test; links to the runbook, `ops` and the job's logs), the incident card first on the page when the latest run stopped or died, the Month end card's trades (why from the run's signal record, the order's state, intended price against the fill, fees against 0.15%), `Ledger.run_signals` — evidence: `tests/report/test_incident.py`, `tests/report/test_weekly.py` (order lines), `tests/app/test_weekly_facts.py` (trades from a ledger), `tests/app/test_dashboard.py` (stopped, died, completed), `tests/ledger/test_store.py`
 - 2026-11-24 slice 2 shipped: #71 merged after the owner's approval; deploy green, both dashboards moved to the new image after `dashboard-check` (behind IAP, not public). The benchmark lines start from the first run that stores closes (25 Nov)
 - 2026-11-24 slice 2 built (one PR): `report/weekly.py` (the hero, value against 1/N, SSAC and cash, drawdown with its limits, funds, month end, paper-trading days; pure, no scripts), the page restyled (state pill, cards, light and dark), `app/weekly_facts.py` (figures from the ledger only), the ledger's expand-only `levels` table filled by every run from the preview's bars plus SSAC's latest close (a failed SSAC fetch only warns), `CycleConfig.benchmark` (must be benchmark-only; never ordered). The owner saw fake-data mockups first — evidence: `tests/report/test_weekly.py` (17), `tests/app/test_weekly_facts.py` (13), `tests/app/test_cycle.py` levels tests (6), `tests/ledger/test_store.py` (2), `tests/app/test_dashboard.py` (2), `tests/app/test_job.py` (every fund and SSAC stored); palette validator passes light and dark (aqua below 3:1 on light: legend values and the numbers table carry it); 390 px screenshots light and dark with no horizontal scroll (`docs/images/dashboard-slice2-*.png`)
