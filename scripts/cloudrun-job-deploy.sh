@@ -64,34 +64,25 @@ restore() {
   gc run jobs update "$job" --region "$region" --image "$previous" \
     || echo "deploy: RESTORE FAILED: $job may be on an unchecked image; roll back with ops" >&2
 }
-# The dashboard service (ADR-0020) follows the job's image, only after the job's check passed.
-# Cloud Run keeps serving the old revision if the new one never becomes ready. A dashboard
-# failure fails this script but never touches the job: trading never depends on the dashboard.
+# The dashboard service (ADR-0020) follows the job's image, only after the job's check passed, and
+# only while it is behind IAP (before the owner's IAP script it keeps serving the placeholder).
+# A dashboard problem never touches the job; a public dashboard fails the deploy loudly.
 follow_dashboard() {
-  local service="${app}-dashboard-${env}" names
-  names="$(gc run services list --region "$region" --format='value(metadata.name)')" \
-    || { echo "deploy: warning: couldn't list services, so no dashboard was updated; the job is unaffected" >&2; return 0; }
-  grep -qx "$service" <<<"$names" || { echo "deploy: no $service yet; skipped"; return 0; }
+  local service="${app}-dashboard-${env}" code=0
+  bash "$(dirname "$0")/dashboard-check.sh" "$env" || code=$?
+  case "$code" in
+    0) grep -qx "$service" <<<"$(gc run services list --region "$region" --format='value(metadata.name)')" \
+         || return 0 ;;  # no dashboard yet
+    3) echo "::warning::deploy: $service not updated: IAP is off (the owner runs scripts/dashboard-iap.sh $env)" >&2
+       return 0 ;;
+    2) echo "::warning::deploy: $service not updated: couldn't check it (the nightly check covers it)" >&2
+       return 0 ;;
+    *) exit 1 ;;  # public or unreadable: already reported loudly
+  esac
   gc run services update "$service" --region "$region" --image "$1" \
     || { echo "deploy: DASHBOARD NOT UPDATED: $service keeps its last good revision; the job is unaffected" >&2; exit 1; }
   echo "deploy: $service now runs ${1##*@}"
-  dashboard_not_public "$service" || exit 1
-}
-
-# A tripwire (ADR-0020): the dashboard shows account data and must never be public. IAP is
-# set by the owner, but CI's infra identity could still loosen the service, so every deploy
-# and rollback checks: no allUsers/allAuthenticatedUsers invoker, invoker IAM not disabled.
-dashboard_not_public() {
-  local policy described
-  policy="$(gc run services get-iam-policy "$1" --region "$region" --format=json)" \
-    || { echo "deploy: DASHBOARD CHECK FAILED: couldn't read $1's access policy" >&2; return 1; }
-  described="$(gc run services describe "$1" --region "$region" --format=json)" \
-    || { echo "deploy: DASHBOARD CHECK FAILED: couldn't read $1" >&2; return 1; }
-  if grep -Eq '"(allUsers|allAuthenticatedUsers)"' <<<"$policy" \
-     || grep -Eq '"(run.googleapis.com/invoker-iam-disabled|invokerIamDisabled)": *"?true' <<<"$described"; then
-    echo "deploy: DASHBOARD IS PUBLIC: $1 lets anyone call it; remove that access now (dashboard-access.md)" >&2
-    return 1
-  fi
+  bash "$(dirname "$0")/dashboard-check.sh" "$env" || exit 1
 }
 
 trap restore EXIT

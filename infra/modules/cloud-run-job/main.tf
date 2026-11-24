@@ -317,11 +317,11 @@ resource "google_monitoring_alert_policy" "bot_alert" {
   notification_channels = concat([google_monitoring_notification_channel.email.id], var.push_channels)
 
   conditions {
-    display_name = "A bot alert line, or the schedule failing to start the job"
+    display_name = "A bot or dashboard alert line, or the schedule failing to start the job"
     condition_matched_log {
       # the bot's own alert lines, or Cloud Scheduler failing to start the job (a missed run);
       # one condition per environment, since alerting may be billed per condition
-      filter           = "(resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${local.job_name}\" AND jsonPayload.alert:*) OR (resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"${local.job_name}-daily\" AND severity>=ERROR)"
+      filter           = "(resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${local.job_name}\" AND jsonPayload.alert:*) OR (resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"${local.job_name}-daily\" AND severity>=ERROR) OR (resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${var.app_name}-dashboard-${var.env}\" AND jsonPayload.alert:*)"
       label_extractors = { kind = "EXTRACT(jsonPayload.alert)" }
     }
   }

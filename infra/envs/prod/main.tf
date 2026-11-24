@@ -46,6 +46,22 @@ module "job" {
   owner_secrets = { "prod-operator" = local.b.operator_secret } # the live switch (ADR-0009)
 }
 
+# The owner's dashboard (ADR-0020): IAP and access are set by the owner's scripts/dashboard-iap.sh
+module "dashboard" {
+  source = "../../modules/cloud-run-dashboard"
+
+  project_id    = local.b.project_id
+  region        = local.b.region
+  app_name      = local.b.app_name
+  env           = "prod"
+  runtime_sa    = local.b.sa_runtime["prod-dashboard"]
+  deployer_sa   = local.b.sa_deployer
+  deployer_role = local.b.dashboard_deployer_role
+  ledger_bucket = module.job.ledger_bucket
+  lock_bucket   = module.job.lock_bucket
+  pause_bucket  = module.job.pause_bucket
+}
+
 output "job_name" {
   value = module.job.job_name
 }

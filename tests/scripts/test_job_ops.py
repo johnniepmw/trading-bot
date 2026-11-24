@@ -360,22 +360,31 @@ def test_a_failed_clear_is_reported(fake: Path) -> None:
 
 
 # --- the dashboard service follows the job (ADR-0020) ----------------------------------
+BEHIND_IAP = '{"metadata": {"annotations": {"run.googleapis.com/iap-enabled": "true"}}}'
+
+
+def dashboard(fake: Path, env: str = "staging", *, iap: bool = True) -> None:
+    (fake / "services").write_text(f"other-service\ntrading-bot-dashboard-{env}\n")
+    if iap:
+        (fake / "service_described").write_text(BEHIND_IAP)
+
+
 def test_without_a_dashboard_service_a_deploy_only_moves_the_job(fake: Path) -> None:
     result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
     assert result.returncode == 0
-    assert "no trading-bot-dashboard-staging yet; skipped" in result.stdout
+    assert "no trading-bot-dashboard-staging yet" in result.stdout
     assert not (fake / "service_image").exists()
 
 
 def test_the_dashboard_follows_the_job_after_its_check_passes(fake: Path) -> None:
-    (fake / "services").write_text("other-service\ntrading-bot-dashboard-staging\n")
+    dashboard(fake)
     assert run(fake, "cloudrun-job-deploy.sh", "staging", NEW).returncode == 0
     assert (fake / "service_image").read_text() == NEW
     assert (fake / "image").read_text() == NEW
 
 
 def test_a_failed_job_check_never_moves_the_dashboard(fake: Path) -> None:
-    (fake / "services").write_text("trading-bot-dashboard-staging\n")
+    dashboard(fake)
     (fake / "executions").write_text("fail")
     assert run(fake, "cloudrun-job-deploy.sh", "staging", NEW).returncode == 1
     assert not (fake / "service_image").exists()
@@ -386,7 +395,7 @@ def test_a_failed_job_check_never_moves_the_dashboard(fake: Path) -> None:
 def test_a_dashboard_failure_fails_the_deploy_but_leaves_the_job_on_its_new_image(
     fake: Path, failure: str
 ) -> None:
-    (fake / "services").write_text("trading-bot-dashboard-staging\n")
+    dashboard(fake)
     (fake / failure).write_text("")
     result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
     assert result.returncode == 1
@@ -397,7 +406,7 @@ def test_a_dashboard_failure_fails_the_deploy_but_leaves_the_job_on_its_new_imag
 def test_a_rollback_moves_the_dashboard_too(fake: Path) -> None:
     (fake / "image").write_text(NEW)
     (fake / "previous_digest").write_text("sha256:" + "a" * 64)
-    (fake / "services").write_text("trading-bot-dashboard-prod\n")
+    dashboard(fake, "prod")
     assert run(fake, "cloudrun-job-rollback.sh", "prod").returncode == 0
     assert (fake / "service_image").read_text() == OLD
 
@@ -405,7 +414,7 @@ def test_a_rollback_moves_the_dashboard_too(fake: Path) -> None:
 def test_a_failed_dashboard_rollback_leaves_the_job_rolled_back(fake: Path) -> None:
     (fake / "image").write_text(NEW)
     (fake / "previous_digest").write_text("sha256:" + "a" * 64)
-    (fake / "services").write_text("trading-bot-dashboard-prod\n")
+    dashboard(fake, "prod")
     (fake / "service_fails").write_text("")
     result = run(fake, "cloudrun-job-rollback.sh", "prod")
     assert result.returncode == 1
@@ -413,13 +422,29 @@ def test_a_failed_dashboard_rollback_leaves_the_job_rolled_back(fake: Path) -> N
     assert (fake / "image").read_text() == OLD
 
 
-def test_a_deployer_that_cant_list_services_skips_the_dashboard_with_a_warning(fake: Path) -> None:
-    # before the owner's bootstrap grants run.services.list
+def test_a_failed_check_skips_the_dashboard_with_a_warning_and_never_blocks_the_job(fake: Path) -> None:
     (fake / "services_list_fails").write_text("")
     result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
     assert result.returncode == 0
-    assert "couldn't list services" in result.stderr
+    assert "couldn't check it" in result.stderr
     assert (fake / "image").read_text() == NEW
+
+
+def test_a_dashboard_without_iap_keeps_its_placeholder(fake: Path) -> None:
+    dashboard(fake, iap=False)
+    result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
+    assert result.returncode == 0
+    assert "IAP is off" in result.stderr
+    assert not (fake / "service_image").exists()
+
+
+def test_a_rollback_skips_a_dashboard_it_cant_check(fake: Path) -> None:
+    (fake / "image").write_text(NEW)
+    (fake / "previous_digest").write_text("sha256:" + "a" * 64)
+    (fake / "services_list_fails").write_text("")
+    result = run(fake, "cloudrun-job-rollback.sh", "prod")
+    assert result.returncode == 0
+    assert (fake / "image").read_text() == OLD
 
 
 @pytest.mark.parametrize(
@@ -437,7 +462,7 @@ def test_a_deployer_that_cant_list_services_skips_the_dashboard_with_a_warning(f
     ],
 )
 def test_a_public_dashboard_fails_the_deploy_loudly(fake: Path, file: str, content: str) -> None:
-    (fake / "services").write_text("trading-bot-dashboard-staging\n")
+    dashboard(fake)
     (fake / file).write_text(content)
     result = run(fake, "cloudrun-job-deploy.sh", "staging", NEW)
     assert result.returncode == 1
@@ -448,9 +473,42 @@ def test_a_public_dashboard_fails_the_deploy_loudly(fake: Path, file: str, conte
 def test_a_public_dashboard_fails_a_rollback_loudly(fake: Path) -> None:
     (fake / "image").write_text(NEW)
     (fake / "previous_digest").write_text("sha256:" + "a" * 64)
-    (fake / "services").write_text("trading-bot-dashboard-prod\n")
+    dashboard(fake, "prod")
     (fake / "service_policy").write_text('{"bindings": [{"members": ["allUsers"]}]}')
     result = run(fake, "cloudrun-job-rollback.sh", "prod")
     assert result.returncode == 1
-    assert "DASHBOARD CHECK FAILED" in result.stderr
+    assert "DASHBOARD IS PUBLIC" in result.stderr
     assert (fake / "image").read_text() == OLD
+
+
+# --- the read-only dashboard check (deploys, rollbacks, after infra applies, nightly) -----------
+@pytest.mark.parametrize(
+    ("setup", "code"),
+    [
+        ({}, 0),  # no dashboard yet
+        ({"services": "trading-bot-dashboard-prod\n", "service_described": BEHIND_IAP}, 0),
+        ({"services": "trading-bot-dashboard-prod\n"}, 3),  # private, IAP off
+        ({"services_list_fails": ""}, 2),
+        (
+            {
+                "services": "trading-bot-dashboard-prod\n",
+                "service_described": BEHIND_IAP,
+                "service_policy": '{"bindings": [{"members": ["allUsers"]}]}',
+            },
+            1,
+        ),
+        (
+            {
+                "services": "trading-bot-dashboard-prod\n",
+                "service_described": '{"spec": {"invokerIamDisabled": true}, ' + BEHIND_IAP[1:],
+            },
+            1,
+        ),
+    ],
+    ids=["no-service", "behind-iap", "iap-off", "cant-list", "public-member", "invoker-iam-off"],
+)
+def test_the_dashboard_check(fake: Path, setup: dict[str, str], code: int) -> None:
+    for name, content in setup.items():
+        (fake / name).write_text(content)
+    assert run(fake, "dashboard-check.sh", "prod").returncode == code
+    assert not any("update" in c or "set-iam" in c or "remove" in c for c in calls(fake))  # read-only
