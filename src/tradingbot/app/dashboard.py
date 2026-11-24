@@ -119,11 +119,13 @@ class Dashboard:
         return Response(HTTPStatus.OK, page)
 
     def _lock_held(self) -> bool:
-        """A run holds a fresh lock; one older than STALE_AFTER belongs to a run that died."""
+        """A run holds a fresh lock; one older than STALE_AFTER belongs to a run that died. Only
+        consulted for a run with no end."""
         try:
             info = self.store.info(self.lock_bucket, LOCK_OBJECT)
-        except StorageError:
-            return False
+        except StorageError as error:  # unknown: amber "in progress", never a false red "died"
+            log.warning("dashboard: lock unreadable (%s)", type(error).__name__)
+            return True
         return info is not None and self.clock() - info.created <= STALE_AFTER
 
     def _paused(self) -> bool | None:
