@@ -1,6 +1,6 @@
 # Daily email: the glance after every scheduled run (monitoring step 5)
 
-- **Status**: active (owner chose the transport, 2026-11-23)
+- **Status**: shipped (2026-11-24: staging and prod emails received after the 07:15 runs)
 - **Branch / PR**: ccr-7fe1197d-l39xit / infra PR, then app PR
 - **Risk class**: high (infra and secrets; `app/**`)
 - **Started**: 2026-11-23

@@ -1,6 +1,6 @@
 # Dashboard: the glance and the pause button on the owner's phone (monitoring step 4)
 
-- **Status**: active (spec, slice 1 of 3; owner asked to continue after the daily email, 2026-11-23)
+- **Status**: active (slice 1 shipped 2026-11-24; slices 2 and 3 to come)
 - **Branch / PR**: ccr-7fe1197d-l39xit / infra PR, then app PR, per slice
 - **Risk class**: high (infra, IAM, a new public endpoint behind IAP, and the pause control)
 - **Started**: 2026-11-23
@@ -71,6 +71,7 @@ incident views (the rest of AC8).
 5. Staging check on the owner's phone, then prod.
 
 ## Progress log
+- 2026-11-24 slice 1 live and checked: #69 applied (staging and prod); the owner ran `scripts/dashboard-iap.sh` for both; the deploy moved both dashboards to the real image after `dashboard-check` reported "behind IAP and not public". Owner checks passed: the page on the phone (screenshots of both), a private window refused, a direct call with an ID token refused (not 200), and in staging Pause → confirm → "paused", the `pause_requested` alert email, `ops clear-pause`, button back. AC1–AC8 met
 - 2026-11-24 the owner merged #68 and applied the bootstrap (a disconnected Cloud Shell left a state lock: cleared with `tofu force-unlock`). The service PR: `infra/modules/cloud-run-dashboard`, staging and prod wiring, the alert filter for the dashboard's lines, `scripts/dashboard-check.sh` after every infra apply and nightly (security review of the module: 1 medium, 2 low, all taken) — evidence: `tests/infra/test_dashboard_module.py` (every infra file), `tests/scripts/test_job_ops.py` (the check, IAP gating)
 - 2026-11-23 (overnight, owner asleep) app side of slice 1, with the bootstrap PR: `app/dashboard.py` and `serve`, `report/page.py`, `app/glance_facts.py` (shared with the email; a run in progress or one that died), `app.pause.request_pause` (create-only, unique name, `pause_requested` alert), deploy and rollback move the service after the job's check, `scripts/dashboard-iap.sh` (the owner's IAP script), ADR-0020, `docs/runbooks/dashboard-access.md`, a 390 px screenshot from fake data (`docs/images/dashboard-slice1-390px.png`) — evidence: `tests/app/test_dashboard.py` (18), `tests/e2e/test_dashboard.py` (serve as a process, pause through confirm, smoke reports paused), `tests/scripts/test_job_ops.py` (7 new), `tests/scripts/test_dashboard_iap.py` (6). Waiting for the owner's bootstrap apply before the service's infra PR (CI's plan needs the new identities)
 
