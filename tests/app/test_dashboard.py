@@ -128,6 +128,21 @@ def test_only_the_last_ten_runs_are_listed(ran: Path) -> None:
     assert get(dashboard(ran)).body.count("<tr>") == 10
 
 
+def test_an_unreadable_lock_never_shows_a_live_run_as_dead(
+    ran: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = dashboard(ran)
+    original = d.store.info
+
+    def info(bucket: str, name: str) -> ObjectInfo | None:
+        if bucket == "locks" and name == LOCK_OBJECT:
+            raise StorageError("503")
+        return original(bucket, name)
+
+    monkeypatch.setattr(d.store, "info", info)
+    assert d._lock_held() is True  # amber "in progress", not red "did not finish"
+
+
 def test_no_ledger_is_an_error_page(tmp_path: Path) -> None:
     page = get(dashboard(tmp_path))
     assert page.status is HTTPStatus.SERVICE_UNAVAILABLE
