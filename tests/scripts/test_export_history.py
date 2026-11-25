@@ -127,7 +127,8 @@ def test_vagp_is_spliced_onto_the_vanguard_fund_on_the_same_index() -> None:
 
 def test_vagp_is_the_distributing_class() -> None:
     vagp = next(f for f in ex.load_universe()[0] if f.ticker == "VAGP")
-    assert vagp.primary.distributing is True  # Yahoo and EODHD both show about 2.2% a year of dividends
+    # Vanguard factsheet: GBP Hedged Distributing, monthly; Yahoo's adjustment implies 2.24% a year
+    assert vagp.primary.distributing is True
 
 
 @pytest.mark.parametrize(
