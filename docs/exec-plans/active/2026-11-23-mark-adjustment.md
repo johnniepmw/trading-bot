@@ -34,7 +34,7 @@ point of failure"; "an automatic email so we are aware, to guard against a bug")
 | AC6 | The ledger records each adjustment (reference, broker time, amount, mark before and after, equity), the new baseline and the cursor, then the mark, in one transaction. `adjust_high_water_mark` refuses when no mark exists; only `app/cycle.py` calls it. The mark may fall only through a recorded adjustment: "the mark only rises since the last adjustment, and adjustments chain to the marks" | ledger tests; an import test like the seed one |
 | AC7 | Each adjustment logs a WARNING with the alert kind `mark_adjusted`, naming the direction, not amounts. A dry run reports at WARNING with no kind | alert tests |
 | AC8 | The reference mark (ADR-0017 → ADR-0020) stores the latest mark and the adjustment count. A downloaded ledger is refused if it has fewer adjustments, or as many with a lower mark. More adjustments are accepted, and the reference catches up at the next checkpoint. `checkpoint()` writes when the mark or the count changes | remote-ledger tests; drills: death before checkpoint (applied once on the re-run), death between ledger upload and reference write (accepted, caught up), a restore from before an adjustment (refused) |
-| AC9 | `scripts/t212_record.py` lists each transaction type with its sign (done in #58). The owner's demo deposit and withdrawal confirm the names, signs and unique references before prod setup | the owner's run |
+| AC9 | `scripts/t212_record.py` lists each transaction type with its sign (done in #58). The owner's live deposits and withdrawals confirm the names, signs and unique references before prod setup | done 2026-11-25: the owner's live run (progress log) |
 
 ## Non-goals
 - Dividends and interest as flows: they are returns, a few pence a day against the 2%. If live
@@ -90,6 +90,15 @@ point of failure"; "an automatic email so we are aware, to guard against a bug")
 
 ## Progress log
 - 2026-11-23 deferred: the demo can't deposit or withdraw (owner). Until this ships, the existing guards fail safe on any flow: a drop in equity counts as a loss (drawdown and daily-loss stops), a rise of more than 10% stops as an implausible new peak, and a smaller one lifts the mark. So no deposits or withdrawals on the account the bot trades, and never on live before this ships
+- 2026-11-25 AC9 recorded on live (owner; read-only key, three deposits and two
+  withdrawals, no trading): HTTP 200, one page (`nextPagePath` null). Kinds `DEPOSIT + x3`
+  and `WITHDRAW - x2`. References are UUIDs, all 5 unique. Item fields: `type`, `amount`
+  (a number), `currency` (`GBP`), `reference`, `dateTime`. There is no status field, so the
+  list can't tell a pending withdrawal from a completed one. The run came inside the app's
+  3-day processing window, so withdrawals seem to be listed once requested, before they
+  reach the bank (owner to confirm). Whether a cancelled withdrawal stays
+  listed is unknown. AC3's residual check stops the run safely if it does, because cash
+  and list would disagree
 - 2026-11-23 spec revised after the architect's review (10 blocking: comparison point, fill
   effect, the mark's only-rises rule, setup baseline and cursor, existing ledgers, same-day
   scaling, multi-flow formula, rollback, sequencing, strict parsing; all taken in)
