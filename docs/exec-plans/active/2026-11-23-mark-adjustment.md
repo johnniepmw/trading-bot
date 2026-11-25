@@ -94,9 +94,10 @@ point of failure"; "an automatic email so we are aware, to guard against a bug")
   withdrawals, no trading): HTTP 200, one page (`nextPagePath` null). Kinds `DEPOSIT + x3`
   and `WITHDRAW - x2`. References are UUIDs, all 5 unique. Item fields: `type`, `amount`
   (a number), `currency` (`GBP`), `reference`, `dateTime`. There is no status field, so the
-  list can't tell a pending withdrawal from a completed one. The run came inside the app's
-  3-day processing window, so withdrawals seem to be listed once requested, before they
-  reach the bank (owner to confirm). Whether a cancelled withdrawal stays
+  list can't tell a pending withdrawal from a completed one. None is needed: the owner
+  confirmed (2026-11-25) that Trading 212 completes a withdrawal when it is requested, and
+  the app's "up to 3 days" is only the bank transfer, so cash and list change together.
+  Whether a cancelled withdrawal stays
   listed is unknown. AC3's residual check stops the run safely if it does, because cash
   and list would disagree
 - 2026-11-23 spec revised after the architect's review (10 blocking: comparison point, fill
