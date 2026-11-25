@@ -125,6 +125,11 @@ def test_vagp_is_spliced_onto_the_vanguard_fund_on_the_same_index() -> None:
     assert [(p.yahoo, p.eodhd, p.distributing) for p in vagp.proxies] == [("0P0000KM24.L", None, False)]
 
 
+def test_vagp_is_the_distributing_class() -> None:
+    vagp = next(f for f in ex.load_universe()[0] if f.ticker == "VAGP")
+    assert vagp.primary.distributing is True  # Yahoo and EODHD both show about 2.2% a year of dividends
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("ticker", "../../x"), ("ticker", "/home/u/x"), ("yahoo", "A.L/../.."), ("eodhd", "A.LSE?x=1")],
