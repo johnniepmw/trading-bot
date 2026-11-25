@@ -120,6 +120,11 @@ def test_the_repo_universe_has_seven_trading_funds_and_ssac_as_benchmark_only() 
     assert [f.ticker for f in funds if f.role == "benchmark"] == ["SSAC"]
 
 
+def test_vagp_is_spliced_onto_the_vanguard_fund_on_the_same_index() -> None:
+    vagp = next(f for f in ex.load_universe()[0] if f.ticker == "VAGP")
+    assert [(p.yahoo, p.eodhd, p.distributing) for p in vagp.proxies] == [("0P0000KM24.L", None, False)]
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("ticker", "../../x"), ("ticker", "/home/u/x"), ("yahoo", "A.L/../.."), ("eodhd", "A.LSE?x=1")],

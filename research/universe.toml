@@ -44,12 +44,14 @@ distributing = true
 proxies = []
 
 [[fund]]
-ticker = "VAGP"   # global aggregate bonds, GBP hedged (2017): a proxy is to be chosen from `--list`
+ticker = "VAGP"   # global aggregate bonds, GBP hedged (Yahoo from 2019-06-18)
 role = "trade"
 yahoo = "VAGP.L"
 eodhd = "VAGP.LSE"
 distributing = false
-proxies = []
+# Vanguard Global Bond Index Fund GBP Hedged Acc (an OEIC, daily price): the same index,
+# from 2014-01-02 on Yahoo; chosen by the owner from first dates only, 2026-11-25
+proxies = [{ yahoo = "0P0000KM24.L", distributing = false }]
 
 [[fund]]
 ticker = "INXG"   # UK index-linked gilts
