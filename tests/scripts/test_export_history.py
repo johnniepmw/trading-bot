@@ -500,6 +500,23 @@ def test_a_yahoo_only_series_still_has_its_dividends_checked(tmp_path: Path) -> 
         )
 
 
+def test_eodhd_history_before_yahoos_is_named_as_unchecked() -> None:
+    early = ex.Bar(date(2022, 10, 3), 99.0, 99.0)
+    _, problems = ex._cross_check(
+        ex.Series("AAA.LSE", "GBP", [early, *BARS]), ex.Series("AAA.L", "GBP", BARS)
+    )
+    assert any("no Yahoo data to check it" in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"[" * 5000, b'[{"date": "2022-12-29", "open": 1, "close": 1' + b"0" * 400 + b', "adjusted_close": 1}]'],
+)
+def test_hostile_eodhd_json_is_an_export_error_not_a_crash(body: bytes) -> None:
+    with pytest.raises(ex.ExportError):
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY, "GBP")
+
+
 def test_a_level_gap_from_yahoo_is_a_problem() -> None:
     used = ex.Series(
         "AAA.LSE", "GBP", [ex.Bar(b.day, b.open * 100, b.close * 100) for b in BARS]

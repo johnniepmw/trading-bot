@@ -187,7 +187,10 @@ def load_universe(path: Path = UNIVERSE) -> tuple[list[Fund], date]:
 
 
 def _finite_positive(*values: object) -> bool:
-    return all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in values)
+    try:
+        return all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in values)
+    except OverflowError:  # an integer too big for a float: untrusted JSON
+        return False
 
 
 def fetch_yahoo(symbol: str, opener: Opener, today: date) -> Series:
@@ -197,8 +200,8 @@ def fetch_yahoo(symbol: str, opener: Opener, today: date) -> Series:
         currency = CURRENCIES[result["meta"]["currency"]]
         quote, adjusted = result["indicators"]["quote"][0], result["indicators"]["adjclose"][0]["adjclose"]
         rows = list(zip(result["timestamp"], quote["open"], quote["close"], adjusted, strict=True))
-    except (KeyError, IndexError, TypeError, ValueError) as error:
-        raise ExportError(f"{symbol}: unexpected Yahoo response ({error!r})") from error
+    except (KeyError, IndexError, TypeError, ValueError, RecursionError) as error:
+        raise ExportError(f"{symbol}: unexpected Yahoo response ({type(error).__name__})") from None
     by_day: dict[date, tuple[Bar, float]] = {}
     skipped = 0
     for stamp, open_, close, adj in rows:
@@ -277,7 +280,12 @@ def fetch_eodhd(symbol: str, key: str, opener: Opener, today: date, currency: st
             (date.fromisoformat(r["date"]), r["open"], r["close"], r["adjusted_close"])
             for r in json.loads(body)
         ]
-    except (KeyError, TypeError, ValueError) as error:  # names the error type, never the body or the key
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        RecursionError,
+    ) as error:  # the error type only, never the body or key
         raise ExportError(f"{symbol}: unexpected EODHD response ({type(error).__name__})") from None
     by_day: dict[date, tuple[Bar, float]] = {}
     skipped = opens_filled = 0
@@ -287,10 +295,10 @@ def fetch_eodhd(symbol: str, key: str, opener: Opener, today: date, currency: st
         if any(isinstance(v, bool) for v in (open_, close, adj)) or not _finite_positive(close, adj):
             skipped += 1
             continue
-        if not _finite_positive(open_):  # older LSE rows can lack an open: the close stands in
-            open_, opens_filled = close, opens_filled + 1
+        has_open = _finite_positive(open_)  # older LSE rows can lack an open: the close stands in
+        opens_filled += not has_open
         factor = adj / close
-        by_day[day] = (Bar(day, open_ * factor, adj), factor)
+        by_day[day] = (Bar(day, (open_ if has_open else close) * factor, adj), factor)
     if not by_day:
         raise ExportError(f"{symbol}: no EODHD data")
     series = _series(symbol, currency, by_day, skipped)
@@ -405,6 +413,11 @@ def _cross_check(used: Series, yahoo: Series) -> tuple[dict[str, Any], list[str]
                 f"{used.symbol}: on {last.day} its close is {check['level_gap']:.1%} from Yahoo's"
                 " (different units or a different series)"
             )
+    if (yahoo.bars[0].day - used.bars[0].day).days > MAX_START_GAP_DAYS:
+        problems.append(
+            f"{used.symbol}: EODHD's history from {used.bars[0].day} to {yahoo.bars[0].day} has no"
+            " Yahoo data to check it"
+        )
     if (used.bars[0].day - yahoo.bars[0].day).days > MAX_START_GAP_DAYS:
         problems.append(
             f"{used.symbol}: EODHD starts {used.bars[0].day}, Yahoo {yahoo.bars[0].day}"

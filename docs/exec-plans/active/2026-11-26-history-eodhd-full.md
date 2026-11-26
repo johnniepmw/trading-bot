@@ -37,6 +37,7 @@ the cross-check.
 2. Reviewer and security reviewer, PR, owner approval; then the owner runs the export.
 
 ## Progress log
+- Security review: pass, 1 low, taken: hostile JSON (deep nesting, a huge integer) is an export error, not a traceback. Also from it: EODHD history before Yahoo's first day is listed as a problem (unchecked span), not written silently. 80 tests pass.
 - Review round 1 (reviewer): 1 blocking, fixed: the 10x and open-gap checks are now tested on EODHD data too. Taken: an EODHD row without an open keeps its close as the open and is counted (`opens_filled`), not dropped; a docstring warning against a free-plan run; the manifest names EODHD years before Yahoo's as unchecked; a test for the Yahoo-only series' dividend check; the earlier plan marked superseded. Recorded as tech-debt: a Yahoo bar fault still stops the export. 77 tests pass.
 - 2026-11-26 built: 73 export tests pass. Six planted breaks (Yahoo still used, no level check, no start check, a later request date, unscaled opens, uncounted skipped rows) each fail a test.
 
