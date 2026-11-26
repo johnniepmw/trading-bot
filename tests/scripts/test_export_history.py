@@ -316,6 +316,23 @@ def test_eodhd_bars_use_the_adjusted_close_with_the_open_scaled_alike() -> None:
     assert (s.currency, s.bars, s.skipped) == ("GBX", [ex.Bar(DAYS[0], 105.0, 100.0)], 0)
 
 
+def test_an_eodhd_10x_jump_is_refused() -> None:
+    with pytest.raises(ex.ExportError, match="jump"):
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": eodhd(DAYS[:2], [100.0, 10_000.0])}), TODAY, "GBP")
+
+
+def test_an_eodhd_open_far_from_its_close_is_refused() -> None:
+    rows = [{"date": "2022-12-29", "open": 150.0, "close": 100.0, "adjusted_close": 100.0}]
+    with pytest.raises(ex.ExportError, match="open"):
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": json.dumps(rows).encode()}), TODAY, "GBP")
+
+
+def test_an_eodhd_row_without_an_open_keeps_its_close_and_is_counted() -> None:
+    rows = [{"date": "2022-12-29", "open": 0, "close": 200.0, "adjusted_close": 100.0}]
+    s = ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": json.dumps(rows).encode()}), TODAY, "GBP")
+    assert (s.bars, s.skipped, s.opens_filled) == ([ex.Bar(DAYS[0], 100.0, 100.0)], 0, 1)
+
+
 def test_eodhd_measures_dividend_yields_like_yahoo() -> None:
     days = [date(2020, 12, 31), date(2021, 6, 30), date(2021, 12, 31), date(2022, 12, 30)]
     body = eodhd(days, [100.0] * 4, adj=[90.0, 92.0, 94.5, 94.5])
@@ -462,6 +479,25 @@ def test_a_series_without_an_eodhd_symbol_is_yahoos_alone_and_never_sent_to_eodh
     )
     assert "Yahoo's alone" in manifest["cross_check"]
     assert [u for u in fetched if "eodhd.com" in u and "OLD" in u] == []
+
+
+def test_a_yahoo_only_series_still_has_its_dividends_checked(tmp_path: Path) -> None:
+    days = [date(2021, 1, 4), date(2022, 1, 4), date(2023, 1, 4)]
+    old = ex.Source("OLD.L", None, distributing=False)
+    p = {
+        "AAA.L": yahoo(days, [100.0] * 3),
+        "AAA.LSE": eodhd(days, [100.0] * 3),
+        "OLD.L": yahoo(days, [100.0] * 3, adj=[90.0, 95.0, 100.0]),
+    }
+    with pytest.raises(ex.ExportError, match=r"OLD\.L: marked accumulating"):
+        ex.export(
+            [ex.Fund("AAA", "trade", SRC, [old])],
+            date(2023, 1, 1),
+            tmp_path / "x",
+            opener(p),
+            TODAY,
+            eodhd_key=KEY,
+        )
 
 
 def test_a_level_gap_from_yahoo_is_a_problem() -> None:

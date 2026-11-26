@@ -25,7 +25,8 @@ The export:
   a level gap or EODHD history starting well after Yahoo's (a free-plan key returns only a
   year) refuses the export (--accept-problems overrides; the manifest records it). The
   series with no EODHD symbol is Yahoo's alone, and the manifest says so. It needs the paid
-  plan; one EODHD call per series (9);
+  plan; one EODHD call per series (9). After the paid month, don't run it: a free-plan key
+  spends 9 of the 20 daily calls prod shares before the export refuses its short history;
 - writes the development and hold-out periods to separate folders with a manifest (sources,
   splices, checks, SHA-256 hashes), building it in a temporary folder that only becomes the
   output folder when everything succeeded. Nothing outside it is touched. (If the process
@@ -119,6 +120,7 @@ class Series:
     skipped: int = 0
     yield_: float = 0.0  # implied yearly dividend yield from the adjustment factor
     yearly: dict[int, float] = field(default_factory=dict)  # the same, year end to year end
+    opens_filled: int = 0  # rows with no open, where the close stands in (EODHD only)
 
 
 def without_query(url: str) -> str:
@@ -278,18 +280,22 @@ def fetch_eodhd(symbol: str, key: str, opener: Opener, today: date, currency: st
     except (KeyError, TypeError, ValueError) as error:  # names the error type, never the body or the key
         raise ExportError(f"{symbol}: unexpected EODHD response ({type(error).__name__})") from None
     by_day: dict[date, tuple[Bar, float]] = {}
-    skipped = 0
+    skipped = opens_filled = 0
     for day, open_, close, adj in rows:
         if day >= today:
             continue  # today's partial bar isn't a fault
-        if any(isinstance(v, bool) for v in (open_, close, adj)) or not _finite_positive(open_, close, adj):
+        if any(isinstance(v, bool) for v in (open_, close, adj)) or not _finite_positive(close, adj):
             skipped += 1
             continue
+        if not _finite_positive(open_):  # older LSE rows can lack an open: the close stands in
+            open_, opens_filled = close, opens_filled + 1
         factor = adj / close
         by_day[day] = (Bar(day, open_ * factor, adj), factor)
     if not by_day:
         raise ExportError(f"{symbol}: no EODHD data")
-    return _series(symbol, currency, by_day, skipped)
+    series = _series(symbol, currency, by_day, skipped)
+    series.opens_filled = opens_filled
+    return series
 
 
 def _in_currency(series: Series, currency: str) -> list[Bar]:
@@ -426,6 +432,7 @@ def _export_fund(  # noqa: PLR0913, PLR0917 - the export's inputs
             problems.append(f"{s.symbol}: {s.skipped} of {len(s.bars) + s.skipped} rows skipped as unusable")
         checks[s.symbol] = check | {
             "skipped_rows": s.skipped,
+            "opens_filled": s.opens_filled,
             "implied_yield": s.yield_,
             "yearly_yield": s.yearly,
         }
@@ -470,7 +477,8 @@ def export(  # noqa: PLR0913 - the export's inputs
             "accept_problems": accept_problems,
             "cross_check": (
                 "each series with an EODHD symbol uses EODHD's adjusted prices, checked against"
-                " Yahoo's over their common days (see each source's used and cross_check); a series"
+                " Yahoo's over their common days (see each source's used and cross_check); EODHD"
+                " years before Yahoo's first day (eodhd_from, yahoo_from) are unchecked; a series"
                 " without one (the Vanguard fund under VAGP) is Yahoo's alone, unchecked"
             ),
             "funds": {},
