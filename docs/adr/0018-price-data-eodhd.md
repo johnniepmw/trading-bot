@@ -33,6 +33,10 @@ one line in the job.
   Amended 2026-11-24 (history export): the owner's Phase 1 export (`scripts/export_history.py`)
   uses the same key for its cross-check, 8 calls a run, so it runs at most once a day, after
   a completed 07:15 run, and never on a month end's action day.
+  Amended 2026-11-26: the owner bought one month of the paid plan for the export, which now
+  takes full histories from EODHD (9 calls a run) and checks them against Yahoo; during that
+  month the call limit doesn't bind (prod too, if it is the same EODHD account). The export
+  refuses a free-plan key's single year.
 - Bars use `adjusted_close`, with the open scaled by the same factor, in the listing's
   units (pence for GBX funds).
 - The key is a file (`/secrets/eodhd-key/value`, prod only). It travels in the query

@@ -1,6 +1,6 @@
 # History export: EODHD replaces Stooq as the cross-check, last year only
 
-- **Status**: shipped (2026-11-24, #74)
+- **Status**: shipped (2026-11-24, #74); superseded 2026-11-26 by `2026-11-26-history-eodhd-full.md` (EODHD's full history as the source, Yahoo as the cross-check)
 - **Branch / PR**: ccr-d0003009-0e03lt / #74
 - **Risk class**: high (`scripts/**`, `research/universe.toml`)
 - **Started**: 2026-11-24

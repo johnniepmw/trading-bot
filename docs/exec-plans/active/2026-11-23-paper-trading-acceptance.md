@@ -85,6 +85,11 @@ each. You see an alert email for every adjustment.
 | F2 | A month end unattended | The first month end after F1 | Rebalance as B3, with no manual step |
 | F3 | Paper period | Phase 3: 90 days of paper trading, the daily glance and dashboard | Per the Phase 3 plan |
 
+## Stage G: before live (owner asked, 2026-11-26)
+| # | Test | Steps | Expected |
+|---|---|---|---|
+| G1 | End-to-end technical audit | When the code is stable, after the paper period and before ADR-0009's live switch. Agent: a fresh session with no memory of building it reads the whole system as one: code, infra and IAM, workflows, secrets handling, dependencies, runbooks. Security first (threat model: a leaked key, a compromised dependency or CI token, a malicious PR, a wrong price, a public repo), then bugs and inefficiencies. Security reviewer, reviewer and architect over the whole repo, not a diff; the dependency audit; an IAM listing from the owner. Findings ranked, each with a fix or an owner decision | No open high or medium security finding; every other finding fixed or accepted by the owner; a written report in `docs/` (no account data) |
+
 ## Evidence log
 | Date | Test | Run or execution | Result |
 |---|---|---|---|
@@ -93,4 +98,5 @@ each. You see an alert email for every adjustment.
 | 2026-11-23 | A4 | `DEPLOY_PROD=true`; deploy run 45234536351 | pass: build, staging and production green; prod's deploy check passed before setup (business stop: no ledger) |
 | 2026-11-23 | A5 | `setup --equity 1000.00` (execution trading-bot-prod-gbgms) | pass: "setup completed" |
 | 2026-11-23 | A6 | `run --dry-run` (execution trading-bot-prod-bzkld) | pass: account, positions and EODHD history read; first-buy prices from the latest close; October's month end skipped (closes not verified on the day), as designed |
+| 2026-11-25 | B1 | scheduled run, Wed 07:15 UTC (the owner's daily email) | pass: run completed, 0 orders sent, none open, equity and drawdown recorded, month-end preview shown; every glance line OK |
 | | | | |

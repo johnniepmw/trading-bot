@@ -62,10 +62,10 @@ def yahoo(  # noqa: PLR0913 - a test builder with defaults
     ).encode()
 
 
-def eodhd(days: list[date], adjusted: list[float]) -> bytes:
+def eodhd(days: list[date], closes: list[float], *, adj: list[float] | None = None) -> bytes:
     rows = [
-        {"date": d.isoformat(), "close": a * 2, "adjusted_close": a}  # only the adjusted close counts
-        for d, a in zip(days, adjusted, strict=True)
+        {"date": d.isoformat(), "open": c, "close": c, "adjusted_close": a}
+        for d, c, a in zip(days, closes, adj or closes, strict=True)
     ]
     return json.dumps(rows).encode()
 
@@ -123,6 +123,15 @@ def test_the_repo_universe_has_seven_trading_funds_and_ssac_as_benchmark_only() 
 def test_vagp_is_spliced_onto_the_vanguard_fund_on_the_same_index() -> None:
     vagp = next(f for f in ex.load_universe()[0] if f.ticker == "VAGP")
     assert [(p.yahoo, p.eodhd, p.distributing) for p in vagp.proxies] == [("0P0000KM24.L", None, False)]
+
+
+def test_vwrps_proxy_comes_from_eodhd_too() -> None:
+    vwrp = next(f for f in ex.load_universe()[0] if f.ticker == "VWRP")
+    assert [(p.yahoo, p.eodhd, p.distributing) for p in vwrp.proxies] == [("VWRL.L", "VWRL.LSE", True)]
+
+
+def test_every_fund_takes_its_own_prices_from_eodhd() -> None:
+    assert [f.ticker for f in ex.load_universe()[0] if f.primary.eodhd != f"{f.ticker}.LSE"] == []
 
 
 def test_vagp_is_the_distributing_class() -> None:
@@ -288,7 +297,7 @@ def test_a_second_source_covering_too_little_of_its_window_is_a_problem() -> Non
 
 
 def test_only_the_second_sources_window_is_compared() -> None:
-    check = ex.compare(BARS, {b.day: b.close for b in BARS[-3:]})  # the free plan's last year, say
+    check = ex.compare(BARS, {b.day: b.close for b in BARS[-3:]})  # a second source starting later
     assert (check["common_days"], check["coverage"]) == (2, 1.0)
 
 
@@ -298,22 +307,57 @@ def test_too_few_compared_days_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> 
     assert any("only 4 days compared" in p for p in problems)
 
 
-def test_eodhds_adjusted_close_is_read_and_todays_bar_dropped() -> None:
-    body = eodhd([DAYS[0], DAYS[1], TODAY], [10.0, 11.0, 12.0])
-    assert ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY) == {DAYS[0]: 10.0, DAYS[1]: 11.0}
+def test_eodhd_bars_use_the_adjusted_close_with_the_open_scaled_alike() -> None:
+    rows = [
+        {"date": "2022-12-29", "open": 210.0, "close": 200.0, "adjusted_close": 100.0},
+        {"date": TODAY.isoformat(), "open": 1.0, "close": 1.0, "adjusted_close": 1.0},  # today: dropped
+    ]
+    s = ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": json.dumps(rows).encode()}), TODAY, "GBX")
+    assert (s.currency, s.bars, s.skipped) == ("GBX", [ex.Bar(DAYS[0], 105.0, 100.0)], 0)
 
 
-def test_eodhd_is_asked_for_400_days_up_to_yesterday() -> None:
+def test_an_eodhd_10x_jump_is_refused() -> None:
+    with pytest.raises(ex.ExportError, match="jump"):
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": eodhd(DAYS[:2], [100.0, 10_000.0])}), TODAY, "GBP")
+
+
+def test_an_eodhd_open_far_from_its_close_is_refused() -> None:
+    rows = [{"date": "2022-12-29", "open": 150.0, "close": 100.0, "adjusted_close": 100.0}]
+    with pytest.raises(ex.ExportError, match="open"):
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": json.dumps(rows).encode()}), TODAY, "GBP")
+
+
+def test_an_eodhd_row_without_an_open_keeps_its_close_and_is_counted() -> None:
+    rows = [{"date": "2022-12-29", "open": 0, "close": 200.0, "adjusted_close": 100.0}]
+    s = ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": json.dumps(rows).encode()}), TODAY, "GBP")
+    assert (s.bars, s.skipped, s.opens_filled) == ([ex.Bar(DAYS[0], 100.0, 100.0)], 0, 1)
+
+
+def test_eodhd_measures_dividend_yields_like_yahoo() -> None:
+    days = [date(2020, 12, 31), date(2021, 6, 30), date(2021, 12, 31), date(2022, 12, 30)]
+    body = eodhd(days, [100.0] * 4, adj=[90.0, 92.0, 94.5, 94.5])
+    s = ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY, "GBP")
+    assert s.yearly == pytest.approx({2021: 94.5 / 90 - 1, 2022: 0.0})
+
+
+def test_unusable_eodhd_rows_are_skipped_and_counted() -> None:
+    rows = json.loads(eodhd(DAYS, CLOSES))
+    rows[1]["adjusted_close"], rows[2]["close"] = None, True
+    s = ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": json.dumps(rows).encode()}), TODAY, "GBP")
+    assert (len(s.bars), s.skipped) == (3, 2)
+
+
+def test_eodhd_is_asked_for_its_full_history_up_to_yesterday() -> None:
     fetched: list[str] = []
-    ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": eodhd(DAYS, CLOSES)}, fetched), TODAY)
+    ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": eodhd(DAYS, CLOSES)}, fetched), TODAY, "GBP")
     query = urllib.parse.parse_qs(urllib.parse.urlparse(fetched[0]).query)
-    assert (query["from"], query["to"], query["api_token"]) == (["2023-04-28"], ["2024-05-31"], [KEY])
+    assert (query["from"], query["to"], query["api_token"]) == (["1990-01-01"], ["2024-05-31"], [KEY])
 
 
 @pytest.mark.parametrize("body", [b"<html>", b'{"error": "x"}', b'[{"date": "2024-01-02"}]', b"[]"])
 def test_an_unexpected_eodhd_response_is_an_export_error_without_the_body(body: bytes) -> None:
     with pytest.raises(ex.ExportError, match="EODHD") as raised:
-        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY)
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY, "GBP")
     assert "html" not in str(raised.value) and "error" not in str(raised.value)
 
 
@@ -405,7 +449,23 @@ def test_an_override_writes_and_records_the_problems(tmp_path: Path) -> None:
     assert manifest["accept_problems"] is True and manifest["problems"]
 
 
-def test_proxies_are_not_sent_to_eodhd_and_the_manifest_says_what_was_checked(tmp_path: Path) -> None:
+def test_eodhds_prices_are_written_and_yahoo_only_checks_them(tmp_path: Path) -> None:
+    out = tmp_path / "export"
+    p = {
+        "AAA.L": yahoo(DAYS, CLOSES),
+        "AAA.LSE": eodhd(DAYS, [c * 1.01 for c in CLOSES]),
+    }  # 1%: within the level check
+    manifest = ex.export([FUND], date(2023, 1, 1), out, opener(p), TODAY, eodhd_key=KEY)
+    assert (out / "dev" / "AAA.csv").read_text().splitlines()[1] == "2022-12-29,101.000000,101.000000,GBP"
+    check = manifest["funds"]["AAA"]["sources"]["AAA.LSE"]
+    assert (check["used"], check["cross_check"], check["disagreeing_days"]) == (
+        "EODHD AAA.LSE",
+        "Yahoo AAA.L",
+        0,
+    )
+
+
+def test_a_series_without_an_eodhd_symbol_is_yahoos_alone_and_never_sent_to_eodhd(tmp_path: Path) -> None:
     fund = ex.Fund("AAA", "trade", SRC, [ex.Source("OLD.L", None, distributing=False)])
     fetched: list[str] = []
     p = pages() | {"OLD.L": yahoo(DAYS[:3], [50.0, 51.0, 51.5])}
@@ -413,10 +473,64 @@ def test_proxies_are_not_sent_to_eodhd_and_the_manifest_says_what_was_checked(tm
         [fund], date(2023, 1, 1), tmp_path / "export", opener(p, fetched), TODAY, eodhd_key=KEY
     )
     sources = manifest["funds"]["AAA"]["sources"]
-    assert sources["OLD.L"]["cross_check"] == "none (Yahoo alone)"
-    assert (sources["AAA.L"]["checked_from"], sources["AAA.L"]["checked_to"]) == ("2022-12-29", "2023-01-04")
-    assert "Yahoo alone" in manifest["cross_check"]
+    assert (sources["OLD.L"]["used"], sources["OLD.L"]["cross_check"]) == (
+        "Yahoo OLD.L",
+        "none (Yahoo alone)",
+    )
+    assert "Yahoo's alone" in manifest["cross_check"]
     assert [u for u in fetched if "eodhd.com" in u and "OLD" in u] == []
+
+
+def test_a_yahoo_only_series_still_has_its_dividends_checked(tmp_path: Path) -> None:
+    days = [date(2021, 1, 4), date(2022, 1, 4), date(2023, 1, 4)]
+    old = ex.Source("OLD.L", None, distributing=False)
+    p = {
+        "AAA.L": yahoo(days, [100.0] * 3),
+        "AAA.LSE": eodhd(days, [100.0] * 3),
+        "OLD.L": yahoo(days, [100.0] * 3, adj=[90.0, 95.0, 100.0]),
+    }
+    with pytest.raises(ex.ExportError, match=r"OLD\.L: marked accumulating"):
+        ex.export(
+            [ex.Fund("AAA", "trade", SRC, [old])],
+            date(2023, 1, 1),
+            tmp_path / "x",
+            opener(p),
+            TODAY,
+            eodhd_key=KEY,
+        )
+
+
+def test_eodhd_history_before_yahoos_is_named_as_unchecked() -> None:
+    early = ex.Bar(date(2022, 10, 3), 99.0, 99.0)
+    _, problems = ex._cross_check(
+        ex.Series("AAA.LSE", "GBP", [early, *BARS]), ex.Series("AAA.L", "GBP", BARS)
+    )
+    assert any("no Yahoo data to check it" in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"[" * 5000, b'[{"date": "2022-12-29", "open": 1, "close": 1' + b"0" * 400 + b', "adjusted_close": 1}]'],
+)
+def test_hostile_eodhd_json_is_an_export_error_not_a_crash(body: bytes) -> None:
+    with pytest.raises(ex.ExportError):
+        ex.fetch_eodhd("AAA.LSE", KEY, opener({"AAA.LSE": body}), TODAY, "GBP")
+
+
+def test_a_level_gap_from_yahoo_is_a_problem() -> None:
+    used = ex.Series(
+        "AAA.LSE", "GBP", [ex.Bar(b.day, b.open * 100, b.close * 100) for b in BARS]
+    )  # pence as pounds
+    _, problems = ex._cross_check(used, ex.Series("AAA.L", "GBP", BARS))
+    assert any("different units" in p for p in problems)
+
+
+def test_eodhd_history_starting_well_after_yahoos_is_a_problem() -> None:
+    early = ex.Bar(date(2022, 10, 3), 99.0, 99.0)
+    _, problems = ex._cross_check(
+        ex.Series("AAA.LSE", "GBP", BARS), ex.Series("AAA.L", "GBP", [early, *BARS])
+    )
+    assert any("free-plan key" in p for p in problems)
 
 
 def test_the_key_is_never_written(tmp_path: Path) -> None:
@@ -476,11 +590,11 @@ def test_only_https_on_the_two_data_hosts_is_fetched_including_redirects(url: st
 
 
 def test_a_dividend_adjustment_on_a_fund_marked_accumulating_refuses_the_export(tmp_path: Path) -> None:
-    # e.g. Yahoo recording a dividend in pounds against a pence price: the adjustment is wrong
+    # e.g. a dividend recorded in pounds against a pence price: the adjustment is wrong
     days = [date(2021, 1, 4), date(2022, 1, 4), date(2023, 1, 4)]
     p = {
-        "AAA.L": yahoo(days, [100.0, 100.0, 100.0], adj=[90.0, 95.0, 100.0]),
-        "AAA.LSE": eodhd(days, [100.0, 100.0, 100.0]),
+        "AAA.L": yahoo(days, [100.0, 100.0, 100.0]),
+        "AAA.LSE": eodhd(days, [100.0, 100.0, 100.0], adj=[90.0, 95.0, 100.0]),
     }
     with pytest.raises(ex.ExportError, match="accumulating"):
         ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY, eodhd_key=KEY)
@@ -501,9 +615,9 @@ def test_yearly_yields_are_measured_from_year_end_to_year_end() -> None:
 
 
 def test_too_many_skipped_rows_refuse_the_export(tmp_path: Path) -> None:
-    body = json.loads(yahoo(DAYS, CLOSES))
-    body["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"][1] = None  # 1 of 5 rows: 20%
-    p = {"AAA.L": json.dumps(body).encode(), "AAA.LSE": eodhd(DAYS, CLOSES)}
+    rows = json.loads(eodhd(DAYS, CLOSES))
+    rows[1]["adjusted_close"] = None  # 1 of 5 rows: 20%
+    p = {"AAA.L": yahoo(DAYS, CLOSES), "AAA.LSE": json.dumps(rows).encode()}
     with pytest.raises(ex.ExportError, match="skipped"):
         ex.export([FUND], date(2023, 1, 1), tmp_path / "export", opener(p), TODAY, eodhd_key=KEY)
 
