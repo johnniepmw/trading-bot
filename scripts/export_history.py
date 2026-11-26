@@ -11,20 +11,21 @@ Standard library only (Python 3.11+).
 
 The export:
 - reads the universe and symbols from research/universe.toml (a high-risk path);
-- downloads daily bars from Yahoo Finance and uses the adjusted (total-return) close, with
-  the open adjusted by the same factor; drops today's partial bar and duplicate rows, and
-  refuses implausible jumps or opens far from closes;
-- checks each series' implied dividend yield against whether it is marked distributing
-  (Yahoo's London dividends are sometimes recorded in the wrong unit);
+- downloads daily bars and uses the adjusted (total-return) close, with the open adjusted by
+  the same factor: from EODHD (the paid plan's full history) for every series with an EODHD
+  symbol, from Yahoo Finance for the rest (the Vanguard fund under VAGP); drops today's
+  partial bar and duplicate rows, and refuses implausible jumps or opens far from closes;
+- checks each series' implied dividend yield, year by year, against whether it is marked
+  distributing (Yahoo misses some London dividends or records them in the wrong unit);
 - splices proxies (older funds on the same index) under a fund's history, scaled by the
   price ratio on their first common day;
-- cross-checks each fund's own series against EODHD's adjusted close on daily returns, over
-  the dates EODHD returns (about the last year on the free plan; earlier years and proxies
-  rely on Yahoo alone, and the manifest says so): too many disagreeing days, any single day
-  more than 10% apart, too little coverage or too few days refuses the export
-  (--accept-problems overrides; the manifest records it). It uses one EODHD call per fund
-  (8), from the same 20 a day as prod's runs (8 each): run it at most once a day, after that
-  day's 07:15 run, and never on a month-end order day;
+- cross-checks every EODHD series against Yahoo's on daily returns over their common days,
+  and their price levels on the last common day (pounds read as pence): too many
+  disagreeing days, any single day more than 10% apart, too little coverage, too few days,
+  a level gap or EODHD history starting well after Yahoo's (a free-plan key returns only a
+  year) refuses the export (--accept-problems overrides; the manifest records it). The
+  series with no EODHD symbol is Yahoo's alone, and the manifest says so. It needs the paid
+  plan; one EODHD call per series (9);
 - writes the development and hold-out periods to separate folders with a manifest (sources,
   splices, checks, SHA-256 hashes), building it in a temporary folder that only becomes the
   output folder when everything succeeded. Nothing outside it is touched. (If the process
@@ -61,7 +62,7 @@ ROOT = Path(__file__).resolve().parents[1]
 UNIVERSE = ROOT / "research" / "universe.toml"
 YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1=0&period2={end}&interval=1d&events=div%2Csplit"
 EODHD = "https://eodhd.com/api/eod/{symbol}?{query}"
-EODHD_LOOKBACK_DAYS = 400  # the free plan returns about the last year of this (scripts/eodhd_check.py)
+EODHD_FROM = date(1990, 1, 1)  # full history: the paid plan returns each listing's whole life
 ALLOWED_HOSTS = frozenset({"query1.finance.yahoo.com", "eodhd.com"})
 LONDON = ZoneInfo("Europe/London")
 CURRENCIES = {"GBp": "GBX", "GBX": "GBX", "GBP": "GBP"}
@@ -73,6 +74,8 @@ MAX_DISAGREEING_SHARE = 0.01  # more disagreeing days than this is a problem
 HARD_DAY_LIMIT = 0.10  # any single day further apart than this is a problem (a missed split, a bad print)
 MIN_COVERAGE = 0.90  # the second source must cover this share of the series' days in its window
 MIN_CHECKED_DAYS = 200  # fewer compared days means the second source's window shrank
+MAX_LEVEL_GAP = 0.02  # last common close: a bigger gap means different units or a wrong series
+MAX_START_GAP_DAYS = 31  # EODHD starting later than Yahoo by more than this: a short or free-plan history
 MAX_DAILY_RATIO = 10.0  # a 10x close-to-close move is a data error (pounds read as pence)
 MAX_OPEN_CLOSE_GAP = 0.20  # opens and closes must be adjusted alike
 MAX_SKIPPED_SHARE = 0.01  # more unusable rows than this is a problem
@@ -89,7 +92,7 @@ class ExportError(Exception):
 @dataclass(frozen=True)
 class Source:
     yahoo: str
-    eodhd: str | None  # funds' own series only: proxies' spliced years are outside EODHD's free year
+    eodhd: str | None  # the primary source when set (Yahoo cross-checks it); else Yahoo alone
     distributing: bool
 
 
@@ -150,8 +153,9 @@ def default_opener(url: str) -> bytes:
         raise ExportError(f"fetching {without_query(url)} failed: {error}") from None
 
 
-def _source(raw: dict[str, Any], *, primary: bool) -> Source:
-    source = Source(str(raw["yahoo"]), str(raw["eodhd"]) if primary else None, bool(raw["distributing"]))
+def _source(raw: dict[str, Any]) -> Source:
+    eodhd = raw.get("eodhd")
+    source = Source(str(raw["yahoo"]), None if eodhd is None else str(eodhd), bool(raw["distributing"]))
     if not SYMBOL.fullmatch(source.yahoo) or (
         source.eodhd is not None and not SYMBOL.fullmatch(source.eodhd)
     ):
@@ -166,8 +170,8 @@ def load_universe(path: Path = UNIVERSE) -> tuple[list[Fund], date]:
             Fund(
                 str(f["ticker"]),
                 str(f["role"]),
-                _source(f, primary=True),
-                [_source(p, primary=False) for p in f["proxies"]],
+                _source(f),
+                [_source(p) for p in f["proxies"]],
             )
             for f in raw["fund"]
         ]
@@ -205,6 +209,11 @@ def fetch_yahoo(symbol: str, opener: Opener, today: date) -> Series:
             continue
         factor = adj / close
         by_day[day] = (Bar(day, open_ * factor, adj), factor)  # a repeated day: the last row wins
+    return _series(symbol, currency, by_day, skipped)
+
+
+def _series(symbol: str, currency: str, by_day: dict[date, tuple[Bar, float]], skipped: int) -> Series:
+    """Bars and implied dividend yields from each day's adjusted bar and adjustment factor."""
     if not by_day:
         raise ExportError(f"{symbol}: no usable bars")
     days = sorted(by_day)
@@ -247,11 +256,13 @@ def yield_problem(source: Source, series: Series) -> str | None:
     return None
 
 
-def fetch_eodhd(symbol: str, key: str, opener: Opener, today: date) -> dict[date, float]:
-    """EODHD's adjusted closes before today, over the window it returns for a 400-day request."""
+def fetch_eodhd(symbol: str, key: str, opener: Opener, today: date, currency: str) -> Series:
+    """EODHD's full daily history before today, adjusted like Yahoo's: total-return closes, opens
+    scaled by the same factor. EODHD gives no currency, so the caller passes Yahoo's; the level
+    check against Yahoo catches a unit mismatch."""
     query = urllib.parse.urlencode(
         {
-            "from": (today - timedelta(days=EODHD_LOOKBACK_DAYS)).isoformat(),
+            "from": EODHD_FROM.isoformat(),
             "to": (today - timedelta(days=1)).isoformat(),
             "period": "d",
             "fmt": "json",
@@ -260,18 +271,25 @@ def fetch_eodhd(symbol: str, key: str, opener: Opener, today: date) -> dict[date
     )
     body = opener(EODHD.format(symbol=urllib.parse.quote(symbol, safe=""), query=query))
     try:
-        rows = json.loads(body)
-        closes = {date.fromisoformat(r["date"]): r["adjusted_close"] for r in rows}
-    except (KeyError, TypeError, ValueError) as error:  # names the field, never the body or the key
+        rows = [
+            (date.fromisoformat(r["date"]), r["open"], r["close"], r["adjusted_close"])
+            for r in json.loads(body)
+        ]
+    except (KeyError, TypeError, ValueError) as error:  # names the error type, never the body or the key
         raise ExportError(f"{symbol}: unexpected EODHD response ({type(error).__name__})") from None
-    closes = {
-        d: float(c)
-        for d, c in closes.items()
-        if not isinstance(c, bool) and _finite_positive(c) and d < today
-    }
-    if not closes:
+    by_day: dict[date, tuple[Bar, float]] = {}
+    skipped = 0
+    for day, open_, close, adj in rows:
+        if day >= today:
+            continue  # today's partial bar isn't a fault
+        if any(isinstance(v, bool) for v in (open_, close, adj)) or not _finite_positive(open_, close, adj):
+            skipped += 1
+            continue
+        factor = adj / close
+        by_day[day] = (Bar(day, open_ * factor, adj), factor)
+    if not by_day:
         raise ExportError(f"{symbol}: no EODHD data")
-    return closes
+    return _series(symbol, currency, by_day, skipped)
 
 
 def _in_currency(series: Series, currency: str) -> list[Bar]:
@@ -320,18 +338,18 @@ def compare(bars: list[Bar], second: dict[date, float]) -> dict[str, float]:
     }
 
 
-def check_problems(symbol: str, check: dict[str, float]) -> list[str]:
+def check_problems(symbol: str, check: dict[str, float], against: str = "Yahoo") -> list[str]:
     problems = []
     if check["share"] > MAX_DISAGREEING_SHARE:
         problems.append(
-            f"{symbol}: {check['disagreeing_days']:.0f} of {check['common_days']:.0f} days disagree with EODHD"
+            f"{symbol}: {check['disagreeing_days']:.0f} of {check['common_days']:.0f} days disagree with {against}"
         )
     if check["worst"] > HARD_DAY_LIMIT:
-        problems.append(f"{symbol}: a single day differs from EODHD by {check['worst']:.1%}")
+        problems.append(f"{symbol}: a single day differs from {against} by {check['worst']:.1%}")
     if check["coverage"] < MIN_COVERAGE:
-        problems.append(f"{symbol}: EODHD covers only {check['coverage']:.0%} of its days in its window")
+        problems.append(f"{symbol}: {against} covers only {check['coverage']:.0%} of its days in its window")
     if check["common_days"] < MIN_CHECKED_DAYS:
-        problems.append(f"{symbol}: only {check['common_days']:.0f} days compared with EODHD")
+        problems.append(f"{symbol}: only {check['common_days']:.0f} days compared with {against}")
     return problems
 
 
@@ -361,6 +379,34 @@ def list_symbols(funds: list[Fund], opener: Opener, today: date) -> list[str]:
     return lines
 
 
+def _cross_check(used: Series, yahoo: Series) -> tuple[dict[str, Any], list[str]]:
+    """EODHD's series against Yahoo's: daily returns, the last common day's level, and where
+    each history starts."""
+    second = {b.day: b.close for b in yahoo.bars}
+    check: dict[str, Any] = compare(used.bars, second) | {
+        "used": f"EODHD {used.symbol}",
+        "cross_check": f"Yahoo {yahoo.symbol}",
+        "eodhd_from": used.bars[0].day.isoformat(),
+        "yahoo_from": yahoo.bars[0].day.isoformat(),
+    }
+    problems = check_problems(used.symbol, check)
+    common = [b for b in used.bars if b.day in second]
+    if common:
+        last = common[-1]
+        check["level_gap"] = abs(last.close / second[last.day] - 1)
+        if check["level_gap"] > MAX_LEVEL_GAP:
+            problems.append(
+                f"{used.symbol}: on {last.day} its close is {check['level_gap']:.1%} from Yahoo's"
+                " (different units or a different series)"
+            )
+    if (used.bars[0].day - yahoo.bars[0].day).days > MAX_START_GAP_DAYS:
+        problems.append(
+            f"{used.symbol}: EODHD starts {used.bars[0].day}, Yahoo {yahoo.bars[0].day}"
+            " (a free-plan key returns only a year)"
+        )
+    return check, problems
+
+
 def _export_fund(  # noqa: PLR0913, PLR0917 - the export's inputs
     fund: Fund, hold_out: date, folder: Path, opener: Opener, today: date, eodhd_key: str
 ) -> tuple[dict[str, Any], list[str]]:
@@ -368,23 +414,17 @@ def _export_fund(  # noqa: PLR0913, PLR0917 - the export's inputs
     checks = {}
     series = []
     for source in [*fund.proxies, fund.primary]:
-        s = fetch_yahoo(source.yahoo, opener, today)
-        check: dict[str, Any] = {"cross_check": "none (Yahoo alone)"}
+        yahoo = fetch_yahoo(source.yahoo, opener, today)
+        s, check = yahoo, {"used": f"Yahoo {source.yahoo}", "cross_check": "none (Yahoo alone)"}
         if source.eodhd is not None:
-            second = fetch_eodhd(source.eodhd, eodhd_key, opener, today)
-            check = compare(s.bars, second) | {
-                "cross_check": f"EODHD {source.eodhd}",
-                "checked_from": min(second).isoformat(),
-                "checked_to": max(second).isoformat(),
-            }
-            problems += check_problems(source.yahoo, check)
+            s = fetch_eodhd(source.eodhd, eodhd_key, opener, today, yahoo.currency)
+            check, found = _cross_check(s, yahoo)
+            problems += found
         if (problem := yield_problem(source, s)) is not None:
             problems.append(problem)
         if s.skipped > MAX_SKIPPED_SHARE * (len(s.bars) + s.skipped):
-            problems.append(
-                f"{source.yahoo}: {s.skipped} of {len(s.bars) + s.skipped} rows skipped as unusable"
-            )
-        checks[source.yahoo] = check | {
+            problems.append(f"{s.symbol}: {s.skipped} of {len(s.bars) + s.skipped} rows skipped as unusable")
+        checks[s.symbol] = check | {
             "skipped_rows": s.skipped,
             "implied_yield": s.yield_,
             "yearly_yield": s.yearly,
@@ -429,10 +469,9 @@ def export(  # noqa: PLR0913 - the export's inputs
             "hold_out_start": hold_out.isoformat(),
             "accept_problems": accept_problems,
             "cross_check": (
-                "each fund's own series against EODHD's adjusted close, over the dates EODHD returned"
-                " (see checked_from per source); earlier years and proxies rely on Yahoo alone."
-                " On EODHD's free year the whole check falls in the hold-out period: the"
-                " development period is not cross-checked"
+                "each series with an EODHD symbol uses EODHD's adjusted prices, checked against"
+                " Yahoo's over their common days (see each source's used and cross_check); a series"
+                " without one (the Vanguard fund under VAGP) is Yahoo's alone, unchecked"
             ),
             "funds": {},
             "problems": [],

@@ -3,8 +3,9 @@
 # it defines what can be traded and where the hold-out starts.
 #
 # Symbols are UNVERIFIED until the owner's `--list` run and Phase 0 API check: Yahoo uses
-# ".L" for the London Stock Exchange, EODHD ".LSE" (funds' own series only: it is the
-# cross-check over its free year, and proxies' spliced years are older than that). `distributing` says whether the series
+# ".L" for the London Stock Exchange, EODHD ".LSE". A series with an EODHD symbol takes its
+# prices from EODHD (the paid plan's full history), checked against Yahoo's; one without
+# (the Vanguard fund under VAGP, which EODHD doesn't list on the LSE) is Yahoo's alone. `distributing` says whether the series
 # pays dividends out (its adjusted close then rises faster than its close); it is checked
 # against the data. `proxies` are older funds on the same index, spliced under the fund's own
 # history (oldest first), chosen from `--list` output before any price data is examined.
@@ -17,7 +18,7 @@ role = "trade"
 yahoo = "VWRP.L"
 eodhd = "VWRP.LSE"
 distributing = false
-proxies = [{ yahoo = "VWRL.L", distributing = true }]   # same index, since 2012
+proxies = [{ yahoo = "VWRL.L", eodhd = "VWRL.LSE", distributing = true }]   # same index, since 2012
 
 [[fund]]
 ticker = "VUKE"   # UK equity, FTSE 100
